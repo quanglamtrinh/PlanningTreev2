@@ -9,6 +9,7 @@ const mockApi = vi.hoisted(() => ({
   startThreadV2: vi.fn(),
   readThreadV2: vi.fn(),
   listThreadTurnsV2: vi.fn(),
+  getThreadJournalHeadV2: vi.fn(),
   resumeThreadV2: vi.fn(),
   listModelsV2: vi.fn(),
   listPendingRequestsV2: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('../../src/features/session_v2/api/client', () => ({
   startThreadV2: mockApi.startThreadV2,
   readThreadV2: mockApi.readThreadV2,
   listThreadTurnsV2: mockApi.listThreadTurnsV2,
+  getThreadJournalHeadV2: mockApi.getThreadJournalHeadV2,
   resumeThreadV2: mockApi.resumeThreadV2,
   listModelsV2: mockApi.listModelsV2,
   listPendingRequestsV2: mockApi.listPendingRequestsV2,
@@ -121,6 +123,7 @@ function configureApiMocks(): void {
   mockApi.startThreadV2.mockResolvedValue({ thread: makeThread({ id: 'thread-new' }) })
   mockApi.readThreadV2.mockImplementation(async (threadId: string) => ({ thread: makeThread({ id: threadId }) }))
   mockApi.listThreadTurnsV2.mockResolvedValue({ data: [], nextCursor: null })
+  mockApi.getThreadJournalHeadV2.mockResolvedValue({ threadId: 'thread-1', firstEventSeq: null, lastEventSeq: null, lastEventId: null })
   mockApi.resumeThreadV2.mockImplementation(async (threadId: string) => ({ thread: makeThread({ id: threadId }) }))
   mockApi.listModelsV2.mockResolvedValue({ data: [], nextCursor: null })
   mockApi.listPendingRequestsV2.mockResolvedValue({ data: [] })
@@ -185,6 +188,47 @@ describe('useSessionFacadeV2', () => {
       expect(latestFacade?.state.activeThreadId).toBe('thread-1')
       expect(latestFacade?.state.connection.phase).toBe('initialized')
     })
+  })
+
+  it('defaults composer model options to GPT-5.3-Codex and does not offer unsupported GPT-5.5 fallback', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+
+    render(
+      <FacadeHarness
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(latestFacade?.state.connection.phase).toBe('initialized')
+    })
+
+    expect(latestFacade?.state.selectedModel).toBe('gpt-5.3-codex')
+    expect(latestFacade?.state.modelOptions.map((option) => option.value)).toContain('gpt-5.3-codex')
+    expect(latestFacade?.state.modelOptions.map((option) => option.value)).not.toContain('gpt-5.5')
+  })
+
+  it('hydrates from thread/read during transcript resync', async () => {
+    let latestFacade: SessionFacadeV2 | null = null
+    render(
+      <FacadeHarness
+        onFacade={(facade) => {
+          latestFacade = facade
+        }}
+      />,
+    )
+    await waitFor(() => {
+      expect(latestFacade?.state.connection.phase).toBe('initialized')
+    })
+    mockApi.readThreadV2.mockClear()
+
+    await act(async () => {
+      await latestFacade?.commands.resyncThreadTranscript('thread-1')
+    })
+
+    expect(mockApi.readThreadV2).toHaveBeenCalledWith('thread-1', true)
   })
 
   it('forwards threadCreationPolicy during auto bootstrap thread creation', async () => {
@@ -324,16 +368,9 @@ describe('useSessionFacadeV2', () => {
     let latestFacade: SessionFacadeV2 | null = null
 
     const readDeferredByThread: Record<string, ReturnType<typeof deferred<{ thread: SessionThread }>>> = {}
-    const turnsDeferredByThread: Record<string, ReturnType<typeof deferred<{ data: never[]; nextCursor: null }>>> = {}
-
     mockApi.readThreadV2.mockImplementation((threadId: string) => {
       const def = deferred<{ thread: SessionThread }>()
       readDeferredByThread[threadId] = def
-      return def.promise
-    })
-    mockApi.listThreadTurnsV2.mockImplementation((threadId: string) => {
-      const def = deferred<{ data: never[]; nextCursor: null }>()
-      turnsDeferredByThread[threadId] = def
       return def.promise
     })
 
@@ -364,12 +401,10 @@ describe('useSessionFacadeV2', () => {
 
       readDeferredByThread['thread-1'].resolve({ thread: makeThread({ id: 'thread-1' }) })
       await Promise.resolve()
-      turnsDeferredByThread['thread-1']?.resolve({ data: [], nextCursor: null })
       await first
 
       readDeferredByThread['thread-2'].resolve({ thread: makeThread({ id: 'thread-2' }) })
       await Promise.resolve()
-      turnsDeferredByThread['thread-2'].resolve({ data: [], nextCursor: null })
       await second
     })
 
@@ -701,19 +736,12 @@ describe('useSessionFacadeV2', () => {
   it('drops stale selectThread hydration when selectThread(null) happens mid-flight', async () => {
     let latestFacade: SessionFacadeV2 | null = null
     const readDeferred = deferred<{ thread: SessionThread }>()
-    const turnsDeferred = deferred<{ data: never[]; nextCursor: null }>()
 
     mockApi.readThreadV2.mockImplementation((threadId: string) => {
       if (threadId === 'thread-2') {
         return readDeferred.promise
       }
       return Promise.resolve({ thread: makeThread({ id: threadId }) })
-    })
-    mockApi.listThreadTurnsV2.mockImplementation((threadId: string) => {
-      if (threadId === 'thread-2') {
-        return turnsDeferred.promise
-      }
-      return Promise.resolve({ data: [], nextCursor: null })
     })
 
     render(
@@ -743,7 +771,6 @@ describe('useSessionFacadeV2', () => {
 
       readDeferred.resolve({ thread: makeThread({ id: 'thread-2' }) })
       await Promise.resolve()
-      turnsDeferred.resolve({ data: [], nextCursor: null })
       await switching
     })
 

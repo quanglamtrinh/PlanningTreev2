@@ -46,6 +46,12 @@ type ThreadConfigResponse = {
   serviceTier?: string | null
 }
 
+type ThreadRecoverResponse = {
+  thread: SessionThread
+  recovered?: Record<string, unknown>
+  providerThread?: Record<string, unknown>
+}
+
 type ThreadListResponse = {
   data: SessionThread[]
   nextCursor: string | null
@@ -185,6 +191,19 @@ export async function resumeThreadV2(
   await initAuthToken()
   return jsonFetch<ThreadConfigResponse>(
     `/v4/session/threads/${encodeURIComponent(threadId)}/resume`,
+    { method: 'POST' },
+    payload ?? {},
+  )
+}
+
+export async function recoverThreadV2(
+  threadId: string,
+  payload?: Record<string, unknown>,
+): Promise<ThreadRecoverResponse> {
+  // Deprecated manual fallback only. Normal Session V2 resync must use thread/read.
+  await initAuthToken()
+  return jsonFetch<ThreadRecoverResponse>(
+    `/v4/session/threads/${encodeURIComponent(threadId)}/recover`,
     { method: 'POST' },
     payload ?? {},
   )
@@ -333,6 +352,20 @@ export async function rejectPendingRequestV2(requestId: string, payload: RejectR
     `/v4/session/requests/${encodeURIComponent(requestId)}/reject`,
     { method: 'POST' },
     payload,
+  )
+}
+
+export type ThreadJournalHeadResponseV2 = {
+  threadId: string
+  firstEventSeq: number | null
+  lastEventSeq: number | null
+  lastEventId: string | null
+}
+
+export async function getThreadJournalHeadV2(threadId: string): Promise<ThreadJournalHeadResponseV2> {
+  await initAuthToken()
+  return jsonFetch<ThreadJournalHeadResponseV2>(
+    `/v4/session/threads/${encodeURIComponent(threadId)}/events/journal-head`,
   )
 }
 

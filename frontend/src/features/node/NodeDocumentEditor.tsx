@@ -12,6 +12,10 @@ import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
 import { useAskShellActionStore } from '../../stores/ask-shell-action-store'
 import { buildChatV2Url } from '../conversation/surfaceRouting'
+import {
+  captureWorkflowStreamCursor,
+  primeAndSelectWorkflowTurn,
+} from '../session_v2/facade/workflowLiveTurnBridge'
 import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
 import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
 import type { WorkflowTab } from './WorkflowStepper'
@@ -84,6 +88,7 @@ export function NodeDocumentEditor({
   const markActionFailed = useAskShellActionStore((state) => state.markFailed)
   const invalidateClarify = useClarifyStore((state) => state.invalidateEntry)
   const {
+    workflowState,
     startExecution,
     activeMutation: activeWorkflowMutation,
   } = useWorkflowStateV2(projectId, node.node_id)
@@ -432,7 +437,19 @@ export function NodeDocumentEditor({
         throw error
       }
       await refreshSnapshot()
-      await startExecution(projectId, node.node_id)
+      const preActionCursor = captureWorkflowStreamCursor(workflowState?.threads.execution ?? null)
+      const result = await startExecution(projectId, node.node_id)
+      const executionThreadId =
+        result.threadId ?? result.workflowState?.threads.execution ?? workflowState?.threads.execution ?? null
+      await primeAndSelectWorkflowTurn({
+        actionKind: 'start_execution',
+        targetLane: 'execution',
+        threadId: executionThreadId,
+        turnId: result.turnId ?? null,
+        projectId,
+        nodeId: node.node_id,
+        preActionCursor,
+      })
       navigate(buildChatV2Url(projectId, node.node_id, 'execution'))
     } catch (error) {
       setConfirmError(error instanceof Error ? error.message : 'Finish task failed')
@@ -453,6 +470,7 @@ export function NodeDocumentEditor({
     projectId,
     refreshSnapshot,
     startExecution,
+    workflowState?.threads.execution,
   ])
 
   const handleConfirm = useCallback(async () => {

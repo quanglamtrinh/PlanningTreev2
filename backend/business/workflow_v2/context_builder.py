@@ -10,6 +10,7 @@ from backend.business.workflow_v2.errors import WorkflowThreadBindingFailedError
 from backend.business.workflow_v2.models import NodeWorkflowStateV2, ThreadRole
 from backend.services import planningtree_workspace
 from backend.services.node_detail_service import (
+    _load_clarify_from_node_dir,
     _load_frame_meta_from_node_dir,
     _load_spec_meta_from_node_dir,
 )
@@ -182,6 +183,15 @@ class WorkflowContextBuilderV2:
             "node": self._public_node(node),
             "parentNode": self._public_node(node_by_id.get(str(node.get("parent_id") or ""))),
             "taskContext": self._safe_split_context(snapshot, node, node_by_id),
+            "artifactContext": self._artifact_context_payload(
+                snapshot=snapshot,
+                node=node,
+                node_by_id=node_by_id,
+                workspace_root=workspace_root,
+                node_dir=node_dir,
+                frame_meta=frame_meta,
+                spec_meta=spec_meta,
+            ),
             "frame": {
                 "confirmedRevision": _optional_int(frame_meta.get("confirmed_revision")),
                 "revision": _optional_int(frame_meta.get("revision")),
@@ -195,6 +205,147 @@ class WorkflowContextBuilderV2:
             },
             "workspaceRoot": workspace_root,
         }
+
+    def _artifact_context_payload(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        node: dict[str, Any],
+        node_by_id: dict[str, dict[str, Any]],
+        workspace_root: str,
+        node_dir: Path,
+        frame_meta: dict[str, Any],
+        spec_meta: dict[str, Any],
+    ) -> dict[str, Any]:
+        ancestors = self._ancestor_nodes(node, node_by_id)
+        return {
+            "ancestorContext": [
+                self._ancestor_artifact_context(
+                    snapshot=snapshot,
+                    ancestor=ancestor,
+                    node_by_id=node_by_id,
+                    workspace_root=workspace_root,
+                    current_node_id=str(node.get("node_id") or ""),
+                )
+                for ancestor in ancestors
+            ],
+            "currentContext": {
+                "node": self._public_node(node),
+                "frame": self._document_payload(
+                    name=planningtree_workspace.FRAME_FILE_NAME,
+                    content=self._document_content(node_dir, planningtree_workspace.FRAME_FILE_NAME),
+                    meta=frame_meta,
+                ),
+                "spec": self._document_payload(
+                    name=planningtree_workspace.SPEC_FILE_NAME,
+                    content=self._document_content(node_dir, planningtree_workspace.SPEC_FILE_NAME),
+                    meta=spec_meta,
+                ),
+            },
+        }
+
+    def _ancestor_artifact_context(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        ancestor: dict[str, Any],
+        node_by_id: dict[str, dict[str, Any]],
+        workspace_root: str,
+        current_node_id: str,
+    ) -> dict[str, Any]:
+        node_dir = planningtree_workspace.resolve_node_dir(Path(workspace_root), snapshot, str(ancestor.get("node_id") or ""))
+        frame_meta: dict[str, Any] = {}
+        clarify: dict[str, Any] | None = None
+        frame_content = ""
+        if node_dir is not None:
+            frame_meta = _load_frame_meta_from_node_dir(node_dir)
+            clarify = _load_clarify_from_node_dir(node_dir)
+            frame_content = self._document_content(node_dir, planningtree_workspace.FRAME_FILE_NAME)
+        return {
+            "node": self._public_node(ancestor),
+            "frame": self._document_payload(
+                name=planningtree_workspace.FRAME_FILE_NAME,
+                content=frame_content,
+                meta=frame_meta,
+            ),
+            "clarify": self._clarify_payload(clarify),
+            "split": self._split_payload(ancestor, node_by_id, current_node_id),
+        }
+
+    @staticmethod
+    def _ancestor_nodes(node: dict[str, Any], node_by_id: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        chain: list[dict[str, Any]] = []
+        visited: set[str] = set()
+        parent_id = str(node.get("parent_id") or "").strip()
+        while parent_id and parent_id not in visited:
+            visited.add(parent_id)
+            parent = node_by_id.get(parent_id)
+            if parent is None:
+                break
+            chain.append(parent)
+            parent_id = str(parent.get("parent_id") or "").strip()
+        chain.reverse()
+        return chain
+
+    @staticmethod
+    def _document_content(node_dir: Path, file_name: str) -> str:
+        path = node_dir / file_name
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    @staticmethod
+    def _document_payload(*, name: str, content: str, meta: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "name": name,
+            "content": content,
+            "confirmedRevision": _optional_int(meta.get("confirmed_revision")),
+            "revision": _optional_int(meta.get("revision")),
+            "sourceFrameRevision": _optional_int(meta.get("source_frame_revision")),
+            "confirmedAt": _optional_str(meta.get("confirmed_at")),
+        }
+
+    @staticmethod
+    def _clarify_payload(clarify: dict[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(clarify, dict):
+            return {"questions": []}
+        questions = clarify.get("questions")
+        return {
+            "confirmedRevision": _optional_int(clarify.get("confirmed_revision")),
+            "confirmedAt": _optional_str(clarify.get("confirmed_at")),
+            "questions": copy.deepcopy(questions) if isinstance(questions, list) else [],
+        }
+
+    def _split_payload(
+        self,
+        node: dict[str, Any],
+        node_by_id: dict[str, dict[str, Any]],
+        current_node_id: str,
+    ) -> dict[str, Any]:
+        children = []
+        for child_id in node.get("child_ids", []):
+            child = node_by_id.get(str(child_id))
+            if child is None:
+                continue
+            public = self._public_node(child)
+            if public is None:
+                continue
+            public["isCurrentPath"] = self._node_contains_descendant(child, current_node_id, node_by_id)
+            children.append(public)
+        return {"children": children}
+
+    @classmethod
+    def _node_contains_descendant(
+        cls,
+        node: dict[str, Any],
+        target_node_id: str,
+        node_by_id: dict[str, dict[str, Any]],
+    ) -> bool:
+        if str(node.get("node_id") or "") == target_node_id:
+            return True
+        for child_id in node.get("child_ids", []):
+            child = node_by_id.get(str(child_id))
+            if child is not None and cls._node_contains_descendant(child, target_node_id, node_by_id):
+                return True
+        return False
 
     @staticmethod
     def _project_payload(snapshot: dict[str, Any], workspace_root: str) -> dict[str, Any]:

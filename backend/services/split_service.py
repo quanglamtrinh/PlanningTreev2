@@ -56,6 +56,7 @@ class SplitService:
         thread_lineage_service: ThreadLineageService,
         split_timeout: int,
         git_checkpoint_service: Any = None,
+        artifact_turn_runner: Any | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
@@ -63,6 +64,7 @@ class SplitService:
         self._thread_lineage_service = thread_lineage_service
         self._split_timeout = int(split_timeout)
         self._git_checkpoint_service = git_checkpoint_service
+        self._artifact_turn_runner = artifact_turn_runner
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -141,6 +143,7 @@ class SplitService:
             payload = self._generate_split_payload(project_id, node_id, mode)
             lineage_targets = self._materialize_split_payload(project_id, node_id, payload)
             self._bootstrap_split_lineage(project_id, node_id, lineage_targets)
+            self._refresh_ask_context(project_id, node_id)
             self._mark_job_completed(project_id, job_id)
         except ProjectNotFound:
             self._clear_live_job(project_id, job_id)
@@ -181,12 +184,24 @@ class SplitService:
         retry_feedback: str | None = None
         last_issues = ["No valid split_result payload was captured."]
         for attempt in range(_RETRY_LIMIT + 1):
-            result = self._codex_client.run_turn_streaming(
-                build_split_attempt_prompt(mode, task_context, retry_feedback),
-                thread_id=thread_id,
-                timeout_sec=self._split_timeout,
-                cwd=workspace_root,
-            )
+            prompt = build_split_attempt_prompt(mode, task_context, retry_feedback)
+            if self._artifact_turn_runner is not None:
+                result = self._artifact_turn_runner.run_prompt(
+                    project_id=project_id,
+                    node_id=node_id,
+                    thread_id=thread_id,
+                    prompt=prompt,
+                    artifact_kind="split",
+                    cwd=workspace_root,
+                    timeout_sec=self._split_timeout,
+                )
+            else:
+                result = self._codex_client.run_turn_streaming(
+                    prompt,
+                    thread_id=thread_id,
+                    timeout_sec=self._split_timeout,
+                    cwd=workspace_root,
+                )
             tool_calls = result.get("tool_calls", [])
             payload = self._extract_split_payload(
                 tool_calls,
@@ -362,6 +377,15 @@ class SplitService:
             }
 
     def _ensure_split_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        if self._artifact_turn_runner is not None:
+            return str(
+                self._artifact_turn_runner.ensure_ask_thread(
+                    project_id=project_id,
+                    node_id=node_id,
+                    workspace_root=workspace_root,
+                    artifact_kind="split",
+                )
+            )
         try:
             session = self._thread_lineage_service.resume_or_rebuild_session(
                 project_id,
@@ -582,6 +606,8 @@ class SplitService:
         first_child_id = str(lineage_targets.get("first_child_id") or "").strip()
         if not workspace_root or not review_node_id or not first_child_id:
             return
+        if self._artifact_turn_runner is not None:
+            return
         try:
             self._thread_lineage_service.ensure_forked_thread(
                 project_id,
@@ -610,6 +636,15 @@ class SplitService:
                 parent_node_id,
                 exc_info=True,
             )
+
+    def _refresh_ask_context(self, project_id: str, node_id: str) -> None:
+        if self._artifact_turn_runner is None:
+            return
+        self._artifact_turn_runner.refresh_ask_context(
+            project_id=project_id,
+            node_id=node_id,
+            artifact_kind="split",
+        )
 
     def _workspace_root_from_snapshot(self, snapshot: dict[str, Any]) -> str | None:
         project = snapshot.get("project", {})

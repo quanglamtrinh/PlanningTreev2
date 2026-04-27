@@ -5,6 +5,7 @@ type ApprovalOverlayProps = {
   request: PendingServerRequest
   onResolve: (requestId: string, result: Record<string, unknown>) => Promise<void>
   onReject: (requestId: string, reason?: string | null) => Promise<void>
+  variant?: 'overlay' | 'inline'
 }
 
 type ApprovalChoice = {
@@ -31,7 +32,28 @@ function approvalChoices(method: PendingServerRequest['method']): ApprovalChoice
   ]
 }
 
-export function ApprovalOverlay({ request, onResolve, onReject }: ApprovalOverlayProps) {
+function requestSummary(request: PendingServerRequest): string {
+  const command = request.payload.command
+  if (typeof command === 'string' && command.trim()) {
+    return command
+  }
+  if (Array.isArray(command)) {
+    return command.map((part) => String(part)).join(' ')
+  }
+  return request.method
+}
+
+function choiceClassName(choice: ApprovalChoice): string {
+  if (choice.id === 'accept' || choice.id === 'accept-session') {
+    return 'sessionV2ApprovalOption sessionV2ApprovalOptionPrimary'
+  }
+  if (choice.id === 'decline') {
+    return 'sessionV2ApprovalOption sessionV2ApprovalOptionDanger'
+  }
+  return 'sessionV2ApprovalOption'
+}
+
+export function ApprovalOverlay({ request, onResolve, onReject, variant = 'overlay' }: ApprovalOverlayProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customReason, setCustomReason] = useState('')
   const choices = useMemo(() => approvalChoices(request.method), [request.method])
@@ -52,33 +74,43 @@ export function ApprovalOverlay({ request, onResolve, onReject }: ApprovalOverla
     }
   }
 
-  return (
-    <div className="sessionV2Overlay">
-      <div className="sessionV2OverlayCard">
-        <header className="sessionV2OverlayHeader">
+  const content = (
+    <div className={variant === 'inline' ? 'sessionV2ApprovalCard' : 'sessionV2OverlayCard'}>
+      <header className={variant === 'inline' ? 'sessionV2ApprovalHeader' : 'sessionV2OverlayHeader'}>
+        <div>
           <h3>Approval required</h3>
           <p>{request.method}</p>
-        </header>
-        <div className="sessionV2OverlayBody">
+        </div>
+      </header>
+      <div className={variant === 'inline' ? 'sessionV2ApprovalBody' : 'sessionV2OverlayBody'}>
+        <div className="sessionV2ApprovalSummary">{requestSummary(request)}</div>
+        <details className="sessionV2ApprovalDetails">
+          <summary>Command / request payload</summary>
           <pre className="sessionV2Json">{JSON.stringify(request.payload, null, 2)}</pre>
-          <label className="sessionV2Field">
-            Reason (optional)
-            <input
-              type="text"
-              value={customReason}
-              onChange={(event) => setCustomReason(event.target.value)}
-              placeholder="Add an operator note"
-            />
-          </label>
-          <div className="sessionV2Options">
-            {choices.map((choice) => (
-              <button key={choice.id} type="button" disabled={isSubmitting} className="sessionV2Option" onClick={() => void handleChoice(choice)}>
-                {choice.label}
-              </button>
-            ))}
-          </div>
+        </details>
+        <label className="sessionV2Field">
+          Reason (optional)
+          <input
+            type="text"
+            value={customReason}
+            onChange={(event) => setCustomReason(event.target.value)}
+            placeholder="Add an operator note"
+          />
+        </label>
+        <div className="sessionV2ApprovalOptions">
+          {choices.map((choice) => (
+            <button key={choice.id} type="button" disabled={isSubmitting} className={choiceClassName(choice)} onClick={() => void handleChoice(choice)}>
+              {choice.label}
+            </button>
+          ))}
         </div>
       </div>
     </div>
   )
+
+  if (variant === 'inline') {
+    return <div className="sessionV2ApprovalInline">{content}</div>
+  }
+
+  return <div className="sessionV2Overlay">{content}</div>
 }

@@ -3,7 +3,10 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol.client import SessionProtocolClientV2
+from backend.session_core_v2.protocol.compat_gate import is_thread_turns_list_unsupported_error
+from backend.session_core_v2.thread_store import paginate_turns
 
 
 def _now_ms() -> int:
@@ -63,7 +66,32 @@ class ThreadServiceV2:
     def thread_turns_list(self, *, thread_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         started = time.perf_counter()
         normalized_params = params or {}
-        response = self._protocol_client.thread_turns_list(thread_id, normalized_params)
+        try:
+            response = self._protocol_client.thread_turns_list(thread_id, normalized_params)
+        except SessionCoreError as exc:
+            if not is_thread_turns_list_unsupported_error(exc):
+                raise
+            read_response = self.thread_read(thread_id=thread_id, include_turns=True)
+            thread = read_response.get("thread")
+            turns = thread.get("turns") if isinstance(thread, dict) else []
+            normalized_turns = (
+                [self._normalize_turn(turn) for turn in turns if isinstance(turn, dict)]
+                if isinstance(turns, list)
+                else []
+            )
+            cursor = str(normalized_params.get("cursor") or "").strip()
+            if cursor.isdigit():
+                limit = 50 if normalized_params.get("limit") is None else max(0, int(normalized_params.get("limit")))
+                start = int(cursor)
+                page = normalized_turns[start : start + limit]
+                next_cursor = str(start + limit) if start + limit < len(normalized_turns) and page else None
+                return {"data": page, "nextCursor": next_cursor}
+            return paginate_turns(
+                normalized_turns,
+                cursor=cursor or None,
+                limit=normalized_params.get("limit"),
+                sort_direction=str(normalized_params.get("sortDirection") or "asc"),
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000
         self._logger.info("session_core_v2 thread/turns/list", extra={"latency_ms": elapsed_ms})
         data = response.get("data")
@@ -101,15 +129,10 @@ class ThreadServiceV2:
 
     def thread_inject_items(self, *, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
         started = time.perf_counter()
-        response = self._protocol_client.thread_inject_items(thread_id, params)
+        self._protocol_client.thread_inject_items(thread_id, params)
         elapsed_ms = (time.perf_counter() - started) * 1000
         self._logger.info("session_core_v2 thread/inject_items", extra={"latency_ms": elapsed_ms})
-        status = str(response.get("status") or "").strip() or "accepted"
-        if status not in {"accepted", "ok"}:
-            status = "accepted"
-        if status == "ok":
-            status = "accepted"
-        return {"status": status}
+        return {}
 
     def _normalize_thread_config_response(
         self,

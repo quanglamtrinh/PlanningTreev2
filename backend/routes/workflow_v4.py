@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,6 +86,10 @@ def _repository(request: Request) -> Any:
     return request.app.state.workflow_state_repository_v2
 
 
+def _context_builder(request: Request) -> Any:
+    return request.app.state.workflow_context_builder_v2
+
+
 def _workflow_event_broker(request: Request) -> Any:
     return request.app.state.workflow_event_broker
 
@@ -151,8 +155,9 @@ def _sse_frame(envelope: dict[str, Any]) -> str:
     return f"data: {data}\n\n"
 
 
-def _state_response(repository: Any, project_id: str, node_id: str) -> dict[str, Any]:
-    state = repository.read_state(project_id, node_id)
+def _state_response(request: Request, project_id: str, node_id: str) -> dict[str, Any]:
+    state = _service(request).reconcile_stale_native_thread_refs(project_id, node_id)
+    state = _orchestrator(request).reconcile_active_run_from_provider(project_id, node_id)
     return workflow_state_to_response(
         state,
         allowed_actions=derive_allowed_actions(state),
@@ -198,11 +203,37 @@ def _adapt_event_for_v4(repository: Any, event: dict[str, Any], project_id: str)
 @router.get("/v4/projects/{projectId}/nodes/{nodeId}/workflow-state")
 def get_workflow_state_v4(projectId: str, nodeId: str, request: Request) -> JSONResponse:
     try:
-        return JSONResponse(status_code=200, content=_state_response(_repository(request), projectId, nodeId))
+        return JSONResponse(status_code=200, content=_state_response(request, projectId, nodeId))
     except WorkflowV2Error as exc:
         return _workflow_error_response(exc)
     except Exception:
         logger.exception("get_workflow_state_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/projects/{projectId}/nodes/{nodeId}/workflow-context")
+def get_workflow_context_v4(
+    projectId: str,
+    nodeId: str,
+    request: Request,
+    role: ThreadRole = Query("ask_planning"),
+) -> JSONResponse:
+    try:
+        state = _service(request).reconcile_stale_native_thread_refs(projectId, nodeId)
+        packet = _context_builder(request).build_context_packet(
+            project_id=projectId,
+            node_id=nodeId,
+            role=role,
+            workflow_state=state,
+        )
+        content = packet.model_dump(by_alias=True, mode="json")
+        content["contextPacketHash"] = packet.packet_hash()
+        content["contextPayload"] = packet.ui_context_payload()
+        return JSONResponse(status_code=200, content=content)
+    except WorkflowV2Error as exc:
+        return _workflow_error_response(exc)
+    except Exception:
+        logger.exception("get_workflow_context_v4 failed")
         return _unexpected_error_response()
 
 

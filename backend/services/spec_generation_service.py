@@ -56,12 +56,14 @@ class SpecGenerationService:
         codex_client: CodexAppClient,
         thread_lineage_service: ThreadLineageService,
         spec_gen_timeout: int,
+        artifact_turn_runner: Any | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
         self._thread_lineage_service = thread_lineage_service
         self._timeout = int(spec_gen_timeout)
+        self._artifact_turn_runner = artifact_turn_runner
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}
 
@@ -199,6 +201,7 @@ class SpecGenerationService:
             self._write_spec_content(
                 project_id, node_id, spec_content, source_frame_revision
             )
+            self._refresh_ask_context(project_id, node_id)
             self._mark_job_completed(project_id, node_id, job_id)
         except ProjectNotFound:
             self._clear_live_job(project_id, node_id, job_id)
@@ -315,6 +318,15 @@ class SpecGenerationService:
     # ── Thread management ──────────────────────────────────────────
 
     def _ensure_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        if self._artifact_turn_runner is not None:
+            return str(
+                self._artifact_turn_runner.ensure_ask_thread(
+                    project_id=project_id,
+                    node_id=node_id,
+                    workspace_root=workspace_root,
+                    artifact_kind="spec",
+                )
+            )
         base_instructions, dynamic_tools = build_ask_planning_thread_config()
         try:
             session = self._thread_lineage_service.ensure_forked_thread(
@@ -347,6 +359,18 @@ class SpecGenerationService:
         prompt: str,
         workspace_root: str | None,
     ) -> dict[str, Any]:
+        if self._artifact_turn_runner is not None:
+            return self._artifact_turn_runner.run_prompt(
+                project_id=project_id,
+                node_id=node_id,
+                thread_id=thread_id,
+                prompt=prompt,
+                artifact_kind="spec",
+                cwd=workspace_root,
+                output_schema=build_spec_output_schema(),
+                sandbox_policy={"type": "readOnly"},
+                timeout_sec=self._timeout,
+            )
         try:
             return self._codex_client.run_turn_streaming(
                 prompt,
@@ -377,6 +401,8 @@ class SpecGenerationService:
             )
 
     def _rebuild_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        if self._artifact_turn_runner is not None:
+            return self._ensure_ask_thread(project_id, node_id, workspace_root)
         base_instructions, dynamic_tools = build_ask_planning_thread_config()
         try:
             session = self._thread_lineage_service.rebuild_from_ancestor(
@@ -400,6 +426,15 @@ class SpecGenerationService:
     @staticmethod
     def _is_instructions_required_error(exc: Exception) -> bool:
         return _INSTRUCTIONS_REQUIRED_MESSAGE in str(exc).lower()
+
+    def _refresh_ask_context(self, project_id: str, node_id: str) -> None:
+        if self._artifact_turn_runner is None:
+            return
+        self._artifact_turn_runner.refresh_ask_context(
+            project_id=project_id,
+            node_id=node_id,
+            artifact_kind="spec",
+        )
 
     # ── State persistence ──────────────────────────────────────────
 

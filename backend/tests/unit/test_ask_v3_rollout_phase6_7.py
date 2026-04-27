@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi.testclient import TestClient
 
 from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
-
-
-def _attach_project(client: TestClient, workspace_root: Path) -> tuple[str, str]:
-    response = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
-    assert response.status_code == 200
-    payload = response.json()
-    return payload["project"]["id"], payload["tree_state"]["root_node_id"]
 
 
 def test_ask_rollout_metrics_service_computes_rates() -> None:
@@ -51,66 +42,3 @@ def test_bootstrap_ask_rollout_metrics_event_endpoints(client: TestClient) -> No
     updated_payload = updated.json()
     assert updated_payload["ask_stream_reconnect_total"] == 1
     assert updated_payload["ask_stream_error_total"] == 1
-
-
-def test_chat_handlers_use_unified_v3_contract(client: TestClient) -> None:
-    session = client.get("/v3/projects/project-x/nodes/node-y/chat/session")
-    assert session.status_code == 400
-    assert session.json()["code"] == "invalid_project_id"
-
-    message = client.post(
-        "/v3/projects/project-x/nodes/node-y/chat/message",
-        json={"content": "hello"},
-    )
-    assert message.status_code == 400
-    assert message.json()["code"] == "invalid_project_id"
-
-    reset = client.post("/v3/projects/project-x/nodes/node-y/chat/reset")
-    assert reset.status_code == 400
-    assert reset.json()["code"] == "invalid_project_id"
-
-    events = client.get("/v3/projects/project-x/nodes/node-y/chat/events")
-    assert events.status_code == 400
-    assert events.json()["code"] == "invalid_project_id"
-
-
-def test_v3_ask_by_id_returns_typed_error_when_backend_gate_off(
-    client: TestClient,
-    workspace_root: Path,
-) -> None:
-    project_id, node_id = _attach_project(client, workspace_root)
-    thread_id = "ask-thread-disabled-1"
-    storage = client.app.state.storage
-
-    storage.thread_registry_store.write_entry(
-        project_id,
-        node_id,
-        "ask_planning",
-        {
-            "projectId": project_id,
-            "nodeId": node_id,
-            "threadRole": "ask_planning",
-            "threadId": thread_id,
-            "forkReason": "ask_bootstrap",
-            "lineageRootThreadId": thread_id,
-        },
-    )
-
-    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "ask_planning")
-    snapshot["threadId"] = thread_id
-    snapshot["snapshotVersion"] = 1
-    storage.thread_snapshot_store_v2.write_snapshot(project_id, node_id, "ask_planning", snapshot)
-
-    client.app.state.ask_v3_backend_enabled = False
-    try:
-        response = client.get(
-            f"/v3/projects/{project_id}/threads/by-id/{thread_id}",
-            params={"node_id": node_id},
-        )
-    finally:
-        client.app.state.ask_v3_backend_enabled = True
-
-    assert response.status_code == 409
-    payload = response.json()
-    assert payload["ok"] is False
-    assert payload["error"]["code"] == "ask_v3_disabled"

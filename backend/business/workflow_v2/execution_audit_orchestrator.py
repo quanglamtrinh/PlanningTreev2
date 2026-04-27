@@ -4,10 +4,10 @@ import copy
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Callable
 
-from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.chat_prompt_builder import build_package_review_prompt
 from backend.business.workflow_v2.errors import (
     WorkflowActionNotAllowedError,
@@ -15,6 +15,10 @@ from backend.business.workflow_v2.errors import (
     WorkflowIdempotencyConflictError,
 )
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
+from backend.business.workflow_v2.execution_audit_helpers import (
+    GitArtifactService,
+    WorkflowMetadataService,
+)
 from backend.business.workflow_v2.models import (
     AuditRunV2,
     ExecutionRunV2,
@@ -26,18 +30,36 @@ from backend.business.workflow_v2.models import (
 )
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.state_machine import (
+    block as transition_block,
+)
+from backend.business.workflow_v2.state_machine import (
     complete_audit as transition_complete_audit,
+)
+from backend.business.workflow_v2.state_machine import (
     complete_execution as transition_complete_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     derive_allowed_actions,
+)
+from backend.business.workflow_v2.state_machine import (
     improve_execution as transition_improve_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     mark_done_from_audit as transition_mark_done_from_audit,
+)
+from backend.business.workflow_v2.state_machine import (
     mark_done_from_execution as transition_mark_done_from_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     start_audit as transition_start_audit,
+)
+from backend.business.workflow_v2.state_machine import (
     start_execution as transition_start_execution,
+)
+from backend.business.workflow_v2.state_machine import (
     start_package_review as transition_start_package_review,
 )
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
-from backend.business.workflow_v2.execution_audit_helpers import GitArtifactService, WorkflowMetadataService
 from backend.errors.app_errors import AppError, NodeNotFound
 from backend.session_core_v2.errors import SessionCoreError
 from backend.storage.file_utils import iso_now, new_id
@@ -71,6 +93,7 @@ class ExecutionAuditOrchestratorV2:
         self._metadata_service = WorkflowMetadataService(tree_service, finish_task_service)
         self._artifact_service = GitArtifactService(git_checkpoint_service)
         self._settlement_mismatch_count = 0
+        self._last_reconcile_ms_by_turn: dict[tuple[str, str], int] = {}
 
     def get_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         return _public_state(self._repository.read_state(project_id, node_id))
@@ -91,6 +114,68 @@ class ExecutionAuditOrchestratorV2:
             "executionRunId": run_id,
             "workflowState": _public_state(state),
         }
+
+    def reconcile_active_run_from_provider(
+        self,
+        project_id: str,
+        node_id: str,
+        *,
+        force: bool = False,
+    ) -> NodeWorkflowStateV2:
+        state = self._repository.read_state(project_id, node_id)
+        if state.phase == "executing":
+            run_id = state.active_execution_run_id
+            run = state.execution_runs.get(str(run_id or ""))
+            kind = "execution"
+        elif state.phase == "audit_running":
+            run_id = state.active_audit_run_id
+            run = state.audit_runs.get(str(run_id or ""))
+            kind = "audit"
+        else:
+            return state
+        if run is None or not run.thread_id or not run.turn_id:
+            return state
+        key = (str(run.thread_id), str(run.turn_id))
+        now_ms = int(time.time() * 1000)
+        if not force and now_ms - int(self._last_reconcile_ms_by_turn.get(key) or 0) < 5_000:
+            return state
+        self._last_reconcile_ms_by_turn[key] = now_ms
+        recover = getattr(self._session_manager, "thread_recover", None)
+        if callable(recover):
+            try:
+                recover(thread_id=run.thread_id, payload={"source": "workflow_reconcile", "kind": kind})
+            except Exception:
+                logger.debug(
+                    "workflow_v2 provider recovery failed during active run reconcile",
+                    exc_info=True,
+                    extra={"projectId": project_id, "nodeId": node_id, "threadId": run.thread_id, "turnId": run.turn_id},
+                )
+        runtime_turn_getter = getattr(self._session_manager, "get_runtime_turn", None)
+        if not callable(runtime_turn_getter):
+            return self._repository.read_state(project_id, node_id)
+        try:
+            turn = runtime_turn_getter(thread_id=run.thread_id, turn_id=run.turn_id)
+        except Exception:
+            logger.debug(
+                "workflow_v2 runtime turn lookup failed during active run reconcile",
+                exc_info=True,
+                extra={"projectId": project_id, "nodeId": node_id, "threadId": run.thread_id, "turnId": run.turn_id},
+            )
+            return self._repository.read_state(project_id, node_id)
+        if not isinstance(turn, dict):
+            return self._repository.read_state(project_id, node_id)
+        status = str(turn.get("status") or "").strip()
+        if status not in {"completed", "failed", "interrupted"}:
+            return self._repository.read_state(project_id, node_id)
+        settled = self.settle_terminal_turn(
+            thread_id=run.thread_id,
+            turn_id=run.turn_id,
+            status=status,
+            turn=turn,
+        )
+        if isinstance(settled, dict) and isinstance(settled.get("workflowState"), dict):
+            return self._repository.read_state(project_id, node_id)
+        return self._repository.read_state(project_id, node_id)
 
     def start_execution(
         self,
@@ -127,11 +212,7 @@ class ExecutionAuditOrchestratorV2:
             node_id,
             validate_finish_task=True,
         )
-        prompt = build_execution_prompt(
-            spec_content=metadata["specContent"],
-            frame_content=metadata["frameContent"],
-            task_context=metadata["taskContext"],
-        )
+        prompt = self._metadata_service.build_execution_start_prompt()
         return self._start_execution_turn(
             project_id,
             node_id,
@@ -508,8 +589,7 @@ class ExecutionAuditOrchestratorV2:
         replay = self._resolve_idempotent(state, "request_improvements", key, payload_hash)
         if replay is not None:
             return replay
-        decision = state.current_audit_decision
-        review_text = str(decision.final_review_text if decision is not None and decision.final_review_text else "").strip()
+        review_text = self._resolve_review_text_for_improvement(state)
         if not review_text:
             raise WorkflowActionNotAllowedError(
                 "improve_in_execution",
@@ -547,6 +627,43 @@ class ExecutionAuditOrchestratorV2:
             summary_seed=review_text,
             execution_run_id=execution_run_id,
         )
+
+    def _resolve_review_text_for_improvement(self, state: NodeWorkflowStateV2) -> str:
+        decision = state.current_audit_decision
+        decision_text = str(decision.final_review_text if decision is not None and decision.final_review_text else "").strip()
+        if decision_text:
+            return decision_text
+
+        audit_run_id = (
+            decision.source_audit_run_id
+            if decision is not None and decision.source_audit_run_id
+            else state.latest_audit_run_id
+        )
+        audit_run = state.audit_runs.get(str(audit_run_id or ""))
+        if audit_run is None:
+            return ""
+
+        run_text = str(audit_run.final_review_text or "").strip()
+        if run_text:
+            return run_text
+
+        runtime_turn_getter = getattr(self._session_manager, "get_runtime_turn", None)
+        if not callable(runtime_turn_getter):
+            return ""
+        thread_id = str(audit_run.thread_id or "").strip()
+        turn_id = str(audit_run.turn_id or "").strip()
+        if not thread_id or not turn_id:
+            return ""
+        try:
+            turn = runtime_turn_getter(thread_id=thread_id, turn_id=turn_id)
+        except Exception:
+            logger.debug(
+                "workflow_v2 improve review text fallback runtime lookup failed",
+                exc_info=True,
+                extra={"threadId": thread_id, "turnId": turn_id},
+            )
+            return ""
+        return str(_extract_final_review_text(turn) or "").strip()
 
     def start_package_review(
         self,
@@ -664,12 +781,6 @@ class ExecutionAuditOrchestratorV2:
         event_seq: int | None = None,
     ) -> dict[str, Any] | None:
         terminal_status = str(status or "").strip() or str((turn or {}).get("status") or "").strip()
-        if terminal_status and terminal_status != "completed":
-            logger.info(
-                "Workflow V2 terminal turn settlement skipped for non-completed turn",
-                extra={"threadId": thread_id, "turnId": turn_id, "status": terminal_status},
-            )
-            return None
         match = self._find_active_run_by_turn(thread_id=thread_id, turn_id=turn_id)
         if match is None:
             self._settlement_mismatch_count += 1
@@ -684,6 +795,17 @@ class ExecutionAuditOrchestratorV2:
             )
             return None
         kind, project_id, node_id, state = match
+        if terminal_status and terminal_status != "completed":
+            return self._fail_terminal_turn(
+                kind=kind,
+                project_id=project_id,
+                node_id=node_id,
+                state=state,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                status=terminal_status,
+                turn=turn,
+            )
         logger.info(
             "workflow_v2 settle terminal turn",
             extra={
@@ -696,8 +818,8 @@ class ExecutionAuditOrchestratorV2:
                 "activeAuditRunId": state.active_audit_run_id,
             },
         )
-        text = _extract_turn_text(turn)
         if kind == "execution":
+            text = _extract_turn_text(turn)
             run_id = state.active_execution_run_id or state.latest_execution_run_id
             return self.complete_execution(
                 project_id,
@@ -715,6 +837,7 @@ class ExecutionAuditOrchestratorV2:
         )
         if not review_commit_sha:
             return None
+        text = _extract_final_review_text(turn)
         return self.complete_audit(
             project_id,
             node_id,
@@ -722,6 +845,47 @@ class ExecutionAuditOrchestratorV2:
             review_commit_sha=review_commit_sha,
             final_review_text=text,
         )
+
+    def _fail_terminal_turn(
+        self,
+        *,
+        kind: str,
+        project_id: str,
+        node_id: str,
+        state: NodeWorkflowStateV2,
+        thread_id: str,
+        turn_id: str,
+        status: str,
+        turn: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        message = _terminal_turn_error_message(status=status, turn=turn)
+        error = {
+            "code": "ERR_WORKFLOW_TURN_FAILED",
+            "message": message,
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "status": status,
+        }
+        next_state = transition_block(state, reason=message, error=error)
+        if kind == "execution":
+            next_state = _update_execution_run(
+                next_state,
+                run_id=state.active_execution_run_id or state.latest_execution_run_id,
+                status="failed",
+                completed_at=utc_now_iso(),
+                error_message=message,
+            )
+        else:
+            next_state = _update_audit_run(
+                next_state,
+                run_id=state.active_audit_run_id or state.latest_audit_run_id,
+                status="failed",
+                completed_at=utc_now_iso(),
+                error_message=message,
+            )
+        persisted = self._repository.write_state(project_id, node_id, next_state)
+        self._publish_state_changed(persisted, action="start_execution" if kind == "execution" else "start_audit", reason="turn_failed")
+        return {"workflowState": _public_state(persisted)}
 
     def _start_execution_turn(
         self,
@@ -939,7 +1103,6 @@ class ExecutionAuditOrchestratorV2:
         model: str | None,
     ) -> str:
         payload: dict[str, Any] = {
-            "clientActionId": client_action_id,
             "input": [{"type": "text", "text": text}],
         }
         if cwd:
@@ -965,7 +1128,6 @@ class ExecutionAuditOrchestratorV2:
                 status_code=502,
                 details={
                     "threadId": thread_id,
-                    "clientActionId": client_action_id,
                     "providerMethod": "turn/start",
                 },
             )
@@ -1198,13 +1360,58 @@ def _extract_turn_text(turn: dict[str, Any] | None) -> str | None:
     for item in turn.get("items") or []:
         if not isinstance(item, dict):
             continue
-        item_type = str(item.get("type") or item.get("kind") or "").strip()
-        if item_type not in {"agentMessage", "message", "assistantMessage"}:
+        if not _is_assistant_message_item(item):
             continue
-        text = item.get("text") or item.get("content")
-        if isinstance(text, str) and text.strip():
+        text = _extract_item_text(item)
+        if text:
             chunks.append(text.strip())
     return "\n\n".join(chunks) or None
+
+
+def _extract_final_review_text(turn: dict[str, Any] | None) -> str | None:
+    if not isinstance(turn, dict):
+        return None
+    items = turn.get("items")
+    if not isinstance(items, list):
+        return None
+    for item in reversed(items):
+        if not isinstance(item, dict):
+            continue
+        if not _is_assistant_message_item(item):
+            continue
+        text = _extract_item_text(item)
+        if text:
+            return text
+    return None
+
+
+def _is_assistant_message_item(item: dict[str, Any]) -> bool:
+    item_type = str(item.get("type") or item.get("kind") or "").strip()
+    if item_type not in {"agentMessage", "message", "assistantMessage"}:
+        return False
+    role = str(item.get("role") or "").strip().lower()
+    return role in {"", "agent", "assistant"}
+
+
+def _extract_item_text(item: dict[str, Any]) -> str | None:
+    for key in ("text", "output", "aggregatedOutput", "stdout"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    content = item.get("content")
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for part in content:
+            if isinstance(part, str) and part.strip():
+                chunks.append(part.strip())
+            elif isinstance(part, dict):
+                text = part.get("text") or part.get("content")
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text.strip())
+        return "\n".join(chunks) or None
+    return None
 
 
 def _require_key(idempotency_key: str) -> str:
@@ -1221,6 +1428,15 @@ def _record_key(action: str, idempotency_key: str) -> str:
 def _payload_hash(payload: dict[str, Any]) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def _terminal_turn_error_message(*, status: str, turn: dict[str, Any] | None) -> str:
+    error = turn.get("error") if isinstance(turn, dict) else None
+    if isinstance(error, dict):
+        message = str(error.get("message") or "").strip()
+        if message:
+            return message
+    return f"Workflow turn ended with status {status or 'failed'}."
 
 
 def _public_action(action: str) -> WorkflowAction | None:
@@ -1243,6 +1459,7 @@ def _update_execution_run(
     candidate_workspace_hash: str | None = None,
     summary_text: str | None = None,
     completed_at: str | None = None,
+    error_message: str | None = None,
 ) -> NodeWorkflowStateV2:
     if not run_id:
         return state
@@ -1257,6 +1474,7 @@ def _update_execution_run(
             "candidate_workspace_hash": candidate_workspace_hash or existing.candidate_workspace_hash,
             "summary_text": summary_text if summary_text is not None else existing.summary_text,
             "completed_at": completed_at or existing.completed_at,
+            "error_message": error_message if error_message is not None else existing.error_message,
         },
     )
     return state.model_copy(deep=True, update={"execution_runs": runs})
@@ -1291,6 +1509,7 @@ def _update_audit_run(
     final_review_text: str | None = None,
     review_disposition: str | None = None,
     completed_at: str | None = None,
+    error_message: str | None = None,
 ) -> NodeWorkflowStateV2:
     if not run_id:
         return state
@@ -1306,6 +1525,7 @@ def _update_audit_run(
             "final_review_text": final_review_text if final_review_text is not None else existing.final_review_text,
             "review_disposition": review_disposition if review_disposition is not None else existing.review_disposition,
             "completed_at": completed_at or existing.completed_at,
+            "error_message": error_message if error_message is not None else existing.error_message,
         },
     )
     return state.model_copy(deep=True, update={"audit_runs": runs})

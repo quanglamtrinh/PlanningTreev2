@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipboardEvent, KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ClipboardEvent, CSSProperties, KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 
-export type ComposerAccessMode = 'full-access' | 'default-permissions'
+export type ComposerAccessMode = 'full-access' | 'default-permissions' | 'read-only'
 export type ComposerEffortLevel = 'Low' | 'Medium' | 'High' | 'Extra High'
 export type ComposerEffortIntent = 'low' | 'medium' | 'high' | 'extra-high'
 export type ComposerWorkMode = 'local' | 'remote'
@@ -46,6 +47,8 @@ type ComposerPaneProps = {
 }
 
 type ActivePopup = 'none' | 'command' | 'file' | 'skill'
+type ComposerMenu = 'none' | 'model-effort' | 'permissions'
+type ComposerMenuPosition = { top: number; left: number }
 
 type RichHistoryEntry = {
   text: string
@@ -69,6 +72,12 @@ const COMMAND_SUGGESTIONS = ['/plan', '/review', '/test', '/status']
 const ACCESS_MODE_LABELS: Record<ComposerAccessMode, string> = {
   'full-access': 'Full access',
   'default-permissions': 'Default permissions',
+  'read-only': 'Read-only',
+}
+const ACCESS_MODE_DESCRIPTIONS: Record<ComposerAccessMode, string> = {
+  'full-access': 'No approval prompts, full sandbox access',
+  'default-permissions': 'Ask before risky actions, workspace write sandbox',
+  'read-only': 'Ask before actions, read-only sandbox',
 }
 const EFFORT_LEVEL_VALUES: Record<ComposerEffortLevel, ComposerEffortIntent> = {
   Low: 'low',
@@ -76,6 +85,8 @@ const EFFORT_LEVEL_VALUES: Record<ComposerEffortLevel, ComposerEffortIntent> = {
   High: 'high',
   'Extra High': 'extra-high',
 }
+const EFFORT_LEVELS: ComposerEffortLevel[] = ['Low', 'Medium', 'High', 'Extra High']
+const DEFAULT_EFFORT_LEVEL: ComposerEffortLevel = 'High'
 const WORK_MODE_LABELS: Record<ComposerWorkMode, string> = {
   local: 'locally',
   remote: 'remote',
@@ -187,8 +198,14 @@ export function ComposerPane({
 }: ComposerPaneProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const permissionsDropdownRef = useRef<HTMLDivElement | null>(null)
+  const modelDropdownRef = useRef<HTMLDivElement | null>(null)
+  const permissionsMenuRef = useRef<HTMLDivElement | null>(null)
+  const modelMenuRef = useRef<HTMLDivElement | null>(null)
   const [draft, setDraft] = useState('')
   const [activePopup, setActivePopup] = useState<ActivePopup>('none')
+  const [activeComposerMenu, setActiveComposerMenu] = useState<ComposerMenu>('none')
+  const [composerMenuPosition, setComposerMenuPosition] = useState<ComposerMenuPosition | null>(null)
   const [persistentHistory, setPersistentHistory] = useState<string[]>(() => loadPersistentHistory())
   const [localHistory, setLocalHistory] = useState<RichHistoryEntry[]>([])
   const [historyCursor, setHistoryCursor] = useState<number | null>(null)
@@ -200,14 +217,73 @@ export function ComposerPane({
   const [mentionBindings, setMentionBindings] = useState<Record<string, string>>({})
   const [pasteBurstUntilMs, setPasteBurstUntilMs] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [effortLevel, setEffortLevel] = useState<ComposerEffortLevel>('Extra High')
+  const [effortLevel, setEffortLevel] = useState<ComposerEffortLevel>(DEFAULT_EFFORT_LEVEL)
   const [workMode, setWorkMode] = useState<ComposerWorkMode>('local')
   const [streamMode, setStreamMode] = useState<ComposerStreamMode>('streaming')
   const [accessMode, setAccessMode] = useState<ComposerAccessMode>('full-access')
+  const [isModelSubmenuOpen, setIsModelSubmenuOpen] = useState(false)
 
   useEffect(() => {
     savePersistentHistory(persistentHistory)
   }, [persistentHistory])
+
+  useEffect(() => {
+    if (activeComposerMenu === 'none') {
+      return
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      const triggerNode = activeComposerMenu === 'permissions' ? permissionsDropdownRef.current : modelDropdownRef.current
+      const menuNode = activeComposerMenu === 'permissions' ? permissionsMenuRef.current : modelMenuRef.current
+      if (triggerNode?.contains(target) || menuNode?.contains(target)) {
+        return
+      }
+      setIsModelSubmenuOpen(false)
+      setActiveComposerMenu('none')
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsModelSubmenuOpen(false)
+        setActiveComposerMenu('none')
+      }
+    }
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [activeComposerMenu])
+
+  useLayoutEffect(() => {
+    if (activeComposerMenu === 'none') {
+      setComposerMenuPosition(null)
+      return
+    }
+
+    const updatePosition = () => {
+      const anchor = activeComposerMenu === 'permissions' ? permissionsDropdownRef.current : modelDropdownRef.current
+      if (!anchor) {
+        return
+      }
+      const rect = anchor.getBoundingClientRect()
+      const menuWidth = activeComposerMenu === 'permissions' ? 280 : 260
+      const rawLeft = activeComposerMenu === 'permissions' ? rect.left : rect.right - menuWidth
+      const maxLeft = Math.max(8, window.innerWidth - menuWidth - 8)
+      setComposerMenuPosition({
+        top: Math.max(8, rect.top - 8),
+        left: Math.min(Math.max(8, rawLeft), maxLeft),
+      })
+    }
+
+    updatePosition()
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [activeComposerMenu])
 
   const historyText = useMemo(() => {
     const merged = [...localHistory.map((entry) => entry.text), ...persistentHistory]
@@ -409,7 +485,13 @@ export function ComposerPane({
     setLocalImages((previous) => [...previous, ...paths.filter((path) => !previous.includes(path))])
   }
 
-  const shouldShowModelPicker = modelOptions.length > 0 || Boolean(selectedModel) || isModelLoading
+  const modelMenuOptions = useMemo(() => {
+    const rows = [...modelOptions]
+    if (selectedModel && !rows.some((option) => option.value === selectedModel)) {
+      rows.unshift({ value: selectedModel, label: selectedModel })
+    }
+    return rows
+  }, [modelOptions, selectedModel])
 
   const selectedModelLabel = useMemo(() => {
     if (isModelLoading) return 'Loading...'
@@ -417,14 +499,12 @@ export function ComposerPane({
     const found = modelOptions.find((o) => o.value === selectedModel)
     return found?.label ?? selectedModel
   }, [isModelLoading, modelOptions, selectedModel])
+  const modelEffortLabel = `${selectedModel ? selectedModelLabel : 'Model'} ${effortLevel}`
   const cwdLabel = (currentCwd ?? '').trim()
   const hasCwdLabel = cwdLabel.length > 0
-
-  const cycleEffort = () => {
-    const levels: typeof effortLevel[] = ['Low', 'Medium', 'High', 'Extra High']
-    const idx = levels.indexOf(effortLevel)
-    setEffortLevel(levels[(idx + 1) % levels.length])
-  }
+  const composerMenuPortalStyle: CSSProperties | undefined = composerMenuPosition
+    ? { top: composerMenuPosition.top, left: composerMenuPosition.left }
+    : undefined
 
   return (
     <section className="sessionV2Composer">
@@ -558,22 +638,29 @@ export function ComposerPane({
               </svg>
             </button>
 
-            {/* Access level pill */}
-            <button
-              type="button"
-              className="sessionV2ComposerPill sessionV2ComposerPillAccess"
-              onClick={() => setAccessMode((prev) => prev === 'full-access' ? 'default-permissions' : 'full-access')}
-              title="Toggle access mode"
-            >
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M8 4v4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              {ACCESS_MODE_LABELS[accessMode]}
-              <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true" fill="none">
-                <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+            <div className="sessionV2ComposerDropdown" ref={permissionsDropdownRef}>
+              <button
+                type="button"
+                className="sessionV2ComposerPill sessionV2ComposerPillAccess"
+                onClick={() => {
+                  setIsModelSubmenuOpen(false)
+                  setActiveComposerMenu((prev) => prev === 'permissions' ? 'none' : 'permissions')
+                }}
+                disabled={disabled || isSubmitting}
+                title="Select access mode"
+                aria-haspopup="menu"
+                aria-expanded={activeComposerMenu === 'permissions'}
+              >
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M8 4v4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                {ACCESS_MODE_LABELS[accessMode]}
+                <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true" fill="none">
+                  <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
 
             <button
               type="button"
@@ -605,53 +692,29 @@ export function ComposerPane({
               </button>
             ) : null}
 
-            {/* Model picker */}
-            {shouldShowModelPicker ? (
-              <div className="sessionV2ComposerModelWrap">
+            <div className="sessionV2ComposerDropdown" ref={modelDropdownRef}>
+              <button
+                type="button"
+                className="sessionV2ComposerPill sessionV2ComposerPillModelEffort"
+                onClick={() => {
+                  setIsModelSubmenuOpen(false)
+                  setActiveComposerMenu(activeComposerMenu === 'model-effort' ? 'none' : 'model-effort')
+                }}
+                disabled={disabled || isSubmitting}
+                title={`Model and thinking effort: ${modelEffortLabel}`}
+                aria-label="Select model and thinking effort"
+                aria-haspopup="menu"
+                aria-expanded={activeComposerMenu === 'model-effort'}
+              >
                 {isModelLoading ? (
                   <span className="sessionV2ComposerModelSpinner" aria-hidden="true" />
                 ) : null}
-                <select
-                  className="sessionV2ComposerModelSelect"
-                  value={selectedModel ?? ''}
-                  onChange={(event) => onModelChange?.(event.target.value)}
-                  disabled={disabled || isSubmitting || isModelLoading || !onModelChange}
-                  aria-label="Select model"
-                  title={selectedModelLabel}
-                >
-                  {selectedModel && !modelOptions.some((option) => option.value === selectedModel) ? (
-                    <option value={selectedModel}>{selectedModel}</option>
-                  ) : null}
-                  {!selectedModel ? (
-                    <option value="" disabled>
-                      {isModelLoading ? 'Loading models...' : modelOptions.length > 0 ? 'Select model' : 'No models'}
-                    </option>
-                  ) : null}
-                  {modelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <span className="sessionV2ComposerModelLabel">{selectedModelLabel}</span>
-                <svg className="sessionV2ComposerModelChevron" viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
+                <span className="sessionV2ComposerModelEffortLabel">{modelEffortLabel}</span>
+                <svg viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
                   <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
-              </div>
-            ) : null}
-
-            {/* Effort level */}
-            <button
-              type="button"
-              className="sessionV2ComposerPill"
-              onClick={cycleEffort}
-              title="Thinking effort level"
-            >
-              {effortLevel}
-              <svg viewBox="0 0 10 6" width="9" height="9" aria-hidden="true" fill="none">
-                <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+              </button>
+            </div>
 
             {/* Mic button */}
             <button
@@ -725,6 +788,135 @@ export function ComposerPane({
           </button>
         </div>
       </div>
+
+      {activeComposerMenu === 'permissions' && composerMenuPortalStyle && typeof document !== 'undefined'
+        ? createPortal(
+          <div
+            ref={permissionsMenuRef}
+            className="sessionV2ComposerDropdownMenu sessionV2ComposerDropdownMenuPortal sessionV2ComposerDropdownMenuLeft"
+            role="menu"
+            style={composerMenuPortalStyle}
+          >
+            <div className="sessionV2ComposerDropdownSectionLabel">Permissions</div>
+            {(['full-access', 'default-permissions', 'read-only'] as ComposerAccessMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className="sessionV2ComposerDropdownItem"
+                role="menuitemradio"
+                aria-checked={accessMode === mode}
+                onClick={() => {
+                  setAccessMode(mode)
+                  setActiveComposerMenu('none')
+                }}
+              >
+                <span className="sessionV2ComposerDropdownItemText">
+                  <span>{ACCESS_MODE_LABELS[mode]}</span>
+                  <span>{ACCESS_MODE_DESCRIPTIONS[mode]}</span>
+                </span>
+                <span className="sessionV2ComposerDropdownCheck" aria-hidden="true">
+                  {accessMode === mode ? '✓' : ''}
+                </span>
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )
+        : null}
+
+      {activeComposerMenu === 'model-effort' && composerMenuPortalStyle && typeof document !== 'undefined'
+        ? createPortal(
+          <div
+            ref={modelMenuRef}
+            className="sessionV2ComposerDropdownMenu sessionV2ComposerDropdownMenuPortal sessionV2ComposerDropdownMenuRight sessionV2ComposerModelEffortMenu"
+            role="menu"
+            style={composerMenuPortalStyle}
+          >
+            <div className="sessionV2ComposerDropdownSectionLabel">Intelligence</div>
+            {EFFORT_LEVELS.map((level) => (
+              <button
+                key={level}
+                type="button"
+                className="sessionV2ComposerDropdownItem"
+                role="menuitemradio"
+                aria-checked={effortLevel === level}
+                onClick={() => {
+                  setEffortLevel(level)
+                  setActiveComposerMenu('none')
+                }}
+              >
+                <span className="sessionV2ComposerDropdownItemText">
+                  <span>{level}</span>
+                </span>
+                <span className="sessionV2ComposerDropdownCheck" aria-hidden="true">
+                  {effortLevel === level ? '✓' : ''}
+                </span>
+              </button>
+            ))}
+            <div className="sessionV2ComposerDropdownDivider" />
+            <div className="sessionV2ComposerDropdownSectionLabel">Model</div>
+            {isModelLoading ? (
+              <div className="sessionV2ComposerDropdownEmpty">Loading models...</div>
+            ) : modelMenuOptions.length > 0 ? (
+              <div
+                className="sessionV2ComposerSubmenu"
+                onMouseEnter={() => setIsModelSubmenuOpen(true)}
+                onFocus={() => setIsModelSubmenuOpen(true)}
+              >
+                <button
+                  type="button"
+                  className="sessionV2ComposerDropdownItem sessionV2ComposerDropdownSubmenuTrigger"
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={isModelSubmenuOpen}
+                  disabled={!onModelChange}
+                  onClick={() => {
+                    setIsModelSubmenuOpen((value) => !value)
+                  }}
+                >
+                  <span className="sessionV2ComposerDropdownItemText">
+                    <span>{selectedModelLabel}</span>
+                  </span>
+                  <span className="sessionV2ComposerDropdownChevron" aria-hidden="true">
+                    ›
+                  </span>
+                </button>
+                {isModelSubmenuOpen ? (
+                  <div className="sessionV2ComposerDropdownMenu sessionV2ComposerModelSubmenu" role="menu">
+                    <div className="sessionV2ComposerDropdownSectionLabel">Change model</div>
+                    {modelMenuOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className="sessionV2ComposerDropdownItem"
+                        role="menuitemradio"
+                        aria-checked={selectedModel === option.value}
+                        disabled={!onModelChange}
+                        onClick={() => {
+                          onModelChange?.(option.value)
+                          setIsModelSubmenuOpen(false)
+                          setActiveComposerMenu('none')
+                        }}
+                      >
+                        <span className="sessionV2ComposerDropdownItemText">
+                          <span>{option.label}</span>
+                          {option.value !== option.label ? <span>{option.value}</span> : null}
+                        </span>
+                        <span className="sessionV2ComposerDropdownCheck" aria-hidden="true">
+                          {selectedModel === option.value ? '✓' : ''}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="sessionV2ComposerDropdownEmpty">No models</div>
+            )}
+          </div>,
+          document.body,
+        )
+        : null}
 
       <input
         ref={fileInputRef}

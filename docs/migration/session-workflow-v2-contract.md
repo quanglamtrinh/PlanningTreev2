@@ -18,7 +18,8 @@ Current public surface is `/v4/session/*`.
 
 Required semantics:
 
-- Turn commands are idempotent by `clientActionId`.
+- Turn commands use Codex app-server payloads and do not carry PlanningTree
+  `clientActionId`; workflow mutations keep idempotency at the workflow layer.
 - Request resolution is idempotent by `resolutionKey`.
 - Event streams are ordered by `eventSeq`; clients detect gaps and reconnect with
   the last `eventId`.

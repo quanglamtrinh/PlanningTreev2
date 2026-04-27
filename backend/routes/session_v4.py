@@ -2,19 +2,26 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator
+from collections.abc import Iterator
 from typing import Any
 
 from fastapi import APIRouter, Body, Query, Request
-from fastapi.responses import JSONResponse
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from backend.session_core_v2.errors import SessionCoreError, error_envelope
 
 router = APIRouter(tags=["session-v4"])
 logger = logging.getLogger(__name__)
-_SESSION_EVENT_PREFIXES: tuple[str, ...] = ("thread/", "turn/", "item/", "serverRequest/")
+_SESSION_EVENT_PREFIXES: tuple[str, ...] = (
+    "thread/",
+    "turn/",
+    "task/",
+    "item/",
+    "hook/",
+    "rawResponseItem/",
+    "serverRequest/",
+)
 _SESSION_EVENT_EXPLICIT_METHODS: frozenset[str] = frozenset({"error"})
 _SESSION_TRACE_METHODS: frozenset[str] = frozenset(
     {
@@ -40,6 +47,13 @@ def _is_allowed_session_event_method(method: str) -> bool:
     if normalized in _SESSION_EVENT_EXPLICIT_METHODS:
         return True
     return normalized.startswith(_SESSION_EVENT_PREFIXES)
+
+
+def _sse_event_name_for_method(method: str) -> str:
+    normalized = str(method or "").strip()
+    if normalized == "error":
+        return "session/error"
+    return normalized or "message"
 
 
 def _ok(data: dict[str, Any]) -> dict[str, Any]:
@@ -155,13 +169,16 @@ class ThreadResumeRequest(ThreadConfigOverrides):
     pass
 
 
+class ThreadRecoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 class ThreadForkRequest(ThreadConfigOverrides):
     pass
 
 
 class TurnStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    clientActionId: str = Field(min_length=1)
     input: list[dict[str, Any]]
     model: str | None = None
     cwd: str | None = None
@@ -177,19 +194,17 @@ class TurnStartRequest(BaseModel):
 
 class TurnSteerRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    clientActionId: str = Field(min_length=1)
     expectedTurnId: str = Field(min_length=1)
     input: list[dict[str, Any]]
 
 
 class TurnInterruptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    clientActionId: str = Field(min_length=1)
+    pass
 
 
 class InjectItemsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    clientActionId: str = Field(min_length=1)
     items: list[dict[str, Any]] = Field(min_length=1)
 
 
@@ -235,7 +250,7 @@ def session_thread_start_v4(
     payload: ThreadStartRequest | None = Body(default=None),
 ) -> JSONResponse:
     try:
-        response = _manager(request).thread_start((payload.model_dump(exclude_none=True) if payload else {}))
+        response = _manager(request).thread_start(payload.model_dump(exclude_none=True) if payload else {})
         return JSONResponse(status_code=200, content=_ok(response))
     except SessionCoreError as exc:
         return _error_response(exc)
@@ -260,6 +275,25 @@ def session_thread_resume_v4(
         return _error_response(exc)
     except Exception:
         logger.exception("session_thread_resume_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/session/threads/{threadId}/recover")
+def session_thread_recover_v4(
+    threadId: str,
+    request: Request,
+    payload: ThreadRecoverRequest | None = Body(default=None),
+) -> JSONResponse:
+    try:
+        response = _manager(request).thread_recover(
+            thread_id=threadId,
+            payload=(payload.model_dump(exclude_none=True) if payload else {}),
+        )
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_recover_v4 failed")
         return _unexpected_error_response()
 
 
@@ -570,6 +604,21 @@ def session_requests_reject_v4(requestId: str, payload: RejectRequest, request: 
         return _unexpected_error_response()
 
 
+@router.get("/v4/session/threads/{threadId}/events/journal-head")
+def session_thread_events_journal_head_v4(threadId: str, request: Request) -> JSONResponse:
+    """Latest journal sequence for a thread. Used to align the client replay cursor after hydrate (gap recovery)."""
+    if not _events_enabled(request):
+        return _phase_not_enabled("events/journal-head", phase="Phase 2")
+    try:
+        response = _manager(request).get_thread_journal_head(thread_id=threadId)
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_thread_events_journal_head_v4 failed")
+        return _unexpected_error_response()
+
+
 @router.get("/v4/session/threads/{threadId}/events")
 def session_thread_events_v4(
     threadId: str,
@@ -596,15 +645,16 @@ def session_thread_events_v4(
 
         def _encode_sse(event: dict[str, Any]) -> str:
             event_seq = event.get("eventSeq")
-            event_name = str(event.get("method") or "message")
-            if not _is_allowed_session_event_method(event_name):
+            method = str(event.get("method") or "")
+            if not _is_allowed_session_event_method(method):
                 raise SessionCoreError(
                     code="ERR_INTERNAL",
-                    message=f"Session stream received unsupported event method: {event_name}",
+                    message=f"Session stream received unsupported event method: {method}",
                     status_code=500,
-                    details={"threadId": threadId, "method": event_name, "eventSeq": event_seq},
+                    details={"threadId": threadId, "method": method, "eventSeq": event_seq},
                 )
             data = json.dumps(event, ensure_ascii=True)
+            event_name = _sse_event_name_for_method(method)
             return f"id: {event_seq}\nevent: {event_name}\ndata: {data}\n\n"
 
         def _iter_sse() -> Iterator[str]:

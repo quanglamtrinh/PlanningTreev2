@@ -346,6 +346,44 @@ describe('threadSessionStore', () => {
     expect(items[0].payload.text).toBe('same message')
   })
 
+  it('preserves a primed running turn when provider snapshot replace does not include it', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-running',
+        threadId: 'thread-1',
+        status: 'inProgress',
+        lastCodexStatus: 'inProgress',
+        startedAtMs: 10,
+        completedAtMs: null,
+        items: [],
+        error: null,
+        metadata: { primedByWorkflowAction: true },
+      },
+    ])
+
+    store.setThreadTurns(
+      'thread-1',
+      [
+        {
+          id: 'turn-history',
+          threadId: 'thread-1',
+          status: 'completed',
+          lastCodexStatus: 'completed',
+          startedAtMs: 1,
+          completedAtMs: 2,
+          items: [],
+          error: null,
+        },
+      ],
+      { mode: 'replace' },
+    )
+
+    const turns = useThreadSessionStore.getState().turnsByThread['thread-1']
+    expect(turns.map((turn) => turn.id)).toEqual(['turn-history', 'turn-running'])
+    expect(turns.find((turn) => turn.id === 'turn-running')?.status).toBe('inProgress')
+  })
+
   it('maps Codex ThreadItem shape into payload text for transcript rendering', () => {
     const store = useThreadSessionStore.getState()
     const turns = [

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import copy
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,3 +45,12 @@ class PlanningTreeContextPacket(BaseModel):
             f"{body}\n"
             "</planning_tree_context>"
         )
+
+    def ui_context_payload(self) -> dict[str, Any]:
+        if self.kind == "context_update":
+            next_context = self.payload.get("nextContext")
+            if isinstance(next_context, dict):
+                next_payload = next_context.get("payload")
+                if isinstance(next_payload, dict):
+                    return copy.deepcopy(next_payload)
+        return copy.deepcopy(self.payload)

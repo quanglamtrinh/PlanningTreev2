@@ -12,11 +12,11 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.ai.codex_client import CodexAppClient, StdioTransport
 from backend.business.workflow_v2.artifact_orchestrator import ArtifactOrchestratorV2
+from backend.business.workflow_v2.artifact_turn_runner import WorkflowArtifactTurnRunnerV2
 from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV2
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_orchestrator import ExecutionAuditOrchestratorV2
 from backend.business.workflow_v2.legacy_transcript_migrator import LegacyTranscriptMigratorV2
-from backend.business.workflow_v2.legacy_v3_adapter import LegacyWorkflowV3CompatibilityAdapter
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.config.api_version import API_PREFIX
@@ -37,6 +37,7 @@ from backend.config.app_config import (
     get_session_core_v2_retention_days,
     get_session_core_v2_retention_max_events,
     get_session_core_v2_server_request_queue_capacity,
+    get_session_core_v2_thread_read_mode,
     get_spec_gen_timeout,
     get_split_timeout,
     get_sse_subscriber_queue_max,
@@ -67,13 +68,11 @@ from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import (
     artifacts_v4,
     bootstrap,
-    chat,
     codex,
     nodes,
     projects,
     session_v4,
     split,
-    workflow_v3,
     workflow_v4,
 )
 from backend.services.ask_rollout_metrics_service import AskRolloutMetricsService
@@ -132,6 +131,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     session_core_v2_protocol_gate_enabled = is_session_core_v2_protocol_gate_enabled()
     session_core_v2_protocol_gate_timeout_sec = get_session_core_v2_protocol_gate_timeout_sec()
     session_core_v2_legacy_migration_mode = get_session_core_v2_legacy_migration_mode()
+    session_core_v2_thread_read_mode = get_session_core_v2_thread_read_mode()
     codex_cmd = get_codex_cmd() or "codex"
     ask_rollout_metrics_service = AskRolloutMetricsService()
     snapshot_view_service = SnapshotViewService(storage, git_checkpoint_service=git_checkpoint_service)
@@ -315,6 +315,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         runtime_store=session_runtime_store_v2,
         connection_state_machine=session_connection_state_v2,
         thread_rollout_recorder=session_thread_rollout_recorder_v2,
+        thread_read_mode=session_core_v2_thread_read_mode,
     )
     workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
     workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
@@ -325,6 +326,15 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         session_manager=session_manager_v2,
         event_publisher=workflow_event_publisher_v2,
     )
+    artifact_turn_runner_v2 = WorkflowArtifactTurnRunnerV2(
+        thread_binding_service=workflow_thread_binding_service_v2,
+        session_manager=session_manager_v2,
+        timeout_sec=max(get_frame_gen_timeout(), get_clarify_gen_timeout(), get_spec_gen_timeout(), get_split_timeout()),
+    )
+    frame_generation_service._artifact_turn_runner = artifact_turn_runner_v2
+    clarify_generation_service._artifact_turn_runner = artifact_turn_runner_v2
+    spec_generation_service._artifact_turn_runner = artifact_turn_runner_v2
+    split_service._artifact_turn_runner = artifact_turn_runner_v2
     execution_audit_orchestrator_v2 = ExecutionAuditOrchestratorV2(
         repository=workflow_state_repository_v2,
         thread_binding_service=workflow_thread_binding_service_v2,
@@ -335,11 +345,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         finish_task_service=finish_task_service,
         review_service=review_service,
         git_checkpoint_service=git_checkpoint_service,
-    )
-    workflow_v3_compat_adapter = LegacyWorkflowV3CompatibilityAdapter(
-        orchestrator=execution_audit_orchestrator_v2,
-        storage=storage,
-        legacy_event_publisher=workflow_event_publisher,
     )
     artifact_orchestrator_v2 = ArtifactOrchestratorV2(
         repository=workflow_state_repository_v2,
@@ -495,7 +500,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2
     app.state.workflow_thread_binding_service_v2 = workflow_thread_binding_service_v2
     app.state.execution_audit_orchestrator_v2 = execution_audit_orchestrator_v2
-    app.state.workflow_v3_compat_adapter = workflow_v3_compat_adapter
     app.state.artifact_orchestrator_v2 = artifact_orchestrator_v2
     app.state.legacy_transcript_migrator_v2 = legacy_transcript_migrator_v2
     app.state.session_runtime_store_v2 = session_runtime_store_v2
@@ -506,6 +510,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.session_core_v2_enable_events = session_core_v2_enable_events
     app.state.session_core_v2_enable_requests = session_core_v2_enable_requests
     app.state.session_core_v2_legacy_migration_mode = session_core_v2_legacy_migration_mode
+    app.state.session_core_v2_thread_read_mode = session_core_v2_thread_read_mode
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
@@ -534,8 +539,6 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.include_router(projects.router, prefix=API_PREFIX)
     app.include_router(nodes.router, prefix=API_PREFIX)
     app.include_router(split.router, prefix=API_PREFIX)
-    app.include_router(chat.router, prefix=API_PREFIX)
-    app.include_router(workflow_v3.router, prefix=API_PREFIX)
     app.include_router(session_v4.router)
     app.include_router(workflow_v4.router)
     app.include_router(artifacts_v4.router)

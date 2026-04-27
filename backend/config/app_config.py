@@ -5,7 +5,6 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -15,7 +14,7 @@ class AppPaths:
     config_root: Path
 
 
-def get_app_data_root(override: Optional[Path] = None) -> Path:
+def get_app_data_root(override: Path | None = None) -> Path:
     if override is not None:
         return Path(override).expanduser().resolve()
 
@@ -33,7 +32,7 @@ def get_app_data_root(override: Optional[Path] = None) -> Path:
     return (base / "PlanningTree").resolve()
 
 
-def build_app_paths(data_root: Optional[Path] = None) -> AppPaths:
+def build_app_paths(data_root: Path | None = None) -> AppPaths:
     root = get_app_data_root(data_root)
     return AppPaths(
         data_root=root,
@@ -112,7 +111,7 @@ def is_ask_followup_queue_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_FOLLOWUP_QUEUE_ENABLED", default=False)
 
 
-def get_rehearsal_workspace_root() -> Optional[Path]:
+def get_rehearsal_workspace_root() -> Path | None:
     raw = str(os.environ.get("PLANNINGTREE_REHEARSAL_WORKSPACE_ROOT", "") or "").strip()
     if not raw:
         return None
@@ -208,6 +207,13 @@ def get_session_core_v2_legacy_migration_mode() -> str:
     return "warn"
 
 
+def get_session_core_v2_thread_read_mode() -> str:
+    raw = str(os.environ.get("SESSION_CORE_V2_THREAD_READ_MODE", "codex") or "").strip().lower()
+    if raw in {"native", "shadow", "codex"}:
+        return raw
+    return "codex"
+
+
 def get_session_core_v2_retention_max_events() -> int:
     raw = os.environ.get("SESSION_CORE_V2_RETENTION_MAX_EVENTS", "200000")
     try:
@@ -273,7 +279,7 @@ def get_split_model() -> str:
     return os.environ.get("PLANNINGTREE_SPLIT_MODEL", "gpt-4o")
 
 
-def get_codex_cmd() -> Optional[str]:
+def get_codex_cmd() -> str | None:
     explicit = os.environ.get("PLANNINGTREE_CODEX_CMD")
     if explicit:
         resolved = _resolve_binary(explicit)

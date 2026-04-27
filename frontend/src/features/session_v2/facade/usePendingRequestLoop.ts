@@ -3,7 +3,6 @@ import type { MutableRefObject } from 'react'
 
 import type { PendingServerRequest } from '../contracts'
 import { usePendingRequestsStore } from '../store/pendingRequestsStore'
-import type { SessionEventStreamController } from './sessionEventStreamController'
 import type { SessionRuntimeController } from './sessionRuntimeController'
 
 type PendingRequestScope = 'global' | 'activeThread'
@@ -16,7 +15,6 @@ type UsePendingRequestLoopOptions = {
   pendingRequestsStoreState: PendingRequestsStoreState
   pendingRequestScope: PendingRequestScope
   runtimeControllerRef: MutableRefObject<SessionRuntimeController | null>
-  streamControllerRef: MutableRefObject<SessionEventStreamController | null>
   isCurrentLifecycle: () => boolean
   isPrimaryLifecycleOwner: () => boolean
 }
@@ -49,7 +47,6 @@ export function usePendingRequestLoop({
   pendingRequestsStoreState,
   pendingRequestScope,
   runtimeControllerRef,
-  streamControllerRef,
   isCurrentLifecycle,
   isPrimaryLifecycleOwner,
 }: UsePendingRequestLoopOptions) {
@@ -98,19 +95,16 @@ export function usePendingRequestLoop({
       return
     }
 
-    streamControllerRef.current?.open(activeThreadId)
     void pollPendingRequests({ surfaceErrors: false })
 
     return () => {
       stopPendingRequestLoop()
-      streamControllerRef.current?.close(activeThreadId)
     }
   }, [
     activeThreadId,
     isPrimaryLifecycleOwner,
     pollPendingRequests,
     stopPendingRequestLoop,
-    streamControllerRef,
   ])
 
   useEffect(() => {

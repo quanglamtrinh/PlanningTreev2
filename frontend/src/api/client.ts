@@ -18,7 +18,6 @@ import type {
   ReviewState,
   Snapshot,
   StartTurnV2Response,
-  NodeWorkflowView,
   PlanActionV3,
   PlanActionV3Response,
   SpecGenAcceptedResponse,
@@ -29,7 +28,6 @@ import type {
   ConversationItemV3,
   ResolveUserInputV3Response,
   ThreadSnapshotV3,
-  WorkflowActionAcceptedResponse,
   WorkspaceTextFile,
 } from './types'
 
@@ -58,23 +56,6 @@ interface ThreadHistoryPageByIdV3Response {
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
-
-function buildWorkflowStatePathV3(projectId: string, nodeId: string): string {
-  return `/v3/projects/${projectId}/nodes/${nodeId}/workflow-state`
-}
-
-function buildWorkflowActionPathV3(
-  projectId: string,
-  nodeId: string,
-  action:
-    | 'finish-task'
-    | 'mark-done-from-execution'
-    | 'review-in-audit'
-    | 'mark-done-from-audit'
-    | 'improve-in-execution',
-): string {
-  return `/v3/projects/${projectId}/nodes/${nodeId}/workflow/${action}`
-}
 
 function buildThreadByIdBasePathV3(projectId: string, threadId: string): string {
   return `/v3/projects/${projectId}/threads/by-id/${threadId}`
@@ -155,10 +136,6 @@ export function buildThreadByIdEventsUrlV3(
     queryParts.push(`last_event_id=${encodeURIComponent(normalizedLastEventId)}`)
   }
   return `${buildThreadByIdBasePathV3(projectId, threadId)}/events?${queryParts.join('&')}`
-}
-
-export function buildProjectEventsUrlV3(projectId: string): string {
-  return `/v3/projects/${projectId}/events`
 }
 
 let _cachedAuthToken: string | null = null
@@ -396,9 +373,6 @@ export const api = {
   },
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
     return jsonFetch<DetailState>(`/v3/projects/${projectId}/nodes/${nodeId}/detail-state`)
-  },
-  getWorkflowStateV3(projectId: string, nodeId: string): Promise<NodeWorkflowView> {
-    return jsonFetchV2<NodeWorkflowView>(buildWorkflowStatePathV3(projectId, nodeId))
   },
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
     return jsonFetch<ReviewState>(`/v3/projects/${projectId}/nodes/${nodeId}/review-state`)
@@ -649,65 +623,6 @@ export const api = {
     return jsonFetchV2<ResetThreadV3Response>(
       `${buildThreadByIdBasePathV3(projectId, threadId)}/reset?node_id=${encodeURIComponent(nodeId)}`,
       { method: 'POST' },
-    )
-  },
-  finishTaskWorkflowV3(
-    projectId: string,
-    nodeId: string,
-    idempotencyKey: string,
-  ): Promise<WorkflowActionAcceptedResponse> {
-    return jsonFetchV2<WorkflowActionAcceptedResponse>(
-      buildWorkflowActionPathV3(projectId, nodeId, 'finish-task'),
-      { method: 'POST' },
-      { idempotencyKey },
-    )
-  },
-  markDoneFromExecutionV3(
-    projectId: string,
-    nodeId: string,
-    idempotencyKey: string,
-    expectedWorkspaceHash: string,
-  ): Promise<NodeWorkflowView> {
-    return jsonFetchV2<NodeWorkflowView>(
-      buildWorkflowActionPathV3(projectId, nodeId, 'mark-done-from-execution'),
-      { method: 'POST' },
-      { idempotencyKey, expectedWorkspaceHash },
-    )
-  },
-  reviewInAuditV3(
-    projectId: string,
-    nodeId: string,
-    idempotencyKey: string,
-    expectedWorkspaceHash: string,
-  ): Promise<WorkflowActionAcceptedResponse> {
-    return jsonFetchV2<WorkflowActionAcceptedResponse>(
-      buildWorkflowActionPathV3(projectId, nodeId, 'review-in-audit'),
-      { method: 'POST' },
-      { idempotencyKey, expectedWorkspaceHash },
-    )
-  },
-  markDoneFromAuditV3(
-    projectId: string,
-    nodeId: string,
-    idempotencyKey: string,
-    expectedReviewCommitSha: string,
-  ): Promise<NodeWorkflowView> {
-    return jsonFetchV2<NodeWorkflowView>(
-      buildWorkflowActionPathV3(projectId, nodeId, 'mark-done-from-audit'),
-      { method: 'POST' },
-      { idempotencyKey, expectedReviewCommitSha },
-    )
-  },
-  improveInExecutionV3(
-    projectId: string,
-    nodeId: string,
-    idempotencyKey: string,
-    expectedReviewCommitSha: string,
-  ): Promise<WorkflowActionAcceptedResponse> {
-    return jsonFetchV2<WorkflowActionAcceptedResponse>(
-      buildWorkflowActionPathV3(projectId, nodeId, 'improve-in-execution'),
-      { method: 'POST' },
-      { idempotencyKey, expectedReviewCommitSha },
     )
   },
 }

@@ -158,7 +158,7 @@ describe('workflowThreadLaneV2', () => {
     ])
   })
 
-  it('returns no ask lane action when ask planning thread is unbound', () => {
+  it('keeps ask lane writable when ask planning thread is unbound', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState({
         threads: {
@@ -169,6 +169,11 @@ describe('workflowThreadLaneV2', () => {
     })
 
     expect(lane.threadId).toBeNull()
+    expect(lane.policy).toEqual({
+      kind: 'ask',
+      canSubmit: true,
+      disabledReason: null,
+    })
     expect(lane.actions).toEqual([])
   })
 
@@ -281,6 +286,33 @@ describe('workflowThreadLaneV2', () => {
       summary: null,
       serviceTier: undefined,
       outputSchema: undefined,
+    })
+  })
+
+  it('maps read-only composer intent to read-only turn policy', () => {
+    const lane = resolveWorkflowThreadLaneV2({
+      workflowState: makeWorkflowState(),
+      threadTab: 'ask',
+      selectedModel: 'gpt-5.4',
+      selectedModelProvider: 'openai',
+      projectPath: 'C:/repo',
+    })
+
+    expect(
+      resolveWorkflowSubmitTurnPolicyV2({
+        lane,
+        requestedPolicy: {
+          accessMode: 'read-only',
+          effort: 'medium',
+        },
+      }),
+    ).toMatchObject({
+      model: 'gpt-5.4',
+      cwd: 'C:/repo',
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'readOnly' },
+      effort: 'medium',
+      summary: null,
     })
   })
 

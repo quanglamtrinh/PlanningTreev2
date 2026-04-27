@@ -99,18 +99,18 @@ function resolveWorkflowPolicy(input: {
       disabledReason: 'Workflow state is not loaded.',
     }
   }
-  if (!threadId) {
-    return {
-      kind: lane,
-      canSubmit: false,
-      disabledReason: 'No workflow thread is available for this lane.',
-    }
-  }
   if (lane === 'ask') {
     return {
       kind: 'ask',
       canSubmit: true,
       disabledReason: null,
+    }
+  }
+  if (!threadId) {
+    return {
+      kind: lane,
+      canSubmit: false,
+      disabledReason: 'No workflow thread is available for this lane.',
     }
   }
   if (isReviewNode) {
@@ -334,6 +334,13 @@ function withAccessPolicy(
       ...basePolicy,
       approvalPolicy: 'on-request',
       sandboxPolicy: { type: 'workspaceWrite' },
+    }
+  }
+  if (requestedPolicy?.accessMode === 'read-only') {
+    return {
+      ...basePolicy,
+      approvalPolicy: 'on-request',
+      sandboxPolicy: { type: 'readOnly' },
     }
   }
   return basePolicy

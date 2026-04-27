@@ -40,6 +40,7 @@ _TIER1_METHODS: frozenset[str] = frozenset(
     {
         "item/reasoning/summaryPartAdded",
         "item/commandExecution/outputDelta",
+        "item/commandExecution/terminalInteraction",
         "item/fileChange/outputDelta",
     }
 )
@@ -120,6 +121,7 @@ class RuntimeStoreV2:
         self._idempotency_mem: dict[tuple[str, str], dict[str, Any]] = {}
         self._legacy_migration_markers: dict[str, dict[str, Any]] = {}
         self._event_observers: list[EventObserver] = []
+        self._pre_event_observers: list[EventObserver] = []
 
         self._lagged_reset_count = 0
         self._cursor_expired_count = 0
@@ -139,7 +141,14 @@ class RuntimeStoreV2:
     # ------------------------------------------------------------------
     # Turn runtime state
     # ------------------------------------------------------------------
-    def create_turn(self, *, thread_id: str, turn_id: str, status: str = "idle") -> dict[str, Any]:
+    def create_turn(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        status: str = "idle",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         normalized_thread_id = self._normalize_non_empty(thread_id, "threadId")
         normalized_turn_id = self._normalize_non_empty(turn_id, "turnId")
         if status not in ALLOWED_TURN_TRANSITIONS:
@@ -164,10 +173,26 @@ class RuntimeStoreV2:
                 "items": [],
                 "error": None,
             }
+            if isinstance(metadata, dict) and metadata:
+                turn["metadata"] = dict(metadata)
             self._turns[normalized_thread_id][normalized_turn_id] = turn
             if status not in TERMINAL_TURN_STATES:
                 self._active_turn_by_thread[normalized_thread_id] = normalized_turn_id
             self._touch_thread_state_locked(normalized_thread_id, now_ms)
+            self._persist_turn(normalized_thread_id, turn)
+            return self._copy_turn(turn)
+
+    def merge_turn_metadata(self, *, thread_id: str, turn_id: str, metadata: dict[str, Any]) -> dict[str, Any] | None:
+        normalized_thread_id = str(thread_id or "").strip()
+        normalized_turn_id = str(turn_id or "").strip()
+        if not normalized_thread_id or not normalized_turn_id or not isinstance(metadata, dict) or not metadata:
+            return None
+        with self._lock:
+            turn = self._turns.get(normalized_thread_id, {}).get(normalized_turn_id)
+            if turn is None:
+                return None
+            existing = turn.get("metadata") if isinstance(turn.get("metadata"), dict) else {}
+            turn["metadata"] = {**existing, **metadata}
             self._persist_turn(normalized_thread_id, turn)
             return self._copy_turn(turn)
 
@@ -777,9 +802,16 @@ class RuntimeStoreV2:
                 self._journal[normalized_thread_id].append(event)
                 self._trim_memory_journal(normalized_thread_id, now_ms=occurred_at_ms)
             self._persist_event(event)
-            self._fanout_event(event)
+            pre_event_observers = list(self._pre_event_observers)
+            event_for_observers = dict(event)
             thread_subscriber_count = self._subscriber_count_for_thread_locked(normalized_thread_id)
             event_copy = dict(event)
+
+        self._notify_pre_event_observers(event_for_observers, pre_event_observers)
+
+        with self._lock:
+            self._fanout_event(event)
+            thread_subscriber_count = self._subscriber_count_for_thread_locked(normalized_thread_id)
         if normalized_method in _STREAM_TRACE_METHODS:
             logger.info(
                 "session_core_v2 journal append",
@@ -801,6 +833,23 @@ class RuntimeStoreV2:
             return
         with self._lock:
             self._event_observers.append(observer)
+
+    def add_pre_event_observer(self, observer: EventObserver) -> None:
+        """Register a synchronous write-through hook that must succeed before fanout."""
+
+        if observer is None:
+            return
+        with self._lock:
+            self._pre_event_observers.append(observer)
+
+    def _notify_pre_event_observers_locked(self, event: dict[str, Any]) -> None:
+        observers = list(self._pre_event_observers)
+        self._notify_pre_event_observers(event, observers)
+
+    @staticmethod
+    def _notify_pre_event_observers(event: dict[str, Any], observers: list[EventObserver]) -> None:
+        for observer in observers:
+            observer(dict(event))
 
     def _notify_event_observers(self, event: dict[str, Any]) -> None:
         with self._lock:
@@ -848,6 +897,26 @@ class RuntimeStoreV2:
             copied["source"] = "replay"
             replayed.append(copied)
         return replayed
+
+    def get_journal_head(self, thread_id: str) -> dict[str, Any]:
+        """Return first/last event sequence for the thread's durable journal, if any."""
+        normalized = self._normalize_non_empty(thread_id, "threadId")
+        with self._lock:
+            first_seq, last_seq = self._read_first_last_seq(normalized)
+        if last_seq is None:
+            return {
+                "threadId": normalized,
+                "firstEventSeq": None,
+                "lastEventSeq": None,
+                "lastEventId": None,
+            }
+        last_id = f"{normalized}:{last_seq}"
+        return {
+            "threadId": normalized,
+            "firstEventSeq": int(first_seq) if first_seq is not None else None,
+            "lastEventSeq": int(last_seq) if last_seq is not None else None,
+            "lastEventId": last_id,
+        }
 
     def read_thread_journal(self, thread_id: str) -> list[dict[str, Any]]:
         normalized_thread_id = str(thread_id or "").strip()
@@ -1048,6 +1117,13 @@ class RuntimeStoreV2:
                     last_codex_status=completed_status,
                     error=terminal_error if isinstance(terminal_error, dict) else None,
                 )
+            payload_items = payload_turn.get("items")
+            if isinstance(payload_items, list):
+                self._merge_turn_items_from_terminal_payload(
+                    thread_id=thread_id,
+                    turn_id=completed_turn_id,
+                    items=payload_items,
+                )
             return
 
         if method == "serverRequest/resolved":
@@ -1099,6 +1175,42 @@ class RuntimeStoreV2:
             items.append(payload_item)
         else:
             items[existing_index] = payload_item
+        self._persist_turn(thread_id, turn)
+
+    def _merge_turn_items_from_terminal_payload(
+        self,
+        *,
+        thread_id: str,
+        turn_id: str,
+        items: list[Any],
+    ) -> None:
+        turn = self._turns.get(thread_id, {}).get(turn_id)
+        if turn is None:
+            return
+        existing_items = turn.get("items")
+        if not isinstance(existing_items, list):
+            existing_items = []
+        merged: list[dict[str, Any]] = []
+        by_id: dict[str, int] = {}
+        for existing in existing_items:
+            if not isinstance(existing, dict):
+                continue
+            item_id = str(existing.get("id") or "").strip()
+            if item_id:
+                by_id[item_id] = len(merged)
+            merged.append(dict(existing))
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            payload_item = dict(item)
+            item_id = str(payload_item.get("id") or "").strip()
+            if item_id and item_id in by_id:
+                merged[by_id[item_id]] = {**merged[by_id[item_id]], **payload_item}
+            else:
+                if item_id:
+                    by_id[item_id] = len(merged)
+                merged.append(payload_item)
+        turn["items"] = merged
         self._persist_turn(thread_id, turn)
 
     # ------------------------------------------------------------------

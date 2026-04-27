@@ -63,6 +63,7 @@ SessionNotificationMethod = Literal[
     "item/reasoning/summaryPartAdded",
     "item/reasoning/textDelta",
     "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
     "item/fileChange/outputDelta",
     "serverRequest/created",
     "serverRequest/updated",
@@ -151,6 +152,7 @@ class SessionTurn(TypedDict):
     completedAtMs: int | None
     items: list[SessionItem]
     error: SessionError | None
+    metadata: dict[str, Any]
 
 
 class SessionThread(TypedDict):
@@ -211,21 +213,18 @@ class ServerRequestEnvelope(TypedDict):
 
 
 class TurnStartAction(TypedDict):
-    clientActionId: str
     threadId: str
     input: list[dict[str, Any]]
     overrides: dict[str, Any]
 
 
 class TurnSteerAction(TypedDict):
-    clientActionId: str
     threadId: str
     expectedTurnId: str
     input: list[dict[str, Any]]
 
 
 class TurnInterruptAction(TypedDict):
-    clientActionId: str
     threadId: str
     turnId: str
 

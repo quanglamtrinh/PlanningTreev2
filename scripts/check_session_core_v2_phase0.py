@@ -132,7 +132,7 @@ def main() -> int:
             errors.append(f"codex schema missing expected methods: {', '.join(missing)}")
 
     openapi_text = (BASE / "s3-session-http-api-v1.openapi.yaml").read_text(encoding="utf-8")
-    if "required: [clientActionId, expectedTurnId, input]" not in openapi_text:
+    if "required: [expectedTurnId, input]" not in openapi_text:
         errors.append("turn steer precondition contract not frozen")
     if "originUrl" not in openapi_text:
         errors.append("thread metadata gitInfo.originUrl is missing")

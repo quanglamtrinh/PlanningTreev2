@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
+from backend.routes import session_v4
 from backend.session_core_v2.errors import SessionCoreError
 from backend.session_core_v2.protocol import compat_gate
 
@@ -105,3 +107,41 @@ def test_protocol_gate_raises_protocol_mismatch_when_turn_start_missing_turn_id(
     assert exc_info.value.code == "ERR_SESSION_PROTOCOL_MISMATCH"
     assert exc_info.value.details.get("requiredMethod") == "turn/start"
     assert exc_info.value.details.get("requiredField") == "turnId"
+
+
+def test_session_runtime_request_models_reject_workflow_only_fields() -> None:
+    planningtree_only_fields = {
+        "projectId": "project-1",
+        "nodeId": "node-1",
+        "role": "execution",
+        "idempotencyKey": "workflow-only",
+    }
+    cases = [
+        (session_v4.ThreadStartRequest, {}),
+        (session_v4.ThreadResumeRequest, {}),
+        (session_v4.ThreadForkRequest, {}),
+        (session_v4.TurnStartRequest, {"input": [{"type": "text", "text": "hello"}]}),
+        (
+            session_v4.TurnSteerRequest,
+            {"expectedTurnId": "turn-1", "input": [{"type": "text", "text": "continue"}]},
+        ),
+        (session_v4.TurnInterruptRequest, {}),
+        (session_v4.InjectItemsRequest, {"items": [{"type": "message", "role": "developer"}]}),
+        (session_v4.ThreadRecoverRequest, {}),
+    ]
+
+    for model, base_payload in cases:
+        with pytest.raises(ValidationError):
+            model.model_validate({**base_payload, **planningtree_only_fields})
+
+
+def test_recover_request_no_longer_allows_workflow_field_exception() -> None:
+    payload = {
+        "projectId": "project-1",
+        "nodeId": "node-1",
+        "role": "execution",
+        "idempotencyKey": "workflow-only",
+    }
+
+    with pytest.raises(ValidationError):
+        session_v4.ThreadRecoverRequest.model_validate(payload)

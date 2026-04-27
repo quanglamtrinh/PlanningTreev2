@@ -56,12 +56,14 @@ class FrameGenerationService:
         thread_lineage_service: ThreadLineageService,
         frame_gen_timeout: int,
         thread_transcript_builder: ThreadTranscriptBuilder | None = None,
+        artifact_turn_runner: Any | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
         self._codex_client = codex_client
         self._thread_lineage_service = thread_lineage_service
         self._timeout = int(frame_gen_timeout)
+        self._artifact_turn_runner = artifact_turn_runner
         self._thread_transcript_builder = thread_transcript_builder or ThreadTranscriptBuilder(
             storage,
             storage.thread_snapshot_store_v2,
@@ -165,6 +167,7 @@ class FrameGenerationService:
         try:
             content = self._generate_frame_content(project_id, node_id, thread_id)
             self._write_frame_content(project_id, node_id, content)
+            self._refresh_ask_context(project_id, node_id)
             self._mark_job_completed(project_id, node_id, job_id)
         except ProjectNotFound:
             self._clear_live_job(project_id, node_id, job_id)
@@ -188,10 +191,14 @@ class FrameGenerationService:
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
-            chat_messages = self._thread_transcript_builder.build_prompt_messages(
-                project_id,
-                node_id,
-                "ask_planning",
+            chat_messages = (
+                []
+                if self._artifact_turn_runner is not None
+                else self._thread_transcript_builder.build_prompt_messages(
+                    project_id,
+                    node_id,
+                    "ask_planning",
+                )
             )
 
         # Build prompt and run turn (outside lock)
@@ -264,6 +271,15 @@ class FrameGenerationService:
     # ── Thread management ──────────────────────────────────────────
 
     def _ensure_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        if self._artifact_turn_runner is not None:
+            return str(
+                self._artifact_turn_runner.ensure_ask_thread(
+                    project_id=project_id,
+                    node_id=node_id,
+                    workspace_root=workspace_root,
+                    artifact_kind="frame",
+                )
+            )
         base_instructions, dynamic_tools = build_ask_planning_thread_config()
         try:
             session = self._thread_lineage_service.ensure_forked_thread(
@@ -296,6 +312,18 @@ class FrameGenerationService:
         prompt: str,
         workspace_root: str | None,
     ) -> dict[str, Any]:
+        if self._artifact_turn_runner is not None:
+            return self._artifact_turn_runner.run_prompt(
+                project_id=project_id,
+                node_id=node_id,
+                thread_id=thread_id,
+                prompt=prompt,
+                artifact_kind="frame",
+                cwd=workspace_root,
+                output_schema=build_frame_output_schema(),
+                sandbox_policy={"type": "readOnly"},
+                timeout_sec=self._timeout,
+            )
         try:
             return self._codex_client.run_turn_streaming(
                 prompt,
@@ -326,6 +354,8 @@ class FrameGenerationService:
             )
 
     def _rebuild_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
+        if self._artifact_turn_runner is not None:
+            return self._ensure_ask_thread(project_id, node_id, workspace_root)
         base_instructions, dynamic_tools = build_ask_planning_thread_config()
         try:
             session = self._thread_lineage_service.rebuild_from_ancestor(
@@ -349,6 +379,15 @@ class FrameGenerationService:
     @staticmethod
     def _is_instructions_required_error(exc: Exception) -> bool:
         return _INSTRUCTIONS_REQUIRED_MESSAGE in str(exc).lower()
+
+    def _refresh_ask_context(self, project_id: str, node_id: str) -> None:
+        if self._artifact_turn_runner is None:
+            return
+        self._artifact_turn_runner.refresh_ask_context(
+            project_id=project_id,
+            node_id=node_id,
+            artifact_kind="frame",
+        )
 
     # ── State persistence ──────────────────────────────────────────
 

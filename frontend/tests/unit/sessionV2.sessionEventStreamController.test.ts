@@ -36,7 +36,7 @@ class FakeEventSource {
     this.onerror?.call(this as unknown as EventSource, new Event('error'))
   }
 
-  emit(method: SessionNotificationMethod, envelope: SessionEventEnvelope): void {
+  emit(method: SessionNotificationMethod | 'session/error', envelope: SessionEventEnvelope): void {
     const listeners = this.listeners.get(method)
     if (!listeners) {
       return
@@ -132,6 +132,25 @@ describe('sessionEventStreamController', () => {
     expect(markDisconnected).toHaveBeenCalledWith('thread-1')
   })
 
+  it('opens with an explicit pre-action cursor instead of the stored cursor', () => {
+    const openEventSource = vi.fn(() => new FakeEventSource() as unknown as EventSource)
+    const controller = createSessionEventStreamController({
+      openEventSource,
+      applyEventsBatch: vi.fn(),
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => 'thread-1:99',
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1', { cursorEventId: 'thread-1:12' })
+
+    expect(openEventSource).toHaveBeenCalledWith('thread-1', { cursorEventId: 'thread-1:12' })
+  })
+
   it('marks prior active thread disconnected when switching streams', () => {
     const sources: FakeEventSource[] = []
     const markDisconnected = vi.fn()
@@ -158,6 +177,44 @@ describe('sessionEventStreamController', () => {
     expect(sources).toHaveLength(2)
     expect(markDisconnected).toHaveBeenCalledWith('thread-1')
     expect(markDisconnected).not.toHaveBeenCalledWith('thread-2')
+  })
+
+  it('handles session error notifications without treating them as stream disconnects', () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+    const markDisconnected = vi.fn()
+    const markReconnect = vi.fn()
+    const runtimeError = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: markDisconnected,
+      markStreamReconnect: markReconnect,
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: runtimeError,
+    })
+
+    controller.open('thread-1')
+    const sessionError = envelope({
+      eventId: 'thread-1:2',
+      eventSeq: 2,
+      method: 'error',
+      params: { error: { message: 'model rejected' } },
+    })
+    sources[0].emit('session/error', sessionError)
+
+    expect(applyEventsBatch).toHaveBeenCalledWith([sessionError])
+    expect(markDisconnected).not.toHaveBeenCalled()
+    expect(markReconnect).not.toHaveBeenCalled()
+    expect(runtimeError).not.toHaveBeenCalledWith('Session stream disconnected. Reconnecting...')
   })
 
   it('retries reconnect after stream error', async () => {
@@ -259,6 +316,46 @@ describe('sessionEventStreamController', () => {
     expect(batch).toHaveLength(2)
     expect(batch[0].eventId).toBe('thread-1:10')
     expect(batch[1].eventId).toBe('thread-1:11')
+  })
+
+  it('listens for command terminal interaction events', async () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1')
+
+    sources[0].emit(
+      'item/commandExecution/terminalInteraction',
+      envelope({
+        method: 'item/commandExecution/terminalInteraction',
+        eventId: 'thread-1:12',
+        eventSeq: 12,
+        params: { itemId: 'item-1', stdin: 'y\n' },
+      }),
+    )
+
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(applyEventsBatch).toHaveBeenCalledTimes(1)
+    expect(applyEventsBatch.mock.calls[0]?.[0].map((event: SessionEventEnvelope) => event.method)).toEqual([
+      'item/commandExecution/terminalInteraction',
+    ])
   })
 
   it('force flushes request events to thread and pending request stores in the same ordered batch', () => {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -107,6 +108,44 @@ def test_runtime_store_snapshot_payload_and_tier0_cadence() -> None:
     assert "pendingRequestIndex" in payload
     assert "lastEventSeq" in payload
     assert isinstance(payload["pendingRequestIndex"], dict)
+
+
+def test_runtime_store_classifies_terminal_interaction_as_tier1() -> None:
+    store = RuntimeStoreV2()
+
+    event = store.append_notification(
+        method="item/commandExecution/terminalInteraction",
+        params={"threadId": "thread-1", "turnId": "turn-1", "itemId": "cmd-1", "stdin": "y\n"},
+    )
+
+    assert event["tier"] == "tier1"
+
+
+def test_runtime_store_pre_event_observer_does_not_hold_runtime_lock() -> None:
+    store = RuntimeStoreV2()
+    observer_entered = threading.Event()
+    release_observer = threading.Event()
+
+    def blocking_observer(_event: dict) -> None:
+        observer_entered.set()
+        assert release_observer.wait(timeout=2)
+
+    store.add_pre_event_observer(blocking_observer)
+
+    worker = threading.Thread(
+        target=lambda: store.append_notification(method="thread/started", params={"threadId": "thread-1"}),
+        daemon=True,
+    )
+    worker.start()
+    assert observer_entered.wait(timeout=1)
+
+    # The rollout write-through hook may block on filesystem/native I/O, but it
+    # must not freeze read paths that need the runtime lock.
+    assert store.get_journal_head("thread-1")["lastEventSeq"] == 1
+
+    release_observer.set()
+    worker.join(timeout=2)
+    assert not worker.is_alive()
 
 
 def test_runtime_store_dual_floor_retention_prunes_only_when_old_and_overflow() -> None:

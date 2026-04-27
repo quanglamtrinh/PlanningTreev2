@@ -1,9 +1,41 @@
+import { useState } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ComposerPane } from '../../src/features/session_v2/components/ComposerPane'
 
 describe('ComposerPane', () => {
+  it('defaults Codex composer submissions to GPT-5.3-Codex with high effort when selected by session state', async () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+        modelOptions={[{ value: 'gpt-5.3-codex', label: 'GPT-5.3-Codex' }]}
+        selectedModel="gpt-5.3-codex"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Select model and thinking effort' })).toHaveTextContent(
+      /GPT-5\.3-Codex High/,
+    )
+
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Use the default Codex agent config' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0]?.[0].requestedPolicy).toMatchObject({
+      model: 'gpt-5.3-codex',
+      effort: 'high',
+      accessMode: 'full-access',
+      workMode: 'local',
+      streamMode: 'streaming',
+    })
+  })
+
   it('routes slash text to command popup and submits on Enter', async () => {
     const onSubmit = vi.fn(async () => undefined)
     const onInterrupt = vi.fn(async () => undefined)
@@ -53,27 +85,40 @@ describe('ComposerPane', () => {
     expect(attachButton.getAttribute('title')).toBe('Attach photos and files')
   })
 
-  it('renders model dropdown and includes selected model in submit payload', async () => {
+  it('renders model and intelligence dropdown and includes selections in submit payload', async () => {
     const onSubmit = vi.fn(async () => undefined)
     const onInterrupt = vi.fn(async () => undefined)
     const onModelChange = vi.fn()
+
+    function StatefulComposer() {
+      const [selectedModel, setSelectedModel] = useState('gpt-5.4')
+      return (
+        <ComposerPane
+          isTurnRunning={false}
+          onSubmit={onSubmit}
+          onInterrupt={onInterrupt}
+          modelOptions={[
+            { value: 'gpt-5.4', label: 'GPT-5.4' },
+            { value: 'gpt-5.2', label: 'GPT-5.2' },
+          ]}
+          selectedModel={selectedModel}
+          onModelChange={(model) => {
+            onModelChange(model)
+            setSelectedModel(model)
+          }}
+        />
+      )
+    }
+
     render(
-      <ComposerPane
-        isTurnRunning={false}
-        onSubmit={onSubmit}
-        onInterrupt={onInterrupt}
-        modelOptions={[
-          { value: 'gpt-5.4', label: 'GPT-5.4' },
-          { value: 'gpt-5.2', label: 'GPT-5.2' },
-        ]}
-        selectedModel="gpt-5.4"
-        onModelChange={onModelChange}
-      />,
+      <StatefulComposer />,
     )
 
-    const modelSelect = screen.getByRole('combobox', { name: 'Select model' })
-    expect(modelSelect).toHaveValue('gpt-5.4')
-    fireEvent.change(modelSelect, { target: { value: 'gpt-5.2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Select model and thinking effort' }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^High$/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select model and thinking effort' }))
+    fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /GPT-5\.4/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /GPT-5\.2/ }))
     expect(onModelChange).toHaveBeenCalledWith('gpt-5.2')
 
     const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
@@ -91,9 +136,9 @@ describe('ComposerPane', () => {
         },
       ],
       requestedPolicy: {
-        model: 'gpt-5.4',
+        model: 'gpt-5.2',
         accessMode: 'full-access',
-        effort: 'extra-high',
+        effort: 'high',
         workMode: 'local',
         streamMode: 'streaming',
       },
@@ -152,5 +197,29 @@ describe('ComposerPane', () => {
 
     expect(screen.getByRole('button', { name: /current cwd/i })).toBeInTheDocument()
     expect(screen.getByText('C:/Users/Thong/PlanningTreeMain')).toBeInTheDocument()
+  })
+
+  it('submits read-only permissions from the permissions dropdown', async () => {
+    const onSubmit = vi.fn(async () => undefined)
+    const onInterrupt = vi.fn(async () => undefined)
+    render(
+      <ComposerPane
+        isTurnRunning={false}
+        onSubmit={onSubmit}
+        onInterrupt={onInterrupt}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /full access/i }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /read-only/i }))
+
+    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Read only please' } })
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0]?.[0].requestedPolicy).toMatchObject({
+      accessMode: 'read-only',
+    })
   })
 })

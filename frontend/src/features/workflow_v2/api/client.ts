@@ -93,10 +93,32 @@ export type EnsureWorkflowThreadResponseV2 = WorkflowMutationResponseV2 & {
   }
 }
 
+export type WorkflowContextPacketV2 = {
+  schemaVersion: number
+  kind: string
+  projectId: string
+  nodeId: string
+  payload: Record<string, unknown>
+  sourceVersions: Record<string, unknown>
+  contextPacketHash: string
+  contextPayload: Record<string, unknown>
+}
+
 export async function getWorkflowStateV2(projectId: string, nodeId: string): Promise<WorkflowStateV2> {
   await initAuthToken()
   return jsonFetchDirect<WorkflowStateV2>(
     `${workflowNodePath(projectId, nodeId)}/workflow-state`,
+  )
+}
+
+export async function getWorkflowContextV2(
+  projectId: string,
+  nodeId: string,
+  role: WorkflowThreadRoleV2,
+): Promise<WorkflowContextPacketV2> {
+  await initAuthToken()
+  return jsonFetchDirect<WorkflowContextPacketV2>(
+    `${workflowNodePath(projectId, nodeId)}/workflow-context?role=${encodeURIComponent(role)}`,
   )
 }
 

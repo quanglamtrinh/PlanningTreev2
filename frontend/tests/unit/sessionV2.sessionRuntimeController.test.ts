@@ -87,6 +87,23 @@ function createHarness() {
     }
   })
 
+  const setReplayCursor = vi.fn((threadId: string, lastEventSeq: number, lastEventId: string | null) => {
+    if (lastEventSeq <= 0 && (lastEventId == null || String(lastEventId).trim() === '')) {
+      const nextSeq = { ...threadState.lastEventSeqByThread } as Record<string, number>
+      const nextId = { ...threadState.lastEventIdByThread } as Record<string, string>
+      delete nextSeq[threadId]
+      delete nextId[threadId]
+      threadState.lastEventSeqByThread = nextSeq
+      threadState.lastEventIdByThread = nextId
+    } else {
+      const seq = Math.max(0, lastEventSeq)
+      threadState.lastEventSeqByThread = { ...threadState.lastEventSeqByThread, [threadId]: seq }
+      const nextId = lastEventId != null && String(lastEventId).trim() !== '' ? String(lastEventId).trim() : `${threadId}:${seq}`
+      threadState.lastEventIdByThread = { ...threadState.lastEventIdByThread, [threadId]: nextId }
+    }
+    threadState.gapDetectedByThread = { ...threadState.gapDetectedByThread, [threadId]: false }
+  })
+
   const hydratePendingRequests = vi.fn()
   const markPendingRequestSubmitted = vi.fn()
   const setConnectionPhase = vi.fn()
@@ -127,12 +144,19 @@ function createHarness() {
     forkThread: vi.fn(async (threadId: string) => ({
       thread: makeThread({ id: `${threadId}-fork` }),
     })),
+    getThreadJournalHead: vi.fn(async (threadId: string) => ({
+      threadId,
+      firstEventSeq: null,
+      lastEventSeq: null,
+      lastEventId: null,
+    })),
   }
 
   const controller = createSessionRuntimeController({
     getThreadState: () => threadState,
     getRuntimeSnapshot: () => runtimeSnapshot,
     setThreadList,
+    setReplayCursor,
     upsertThread,
     markThreadActivity,
     setActiveThreadId,
@@ -158,6 +182,7 @@ function createHarness() {
     api,
     spies: {
       setThreadList,
+      setReplayCursor,
       upsertThread,
       setActiveThreadId,
       setThreadTurns,
@@ -236,6 +261,26 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
   })
 
+  it('does not align the SSE replay cursor from journal head after provider snapshot hydrate', async () => {
+    harness.api.getThreadJournalHead.mockResolvedValue({
+      threadId: 'thread-1',
+      firstEventSeq: 1,
+      lastEventSeq: 42,
+      lastEventId: 'thread-1:42',
+    })
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+    expect(harness.api.getThreadJournalHead).not.toHaveBeenCalled()
+    expect(harness.spies.setReplayCursor).not.toHaveBeenCalled()
+  })
+
+  it('reads provider snapshot without touching the independent SSE cursor', async () => {
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+
+    expect(harness.api.getThreadJournalHead).not.toHaveBeenCalled()
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.spies.setReplayCursor).not.toHaveBeenCalled()
+  })
+
   it('submits steer request when active turn is running', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = [
@@ -258,7 +303,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.markThreadActivity).toHaveBeenCalledWith('thread-1')
   })
 
-  it('starts new turn without deriving execution policy from access mode', async () => {
+  it('starts new turn with execution policy derived from composer access mode', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []
     harness.runtimeSnapshot.activeRunningTurn = null
@@ -276,8 +321,64 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
     const [, request] = harness.api.startTurn.mock.calls[0]
     expect(request.model).toBe('gpt-5')
-    expect(request.approvalPolicy).toBeUndefined()
-    expect(request.sandboxPolicy).toBeUndefined()
+    expect(request.approvalPolicy).toBe('never')
+    expect(request.sandboxPolicy).toEqual({ type: 'dangerFullAccess' })
+  })
+
+  it('maps default Codex composer model and high effort into turn/start config', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5.3-codex'
+
+    await harness.controller.submit({
+      input: [{ type: 'text', text: 'run with codex defaults' }],
+      text: 'run with codex defaults',
+      requestedPolicy: {
+        accessMode: 'full-access',
+        model: 'gpt-5.3-codex',
+        effort: 'high',
+      },
+    })
+
+    expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'run with codex defaults' }],
+        model: 'gpt-5.3-codex',
+        effort: 'high',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      }),
+    )
+  })
+
+  it('defaults missing composer permissions to full access in turn/start config', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5.3-codex'
+
+    await harness.controller.submit({
+      input: [{ type: 'text', text: 'run with implicit full permissions' }],
+      text: 'run with implicit full permissions',
+      requestedPolicy: {
+        model: 'gpt-5.3-codex',
+        effort: 'high',
+      },
+    })
+
+    expect(harness.api.startTurn).toHaveBeenCalledTimes(1)
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        model: 'gpt-5.3-codex',
+        effort: 'high',
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      }),
+    )
   })
 
   it('dispatches explicit turn start actions through the unified input pipeline', async () => {
@@ -285,7 +386,6 @@ describe('sessionRuntimeController', () => {
       type: 'turn.start',
       threadId: 'thread-1',
       input: [{ type: 'text', text: 'run tests' }],
-      clientActionId: 'action-1',
       policy: {
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -296,7 +396,6 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.startTurn).toHaveBeenCalledWith(
       'thread-1',
       expect.objectContaining({
-        clientActionId: 'action-1',
         input: [{ type: 'text', text: 'run tests' }],
         model: 'gpt-5.2',
         approvalPolicy: 'never',
@@ -382,6 +481,59 @@ describe('sessionRuntimeController', () => {
     )
   })
 
+  it.each([
+    ['low', 'low'],
+    ['medium', 'medium'],
+    ['high', 'high'],
+    ['extra-high', 'xhigh'],
+  ] as const)('maps composer %s effort to Codex turn/start effort %s', async (composerEffort, codexEffort) => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit({
+      input: [{ type: 'text', text: 'think with selected effort' }],
+      text: 'think with selected effort',
+      requestedPolicy: {
+        accessMode: 'default-permissions',
+        effort: composerEffort,
+      },
+    })
+
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request.approvalPolicy).toBe('on-request')
+    expect(request.sandboxPolicy).toEqual({ type: 'workspaceWrite' })
+    expect(request.effort).toBe(codexEffort)
+  })
+
+  it.each([
+    ['full-access', 'never', { type: 'dangerFullAccess' }],
+    ['default-permissions', 'on-request', { type: 'workspaceWrite' }],
+    ['read-only', 'on-request', { type: 'readOnly' }],
+  ] as const)('maps composer %s permissions to Codex turn/start policy', async (
+    accessMode,
+    approvalPolicy,
+    sandboxPolicy,
+  ) => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit({
+      input: [{ type: 'text', text: 'run with selected permissions' }],
+      text: 'run with selected permissions',
+      requestedPolicy: {
+        accessMode,
+      },
+    })
+
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request.approvalPolicy).toBe(approvalPolicy)
+    expect(request.sandboxPolicy).toEqual(sandboxPolicy)
+  })
+
   it('skips null, undefined, and blank model values before selected model fallback', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []
@@ -461,6 +613,51 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.setLastPendingPollAtMs).toHaveBeenCalledTimes(1)
   })
 
+  it('selectThread re-fetches from server when cache says hydrated but transcript is empty in store', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-read',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [turn] }),
+    })
+    harness.threadState.threadsById = {
+      'thread-1': makeThread({ id: 'thread-1', status: { type: 'idle' } }),
+    }
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledTimes(1)
+    expect((harness.threadState.turnsByThread as Record<string, SessionTurn[]>)['thread-1']).toEqual([turn])
+    harness.api.readThread.mockClear()
+
+    harness.threadState.turnsByThread = { 'thread-1': [] } as unknown as typeof harness.threadState.turnsByThread
+
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+  })
+
+  it('selectThread skips re-read from server when transcript is still present in store', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-read',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [turn] }),
+    })
+    harness.threadState.threadsById = {
+      'thread-1': makeThread({ id: 'thread-1', status: { type: 'idle' } }),
+    }
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).toHaveBeenCalledTimes(1)
+    harness.api.readThread.mockClear()
+
+    await harness.controller.selectThread('thread-1')
+    expect(harness.api.readThread).not.toHaveBeenCalled()
+  })
+
   it('selectThread(null) clears active selection without clearing metadata', async () => {
     harness.threadState.activeThreadId = 'thread-1'
     harness.threadState.threadsById = {
@@ -527,7 +724,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.interruptTurn).toHaveBeenCalledWith(
       'thread-1',
       'turn-1',
-      expect.objectContaining({ clientActionId: expect.any(String) }),
+      {},
     )
   })
 })

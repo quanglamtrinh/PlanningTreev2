@@ -7,6 +7,7 @@ import {
   listPendingRequestsV2,
   listThreadsV2,
   listThreadTurnsV2,
+  getThreadJournalHeadV2,
   readThreadV2,
   rejectPendingRequestV2,
   resolvePendingRequestV2,
@@ -16,7 +17,7 @@ import {
   steerTurnV2,
   type SessionModelEntryV2,
 } from '../api/client'
-import { type ComposerSubmitPayload } from '../components/ComposerPane'
+import type { ComposerRequestedPolicy, ComposerSubmitPayload } from '../components/ComposerPane'
 import type {
   PendingServerRequest,
   SessionError,
@@ -29,6 +30,22 @@ import type {
 } from '../contracts'
 import type { SetThreadTurnsOptions, ThreadSessionStoreState } from '../store/threadSessionStore'
 
+function threadStoreHasTranscriptData(state: ThreadSessionStoreState, threadId: string): boolean {
+  if ((state.turnsByThread[threadId] ?? []).length > 0) {
+    return true
+  }
+  const prefix = `${threadId}:`
+  for (const key of Object.keys(state.itemsByTurn)) {
+    if (key.startsWith(prefix)) {
+      const items = state.itemsByTurn[key]
+      if (Array.isArray(items) && items.length > 0) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 type AsyncScope = 'bootstrap' | 'selectThread' | 'hydrateThread' | 'loadModels' | 'pollPending'
 
 type AsyncScopeTokens = Record<AsyncScope, number>
@@ -38,6 +55,19 @@ export type ComposerModelOption = {
   label: string
   isDefault: boolean
 }
+
+export const DEFAULT_CODEX_MODEL_OPTION: ComposerModelOption = {
+  value: 'gpt-5.3-codex',
+  label: 'GPT-5.3-Codex',
+  isDefault: true,
+}
+
+export const CODEX_MODEL_FALLBACK_OPTIONS: ComposerModelOption[] = [
+  DEFAULT_CODEX_MODEL_OPTION,
+  { value: 'gpt-5.2', label: 'GPT-5.2', isDefault: false },
+  { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', isDefault: false },
+  { value: 'gpt-5.4', label: 'GPT-5.4', isDefault: false },
+]
 
 export type SessionBootstrapPolicy = {
   autoSelectInitialThread: boolean
@@ -66,6 +96,7 @@ type RuntimeApi = {
   listPendingRequests: typeof listPendingRequestsV2
   listThreads: typeof listThreadsV2
   listThreadTurns: typeof listThreadTurnsV2
+  getThreadJournalHead: typeof getThreadJournalHeadV2
   readThread: typeof readThreadV2
   rejectPendingRequest: typeof rejectPendingRequestV2
   resolvePendingRequest: typeof resolvePendingRequestV2
@@ -79,6 +110,7 @@ export type SessionRuntimeControllerDependencies = {
   getThreadState: () => ThreadSessionStoreState
   getRuntimeSnapshot: () => RuntimeSnapshot
   setThreadList: (threads: SessionThread[]) => void
+  setReplayCursor: (threadId: string, lastEventSeq: number, lastEventId: string | null) => void
   upsertThread: (thread: SessionThread, options?: { preserveUpdatedAt?: boolean }) => void
   markThreadActivity: (threadId: string, updatedAt?: number) => void
   setActiveThreadId: (threadId: string | null) => void
@@ -143,7 +175,9 @@ function upsertTurnList(existing: SessionTurn[], nextTurn: SessionTurn): Session
 }
 
 function normalizeModelOption(entry: SessionModelEntryV2): ComposerModelOption | null {
-  const model = typeof entry.model === 'string' ? entry.model.trim() : ''
+  const modelValue = typeof entry.model === 'string' ? entry.model.trim() : ''
+  const idValue = typeof entry.id === 'string' ? entry.id.trim() : ''
+  const model = modelValue || idValue
   if (!model) {
     return null
   }
@@ -151,7 +185,7 @@ function normalizeModelOption(entry: SessionModelEntryV2): ComposerModelOption |
   return {
     value: model,
     label: displayName || model,
-    isDefault: Boolean(entry.isDefault),
+    isDefault: Boolean(entry.isDefault) || model === DEFAULT_CODEX_MODEL_OPTION.value,
   }
 }
 
@@ -180,13 +214,42 @@ function resolveTurnStartPolicy(
   payload: ComposerSubmitPayload,
   selectedModel: string | null,
 ): TurnExecutionPolicy | undefined {
-  const nextPolicy: TurnExecutionPolicy = { ...(policy ?? {}) }
+  const derivedPolicy = deriveTurnPolicyFromRequestedPolicy(payload.requestedPolicy)
+  const nextPolicy: TurnExecutionPolicy = {
+    ...derivedPolicy,
+    ...(policy ?? {}),
+  }
   delete nextPolicy.model
   const model = resolveTurnModel(policy, payload, selectedModel)
   if (model) {
     nextPolicy.model = model
   }
   return Object.keys(nextPolicy).length > 0 ? nextPolicy : undefined
+}
+
+function deriveTurnPolicyFromRequestedPolicy(
+  requestedPolicy: ComposerRequestedPolicy | null | undefined,
+): TurnExecutionPolicy {
+  const nextPolicy: TurnExecutionPolicy = {}
+  if (requestedPolicy?.effort === 'extra-high') {
+    nextPolicy.effort = 'xhigh'
+  } else if (requestedPolicy?.effort) {
+    nextPolicy.effort = requestedPolicy.effort
+  }
+
+  const accessMode = requestedPolicy?.accessMode ?? 'full-access'
+  if (accessMode === 'full-access') {
+    nextPolicy.approvalPolicy = 'never'
+    nextPolicy.sandboxPolicy = { type: 'dangerFullAccess' }
+  } else if (accessMode === 'default-permissions') {
+    nextPolicy.approvalPolicy = 'on-request'
+    nextPolicy.sandboxPolicy = { type: 'workspaceWrite' }
+  } else if (accessMode === 'read-only') {
+    nextPolicy.approvalPolicy = 'on-request'
+    nextPolicy.sandboxPolicy = { type: 'readOnly' }
+  }
+
+  return nextPolicy
 }
 
 function assertNever(value: never): never {
@@ -203,6 +266,7 @@ function defaultApi(): RuntimeApi {
     listPendingRequests: listPendingRequestsV2,
     listThreads: listThreadsV2,
     listThreadTurns: listThreadTurnsV2,
+    getThreadJournalHead: getThreadJournalHeadV2,
     readThread: readThreadV2,
     rejectPendingRequest: rejectPendingRequestV2,
     resolvePendingRequest: resolvePendingRequestV2,
@@ -320,6 +384,7 @@ export function createSessionRuntimeController(
     dependencies.upsertThread(read.thread, { preserveUpdatedAt: true })
     const readTurns = Array.isArray(read.thread.turns) ? read.thread.turns : []
     dependencies.setThreadTurns(threadId, readTurns, { mode: 'replace' })
+
     hydratedThreadIds.add(threadId)
     traceSessionRuntime('hydrate applied', {
       threadId,
@@ -468,8 +533,15 @@ export function createSessionRuntimeController(
       })
     }
 
-    const cachedThread = snapshot.threadsById[threadId]
-    if (hydratedThreadIds.has(threadId) && cachedThread?.status?.type !== 'notLoaded') {
+    const afterActive = dependencies.getThreadState()
+    const cachedThread = afterActive.threadsById[threadId]
+    const canSkipHydrateFromCache =
+      hydratedThreadIds.has(threadId) &&
+      Boolean(cachedThread) &&
+      cachedThread?.status?.type !== 'notLoaded' &&
+      threadStoreHasTranscriptData(afterActive, threadId)
+
+    if (canSkipHydrateFromCache) {
       dependencies.setRuntimeError(null)
       traceSessionRuntime('select thread ready from cache', {
         threadId,
@@ -479,7 +551,10 @@ export function createSessionRuntimeController(
     }
 
     try {
-      await ensureThreadReady(threadId, { isCurrent })
+      await ensureThreadReady(threadId, {
+        isCurrent,
+        forceHydrate: !threadStoreHasTranscriptData(afterActive, threadId),
+      })
       if (!isCurrent()) {
         traceSessionRuntime('select thread aborted after ensure: stale scope', {
           threadId,
@@ -601,7 +676,6 @@ export function createSessionRuntimeController(
         threadId: activeThreadId,
         turnId: runtime.activeRunningTurn.id,
         input: payload.input,
-        clientActionId: createSessionActionId(),
       }
     }
 
@@ -610,7 +684,6 @@ export function createSessionRuntimeController(
       threadId: activeThreadId,
       input: payload.input,
       policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
-      clientActionId: createSessionActionId(),
     }
   }
 
@@ -625,7 +698,6 @@ export function createSessionRuntimeController(
       type: 'turn.interrupt',
       threadId: activeThreadId,
       turnId: activeRunningTurn.id,
-      clientActionId: createSessionActionId(),
     }
   }
 
@@ -644,7 +716,6 @@ export function createSessionRuntimeController(
     delete policyWithoutModel.model
     const request: TurnStartRequestV4 = {
       ...policyWithoutModel,
-      clientActionId: action.clientActionId,
       input: action.input,
     }
     if (model) {
@@ -662,7 +733,6 @@ export function createSessionRuntimeController(
     action: Extract<SessionInputAction, { type: 'turn.steer' }>,
   ): Promise<void> => {
     const result = await api.steerTurn(action.threadId, action.turnId, {
-      clientActionId: action.clientActionId,
       expectedTurnId: action.turnId,
       input: action.input,
     })
@@ -675,9 +745,7 @@ export function createSessionRuntimeController(
   const interruptTurnFromAction = async (
     action: Extract<SessionInputAction, { type: 'turn.interrupt' }>,
   ): Promise<void> => {
-    await api.interruptTurn(action.threadId, action.turnId, {
-      clientActionId: action.clientActionId,
-    })
+    await api.interruptTurn(action.threadId, action.turnId, {})
   }
 
   const resolveRequestFromAction = async (

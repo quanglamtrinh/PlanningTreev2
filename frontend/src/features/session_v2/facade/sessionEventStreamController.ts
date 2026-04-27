@@ -3,7 +3,10 @@ import { openThreadEventsStreamV2 } from '../api/client'
 import type { SessionEventEnvelope, SessionNotificationMethod } from '../contracts'
 import { parseSessionEvent } from '../state/sessionEventParser'
 
-const EVENT_METHODS: SessionNotificationMethod[] = [
+type SessionSseEventName = SessionNotificationMethod | 'session/error'
+
+const EVENT_METHODS: SessionSseEventName[] = [
+  'session/error',
   'thread/started',
   'thread/status/changed',
   'thread/closed',
@@ -11,17 +14,39 @@ const EVENT_METHODS: SessionNotificationMethod[] = [
   'thread/unarchived',
   'thread/name/updated',
   'thread/tokenUsage/updated',
+  'thread/compacted',
   'turn/started',
   'turn/completed',
+  'turn/failed',
+  'turn/diff/updated',
+  'turn/plan/updated',
+  'task/started',
+  'task/completed',
+  'task/failed',
   'item/started',
   'item/completed',
+  'item/autoApprovalReview/started',
+  'item/autoApprovalReview/completed',
   'item/agentMessage/delta',
   'item/plan/delta',
+  'item/mcpToolCall/progress',
   'item/reasoning/summaryTextDelta',
   'item/reasoning/summaryPartAdded',
   'item/reasoning/textDelta',
   'item/commandExecution/outputDelta',
+  'item/commandExecution/terminalInteraction',
   'item/fileChange/outputDelta',
+  'rawResponseItem/completed',
+  'hook/started',
+  'hook/completed',
+  'thread/realtime/started',
+  'thread/realtime/itemAdded',
+  'thread/realtime/transcript/delta',
+  'thread/realtime/transcript/done',
+  'thread/realtime/outputAudio/delta',
+  'thread/realtime/sdp',
+  'thread/realtime/error',
+  'thread/realtime/closed',
   'serverRequest/created',
   'serverRequest/updated',
   'serverRequest/resolved',
@@ -44,9 +69,21 @@ const STREAM_CHUNKING_SEVERE_OLDEST_AGE_MS = 320
 
 const STREAM_FORCE_FLUSH_METHODS = new Set<string>([
   'turn/completed',
+  'turn/failed',
+  'task/completed',
+  'task/failed',
   'item/completed',
+  'rawResponseItem/completed',
   'error',
   'thread/closed',
+  'thread/compacted',
+  'turn/diff/updated',
+  'turn/plan/updated',
+  'item/autoApprovalReview/completed',
+  'item/mcpToolCall/progress',
+  'hook/completed',
+  'thread/realtime/error',
+  'thread/realtime/closed',
   'serverRequest/created',
   'serverRequest/updated',
   'serverRequest/resolved',
@@ -55,11 +92,15 @@ const STREAM_FORCE_FLUSH_METHODS = new Set<string>([
 const STREAM_DELTA_METHODS = new Set<string>([
   'item/agentMessage/delta',
   'item/plan/delta',
+  'item/mcpToolCall/progress',
   'item/reasoning/summaryTextDelta',
   'item/reasoning/summaryPartAdded',
   'item/reasoning/textDelta',
   'item/commandExecution/outputDelta',
+  'item/commandExecution/terminalInteraction',
   'item/fileChange/outputDelta',
+  'thread/realtime/transcript/delta',
+  'thread/realtime/outputAudio/delta',
 ])
 
 const STREAM_TRACE_METHODS = new Set<string>([
@@ -68,8 +109,12 @@ const STREAM_TRACE_METHODS = new Set<string>([
   'thread/closed',
   'turn/started',
   'turn/completed',
+  'turn/failed',
+  'task/completed',
+  'task/failed',
   'item/started',
   'item/completed',
+  'item/commandExecution/terminalInteraction',
   'serverRequest/created',
   'serverRequest/updated',
   'serverRequest/resolved',
@@ -132,7 +177,7 @@ export type StreamControllerDependencies = {
 }
 
 export type SessionEventStreamController = {
-  open: (threadId: string) => void
+  open: (threadId: string, options?: { cursorEventId?: string | null }) => void
   close: (threadId?: string | null) => void
   dispose: () => void
 }
@@ -202,7 +247,7 @@ export function createSessionEventStreamController(
   }
 
   const controller: SessionEventStreamController = {
-    open(threadId) {
+    open(threadId, options) {
       if (disposed) {
         return
       }
@@ -217,7 +262,7 @@ export function createSessionEventStreamController(
       const token = generation
       activeThreadId = threadId
 
-      const cursorEventId = dependencies.getLastEventId(threadId)
+      const cursorEventId = options?.cursorEventId ?? dependencies.getLastEventId(threadId)
       traceStream('stream opening', {
         threadId,
         cursorEventId,

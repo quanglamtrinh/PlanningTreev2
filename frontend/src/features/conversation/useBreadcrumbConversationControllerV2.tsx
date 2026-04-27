@@ -6,9 +6,16 @@ import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
 import { useSessionFacadeV2 } from '../session_v2/facade/useSessionFacadeV2'
+import {
+  captureWorkflowStreamCursor,
+  primeAndSelectWorkflowTurn,
+} from '../session_v2/facade/workflowLiveTurnBridge'
 import { useThreadSessionStore } from '../session_v2/store/threadSessionStore'
+import type { SessionItem } from '../session_v2/contracts'
+import { getWorkflowContextV2, type WorkflowContextPacketV2 } from '../workflow_v2/api/client'
 import { useWorkflowEventBridgeV2 } from '../workflow_v2/hooks/useWorkflowEventBridgeV2'
 import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
+import type { WorkflowThreadRoleV2 } from '../workflow_v2/types'
 import type { BreadcrumbDetailPaneProps } from './BreadcrumbChatViewV2'
 import type { BreadcrumbThreadPaneV2Props } from './components/BreadcrumbThreadPaneV2'
 import {
@@ -30,8 +37,61 @@ export type BreadcrumbConversationControllerV2 = {
 
 type WorkflowThreadKeyV2 = 'askPlanning' | 'execution' | 'audit' | 'packageReview'
 
+function workflowRoleForThreadTab(threadTab: ThreadTab): WorkflowThreadRoleV2 {
+  if (threadTab === 'ask') {
+    return 'ask_planning'
+  }
+  if (threadTab === 'package') {
+    return 'package_review'
+  }
+  return threadTab
+}
+
+function buildWorkflowContextItem(
+  packet: WorkflowContextPacketV2,
+  role: WorkflowThreadRoleV2,
+): SessionItem {
+  const now = Date.now()
+  return {
+    id: `canonical-workflow-context-${role}-${packet.contextPacketHash}`,
+    threadId: `workflow-context:${role}`,
+    turnId: `canonical-workflow-context-${role}-turn`,
+    kind: 'systemMessage',
+    normalizedKind: null,
+    status: 'completed',
+    createdAtMs: now,
+    updatedAtMs: now,
+    payload: {
+      type: 'systemMessage',
+      text: '',
+      metadata: {
+        workflowContext: true,
+        workflowContextSource: 'node',
+        role,
+        packetKind: packet.kind,
+        contextPacketHash: packet.contextPacketHash,
+        contextPayload: packet.contextPayload,
+        sourceVersions: packet.sourceVersions,
+      },
+    },
+  }
+}
+
 function renderActionLabel(action: string | null, idleLabel: string, busyLabel: string): string {
   return action ? busyLabel : idleLabel
+}
+
+function terminalTurnStatusForRun(
+  turns: Array<{ id: string; status?: string | null }>,
+  run: Record<string, unknown> | null,
+): string | null {
+  const turnId = typeof run?.turnId === 'string' ? run.turnId : ''
+  if (!turnId) {
+    return null
+  }
+  const turn = turns.find((entry) => entry.id === turnId)
+  const status = typeof turn?.status === 'string' ? turn.status : ''
+  return status === 'completed' || status === 'failed' || status === 'interrupted' ? status : null
 }
 
 function resolveThreadFromMutationResult(
@@ -67,10 +127,16 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const { projectId, nodeId } = useParams<{ projectId: string; nodeId: string }>()
   const [searchParams] = useSearchParams()
   const [showWorkflowContextItems, setShowWorkflowContextItems] = useState(false)
+  const [workflowContextItem, setWorkflowContextItem] = useState<SessionItem | null>(null)
   const [sessionCorrelationHistory, setSessionCorrelationHistory] = useState<Record<string, unknown>[]>([])
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
   const lastThreadSnapshotTraceKeyRef = useRef<string | null>(null)
+  const latestLaneThreadIdForResyncRef = useRef<string | null>(null)
+  const isSelectingForResyncRef = useRef(false)
+  const prevBreadcrumbThreadTabForResyncRef = useRef<ThreadTab | null>(null)
+  const pendingLaneResyncAfterTabChangeRef = useRef(false)
+  const lastTerminalWorkflowRefreshKeyRef = useRef<string | null>(null)
   const sessionFacade = useSessionFacadeV2({
     bootstrapPolicy: {
       autoBootstrapOnMount: true,
@@ -282,6 +348,8 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
   const workflowLane = workflowProjection.lanes[threadTab]
   const activeThreadId = workflowLane.threadId
+  latestLaneThreadIdForResyncRef.current = activeThreadId
+  isSelectingForResyncRef.current = sessionState.isSelectingThread
   const workflowDebugStateRecord =
     workflowState && typeof workflowState === 'object'
       ? (workflowState as unknown as Record<string, unknown>)
@@ -309,6 +377,64 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const laneStreamConnected = activeThreadId
     ? Boolean(sessionProjectionState.streamConnectedByThread[activeThreadId])
     : false
+  const activeRunForLane =
+    threadTab === 'execution' ? activeExecutionRun : threadTab === 'audit' ? activeAuditRun : null
+  const terminalRunStatusForLane = terminalTurnStatusForRun(laneTurns, activeRunForLane)
+
+  useEffect(() => {
+    if (!projectId || !nodeId || !activeThreadId || !activeRunForLane || !terminalRunStatusForLane) {
+      return
+    }
+    const turnId = typeof activeRunForLane.turnId === 'string' ? activeRunForLane.turnId : ''
+    if (!turnId) {
+      return
+    }
+    const refreshKey = `${projectId}:${nodeId}:${threadTab}:${activeThreadId}:${turnId}:${terminalRunStatusForLane}`
+    if (lastTerminalWorkflowRefreshKeyRef.current === refreshKey) {
+      return
+    }
+    lastTerminalWorkflowRefreshKeyRef.current = refreshKey
+    void loadWorkflowState(projectId, nodeId).catch(() => undefined)
+  }, [
+    activeRunForLane,
+    activeThreadId,
+    loadWorkflowState,
+    nodeId,
+    projectId,
+    terminalRunStatusForLane,
+    threadTab,
+  ])
+
+  useEffect(() => {
+    if (!projectId || !nodeId) {
+      setWorkflowContextItem(null)
+      return
+    }
+    const role = workflowRoleForThreadTab(threadTab)
+    let cancelled = false
+    void getWorkflowContextV2(projectId, nodeId, role)
+      .then((packet) => {
+        if (cancelled) {
+          return
+        }
+        setWorkflowContextItem(buildWorkflowContextItem(packet, role))
+      })
+      .catch(() => {
+        // Keep the last canonical context while workflow/session hydration catches up.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    nodeId,
+    projectId,
+    threadTab,
+    workflowState?.context.frameVersion,
+    workflowState?.context.specVersion,
+    workflowState?.context.splitManifestVersion,
+    workflowState?.version,
+  ])
+
   const sessionDebugPayload = useMemo(
     () => ({
       projectId: projectId ?? null,
@@ -384,13 +510,16 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           ? null
           : ('execution' as const)
         : null
-  const workflowModelPolicy = useMemo(
-    () => ({
+  const workflowModelPolicy = useMemo(() => {
+    const normalizedProvider = sessionState.activeThread?.modelProvider?.trim() ?? ''
+    return {
       model: sessionState.selectedModel,
-      modelProvider: sessionState.activeThread?.modelProvider ?? null,
-    }),
-    [sessionState.activeThread?.modelProvider, sessionState.selectedModel],
-  )
+      modelProvider:
+        normalizedProvider.length > 0 && normalizedProvider.toLowerCase() !== 'unknown'
+          ? normalizedProvider
+          : null,
+    }
+  }, [sessionState.activeThread?.modelProvider, sessionState.selectedModel])
 
   useEffect(() => {
     if (
@@ -458,8 +587,117 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     workflowProjection.isLoaded,
   ])
 
+  // After switching thread tabs, session selection can settle after this lane effect; mark pending so
+  // we resync when active thread matches the lane (or after a short fallback timeout / tab focus).
   useEffect(() => {
-    if (!projectId || !nodeId || !workflowProjection.isLoaded) {
+    const previous = prevBreadcrumbThreadTabForResyncRef.current
+    prevBreadcrumbThreadTabForResyncRef.current = threadTab
+    if (previous === null) {
+      return
+    }
+    if (previous === threadTab) {
+      return
+    }
+    pendingLaneResyncAfterTabChangeRef.current = true
+  }, [threadTab])
+
+  useEffect(() => {
+    if (!pendingLaneResyncAfterTabChangeRef.current) {
+      return
+    }
+    if (!workflowProjection.isLoaded || sessionState.connection.phase !== 'initialized') {
+      return
+    }
+    if (isSelectingForResyncRef.current) {
+      return
+    }
+    const laneTid = latestLaneThreadIdForResyncRef.current
+    if (!laneTid) {
+      return
+    }
+    if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
+      return
+    }
+    pendingLaneResyncAfterTabChangeRef.current = false
+    void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
+  }, [
+    sessionState.isSelectingThread,
+    sessionState.activeThreadId,
+    workflowLane.threadId,
+    workflowProjection.isLoaded,
+    sessionState.connection.phase,
+    sessionCommands.resyncThreadTranscript,
+  ])
+
+  useEffect(() => {
+    if (!pendingLaneResyncAfterTabChangeRef.current) {
+      return
+    }
+    if (!workflowProjection.isLoaded || sessionState.connection.phase !== 'initialized') {
+      return
+    }
+    const t = window.setTimeout(() => {
+      if (!pendingLaneResyncAfterTabChangeRef.current) {
+        return
+      }
+      if (isSelectingForResyncRef.current) {
+        return
+      }
+      const laneTid = latestLaneThreadIdForResyncRef.current
+      if (!laneTid) {
+        return
+      }
+      if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
+        return
+      }
+      pendingLaneResyncAfterTabChangeRef.current = false
+      void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
+    }, 400)
+    return () => {
+      window.clearTimeout(t)
+    }
+  }, [
+    threadTab,
+    sessionCommands.resyncThreadTranscript,
+    sessionState.connection.phase,
+    workflowProjection.isLoaded,
+  ])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return
+    }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      if (!workflowProjection.isLoaded || sessionState.connection.phase !== 'initialized') {
+        return
+      }
+      if (isSelectingForResyncRef.current) {
+        return
+      }
+      const laneTid = latestLaneThreadIdForResyncRef.current
+      if (!laneTid) {
+        return
+      }
+      if (useThreadSessionStore.getState().activeThreadId !== laneTid) {
+        return
+      }
+      void sessionCommands.resyncThreadTranscript(laneTid).catch(() => undefined)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [
+    sessionCommands.resyncThreadTranscript,
+    sessionState.connection.phase,
+    workflowProjection.isLoaded,
+  ])
+
+  useEffect(() => {
+    if (!isSessionDebugMode || !projectId || !nodeId || !workflowProjection.isLoaded) {
       return
     }
 
@@ -515,6 +753,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         : null,
     })
   }, [
+    isSessionDebugMode,
     nodeId,
     projectId,
     sessionState.activeThreadId,
@@ -601,13 +840,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       return true
     }
     if (workflowLane.lane === 'ask') {
-      if (sessionState.connection.phase !== 'initialized') {
-        return true
-      }
-      if (sessionState.isSelectingThread) {
-        return true
-      }
-      return false
+      return sessionState.connection.phase === 'error'
     }
     if (!activeThreadId) {
       return true
@@ -673,55 +906,12 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     ],
   )
 
-  const primeWorkflowTurnProjection = useCallback((options: {
-    actionKind: WorkflowLaneActionV2['kind']
-    targetLane: ThreadTab
-    threadId: string | null
-    turnId: string | null
-  }) => {
-    const threadId = typeof options.threadId === 'string' ? options.threadId.trim() : ''
-    const turnId = typeof options.turnId === 'string' ? options.turnId.trim() : ''
-    if (!threadId || !turnId) {
-      return
-    }
-
-    const store = useThreadSessionStore.getState()
-    const turns = store.turnsByThread[threadId] ?? []
-    const alreadyPresent = turns.some((turn) => turn.id === turnId)
-    if (!alreadyPresent) {
-      const now = Date.now()
-      store.setThreadTurns(threadId, [
-        {
-          id: turnId,
-          threadId,
-          status: 'inProgress',
-          lastCodexStatus: 'inProgress',
-          startedAtMs: now,
-          completedAtMs: null,
-          items: [],
-          error: null,
-        },
-      ], { mode: 'merge' })
-    }
-
-    emitSessionCorrelation({
-      type: alreadyPresent ? 'workflow_action_turn_present' : 'workflow_action_turn_primed',
-      projectId: projectId ?? null,
-      nodeId: nodeId ?? null,
-      lane: options.targetLane,
-      action: options.actionKind,
-      threadId,
-      turnId,
-      turnsCount: (useThreadSessionStore.getState().turnsByThread[threadId] ?? []).length,
-    })
-  }, [nodeId, projectId])
-
   const handleWorkflowLaneAction = useCallback(
     async (action: WorkflowLaneActionV2) => {
       if (!projectId || !nodeId) {
         return
       }
-      const navigateAndSelectThread = async (targetTab: ThreadTab, targetThreadId: string | null) => {
+      const navigateTargetLane = (targetTab: ThreadTab, targetThreadId: string | null) => {
         emitSessionCorrelation({
           type: 'navigate_target_lane',
           projectId: projectId ?? null,
@@ -733,16 +923,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         if (!targetThreadId) {
           return
         }
-        emitSessionCorrelation({
-          type: 'select_thread_from_action',
-          projectId: projectId ?? null,
-          nodeId: nodeId ?? null,
-          lane: targetTab,
-          threadId: targetThreadId,
-        })
-        await sessionCommands.selectThread(targetThreadId)
       }
       if (action.kind === 'start_execution') {
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.execution.threadId)
         const result = await startExecution(projectId, nodeId, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'execution',
@@ -759,19 +942,24 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('execution', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'execution',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('execution', threadId)
         return
       }
       if (action.kind === 'review_in_audit') {
         if (!action.candidateWorkspaceHash) {
           return
         }
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.audit.threadId)
         const result = await startAudit(projectId, nodeId, action.candidateWorkspaceHash, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'audit',
@@ -788,13 +976,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('audit', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'audit',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('audit', threadId)
         return
       }
       if (action.kind === 'mark_done_from_execution') {
@@ -810,6 +1002,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         if (!action.reviewCommitSha) {
           return
         }
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.execution.threadId)
         const result = await improveExecution(projectId, nodeId, action.reviewCommitSha, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'execution',
@@ -826,13 +1019,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('execution', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'execution',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('execution', threadId)
         return
       }
       if (action.kind === 'mark_done_from_audit') {
@@ -845,6 +1042,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         return
       }
       if (action.kind === 'start_package_review') {
+        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.package.threadId)
         const result = await startPackageReview(projectId, nodeId, workflowModelPolicy)
         const threadId = resolveThreadFromMutationResult(result, {
           workflowThreadKey: 'packageReview',
@@ -861,13 +1059,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           executionRunId: result.executionRunId ?? null,
           auditRunId: result.auditRunId ?? null,
         })
-        primeWorkflowTurnProjection({
+        navigateTargetLane('package', threadId)
+        await primeAndSelectWorkflowTurn({
           actionKind: action.kind,
           targetLane: 'package',
           threadId: threadId ?? null,
           turnId: result.turnId ?? null,
+          projectId,
+          nodeId,
+          preActionCursor,
+          selectThread: sessionCommands.selectThread,
         })
-        await navigateAndSelectThread('package', threadId)
       }
     },
     [
@@ -876,7 +1078,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       improveExecution,
       navigate,
       nodeId,
-      primeWorkflowTurnProjection,
       projectId,
       sessionCommands.selectThread,
       setActiveSurface,
@@ -930,12 +1131,14 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         threadId: null,
         turns: [],
         itemsByTurn: {},
+        workflowContextItem,
       }
     }
     return {
       threadId: sessionState.activeThreadId,
       turns: sessionState.activeTurns,
       itemsByTurn: sessionState.activeItemsByTurn,
+      workflowContextItem,
     }
   }, [
     activeThreadId,
@@ -943,6 +1146,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     sessionState.activeItemsByTurn,
     sessionState.activeThreadId,
     sessionState.activeTurns,
+    workflowContextItem,
   ])
 
   const composerProps = useMemo(

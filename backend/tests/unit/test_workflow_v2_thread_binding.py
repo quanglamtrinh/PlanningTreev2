@@ -34,6 +34,9 @@ class FakeSessionManager:
         self.starts.clear()
         self.injects.clear()
 
+    def native_rollout_metadata_exists(self, thread_id: str) -> bool:
+        return True
+
 
 def _project_with_confirmed_docs(storage: Any, workspace_root: Path) -> tuple[str, str, Path]:
     snapshot = ProjectService(storage).attach_project_folder(str(workspace_root))
@@ -79,6 +82,13 @@ def _service(storage: Any, fake_session: FakeSessionManager) -> tuple[WorkflowSt
     )
 
 
+def _assert_no_workflow_routing_fields(payload: dict[str, Any]) -> None:
+    assert "projectId" not in payload
+    assert "nodeId" not in payload
+    assert "role" not in payload
+    assert "idempotencyKey" not in payload
+
+
 def test_new_thread_starts_injects_context_and_persists_binding(storage, workspace_root) -> None:
     project_id, node_id, _ = _project_with_confirmed_docs(storage, workspace_root)
     fake_session = FakeSessionManager()
@@ -96,11 +106,20 @@ def test_new_thread_starts_injects_context_and_persists_binding(storage, workspa
     assert fake_session.starts == [
         {"cwd": str(workspace_root), "model": "gpt-5.4", "modelProvider": "openai"}
     ]
+    _assert_no_workflow_routing_fields(fake_session.starts[0])
     assert len(fake_session.injects) == 1
     assert fake_session.injects[0]["threadId"] == "thread-1"
-    assert fake_session.injects[0]["payload"]["clientActionId"].startswith(
-        "ensure-thread:new:inject:execution:sha256:"
-    )
+    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
+    assert "clientActionId" not in fake_session.injects[0]["payload"]
+    injected_item = fake_session.injects[0]["payload"]["items"][0]
+    assert injected_item["type"] == "message"
+    assert injected_item["role"] == "developer"
+    assert injected_item["content"][0]["type"] == "input_text"
+    assert "end_turn" not in injected_item
+    assert injected_item["metadata"]["workflowContext"] is True
+    assert injected_item["metadata"]["contextPayload"]["artifactContext"]["currentContext"]["frame"]["content"] == "Frame v2"
+    assert injected_item["workflowContext"]["contextPayload"]["artifactContext"]["currentContext"]["spec"]["content"] == "Spec v2"
+    assert injected_item["content"][0]["text"].startswith('<planning_tree_context kind="execution_context"')
     state = repository.read_state(project_id, node_id)
     assert state.execution_thread_id == "thread-1"
     assert state.thread_bindings["execution"].created_from == "new_thread"
@@ -156,6 +175,7 @@ def test_legacy_thread_id_is_adopted_and_receives_initial_context(storage, works
     assert fake_session.starts == []
     assert len(fake_session.injects) == 1
     assert fake_session.injects[0]["threadId"] == "legacy-exec"
+    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
     assert response["binding"]["createdFrom"] == "legacy_adopted"
     assert repository.read_state(project_id, node_id).thread_bindings["execution"].thread_id == "legacy-exec"
 
@@ -182,9 +202,13 @@ def test_changed_context_auto_updates_binding(storage, workspace_root) -> None:
 
     assert fake_session.starts == []
     assert len(fake_session.injects) == 1
+    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
     item = fake_session.injects[0]["payload"]["items"][0]
-    assert item["metadata"]["packetKind"] == "context_update"
-    assert '"kind":"context_update"' in item["text"]
+    assert item["type"] == "message"
+    assert item["role"] == "developer"
+    assert item["metadata"]["packetKind"] == "execution_context"
+    assert item["metadata"]["contextPayload"]["artifactContext"]["currentContext"]["frame"]["content"] == "Frame v3"
+    assert '"kind":"execution_context"' in item["content"][0]["text"]
     assert response["binding"]["threadId"] == "thread-1"
     assert response["binding"]["contextPacketHash"] != first["binding"]["contextPacketHash"]
     state = repository.read_state(project_id, node_id)
@@ -223,3 +247,56 @@ def test_idempotency_replay_and_conflict(storage, workspace_root) -> None:
             model="gpt-5.4",
         )
     assert exc_info.value.code == "ERR_WORKFLOW_IDEMPOTENCY_CONFLICT"
+
+
+def test_clears_stale_binding_when_native_rollout_is_missing_for_thread_id(
+    storage,
+    workspace_root,
+) -> None:
+    ghost_uuid = "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+
+    class FakeNativeMissingForGhost(FakeSessionManager):
+        def native_rollout_metadata_exists(self, thread_id: str) -> bool:
+            return str(thread_id or "").strip() != ghost_uuid
+
+    project_id, node_id, _ = _project_with_confirmed_docs(storage, workspace_root)
+    fake = FakeNativeMissingForGhost()
+    repository, service = _service(storage, fake)
+    service.ensure_thread(
+        project_id=project_id,
+        node_id=node_id,
+        role="execution",
+        idempotency_key="ensure-ghost-1",
+        model="m",
+        model_provider="o",
+    )
+    state = repository.read_state(project_id, node_id)
+    binding = state.thread_bindings["execution"]
+    ghost_binding = binding.model_copy(update={"thread_id": ghost_uuid})
+    repository.write_state(
+        project_id,
+        node_id,
+        state.model_copy(
+            deep=True,
+            update={
+                "execution_thread_id": ghost_uuid,
+                "thread_bindings": {**state.thread_bindings, "execution": ghost_binding},
+            },
+        ),
+    )
+    fake.clear()
+
+    service.ensure_thread(
+        project_id=project_id,
+        node_id=node_id,
+        role="execution",
+        idempotency_key="ensure-ghost-2",
+        model="m",
+        model_provider="o",
+    )
+    assert len(fake.starts) == 1
+    _assert_no_workflow_routing_fields(fake.starts[0])
+    assert fake.injects[-1]["threadId"] == "thread-1"
+    _assert_no_workflow_routing_fields(fake.injects[-1]["payload"])
+    reloaded = repository.read_state(project_id, node_id)
+    assert reloaded.thread_bindings["execution"].thread_id == "thread-1"
