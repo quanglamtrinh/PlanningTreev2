@@ -34,10 +34,4 @@ describe('phase 6 active-path Workflow V2 guardrails', () => {
     expect(nodeEditor).not.toContain("finishTaskWorkflowV3")
   })
 
-  it('uses /v3 project workflow events in the active V3 bridge', () => {
-    const eventBridgeV3 = readFrontendSource('features/conversation/state/workflowEventBridgeV3.ts')
-
-    expect(eventBridgeV3).toContain("buildProjectEventsUrlV3")
-    expect(eventBridgeV3).not.toContain("buildProjectEventsUrlV2")
-  })
 })

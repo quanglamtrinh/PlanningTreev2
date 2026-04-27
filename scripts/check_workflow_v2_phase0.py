@@ -126,8 +126,9 @@ def main() -> int:
     )
     workflow_state_store = read(ROOT / "backend" / "storage" / "workflow_state_store.py")
 
-    require_contains(errors, main_py, "app.include_router(workflow_v3.router, prefix=API_PREFIX)", "backend main")
     require_contains(errors, main_py, "app.include_router(session_v4.router)", "backend main")
+    if "app.include_router(workflow_v3.router, prefix=API_PREFIX)" in main_py:
+        errors.append("backend main must not mount legacy workflow_v3 router")
     require_contains(errors, session_v4, '"/v4/session/threads/{threadId}/inject-items"', "session_v4")
     require_contains(errors, session_v4, "thread/inject_items", "session_v4")
     require_contains(errors, breadcrumb_controller, "useSessionFacadeV2", "Breadcrumb controller")
@@ -169,7 +170,7 @@ def main() -> int:
     print(f"checked_docs={len(required_docs)}")
     print("route_family=/v4/projects/{projectId}/nodes/{nodeId}/...")
     print("session_boundary=/v4/session/*")
-    print("current_boundary=session-v2-workflow-v2-breadcrumb-with-legacy-adapters")
+    print("current_boundary=session-v2-workflow-v2-without-v3-compat")
     return 0
 
 

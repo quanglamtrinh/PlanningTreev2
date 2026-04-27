@@ -59,8 +59,6 @@ const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(()
     confirmClarify: vi.fn(),
     confirmSpec: vi.fn(),
     finishTask: vi.fn(),
-    getWorkflowStateV3: vi.fn(),
-    finishTaskWorkflowV3: vi.fn(),
     generateFrame: vi.fn(),
     getFrameGenStatus: vi.fn().mockResolvedValue({
       status: 'idle',
@@ -334,32 +332,6 @@ describe('NodeDetailCard', () => {
       rollup_status: 'accepted',
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
-    })
-    apiMock.finishTaskWorkflowV3.mockResolvedValue({
-      accepted: true,
-      workflowPhase: 'execution_running',
-      threadId: 'thread-execution-1',
-      executionRunId: 'run-1',
-    })
-    apiMock.getWorkflowStateV3.mockResolvedValue({
-      nodeId: 'root',
-      workflowPhase: 'execution_running',
-      executionThreadId: 'thread-execution-1',
-      auditLineageThreadId: 'thread-audit-lineage-1',
-      reviewThreadId: null,
-      activeExecutionRunId: 'run-1',
-      latestExecutionRunId: 'run-1',
-      activeReviewCycleId: null,
-      latestReviewCycleId: null,
-      currentExecutionDecision: null,
-      currentAuditDecision: null,
-      acceptedSha: null,
-      runtimeBlock: null,
-      canSendExecutionMessage: false,
-      canReviewInAudit: false,
-      canImproveInExecution: false,
-      canMarkDoneFromExecution: false,
-      canMarkDoneFromAudit: false,
     })
     workflowV2ApiMock.startExecutionV2.mockResolvedValue({
       accepted: true,
@@ -1274,9 +1246,7 @@ describe('NodeDetailCard', () => {
         }),
       )
     })
-    expect(apiMock.getWorkflowStateV3).not.toHaveBeenCalled()
     expect(apiMock.finishTask).not.toHaveBeenCalled()
-    expect(apiMock.finishTaskWorkflowV3).not.toHaveBeenCalled()
     expect(navigateMock).toHaveBeenCalledWith('/projects/project-1/nodes/root/chat-v2?thread=execution')
   })
 
