@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.ai.chat_prompt_builder import build_package_review_prompt
-from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.business.workflow_v2.errors import (
     WorkflowActionNotAllowedError,
     WorkflowArtifactVersionConflictError,
@@ -213,11 +212,7 @@ class ExecutionAuditOrchestratorV2:
             node_id,
             validate_finish_task=True,
         )
-        prompt = build_execution_prompt(
-            spec_content=metadata["specContent"],
-            frame_content=metadata["frameContent"],
-            task_context=metadata["taskContext"],
-        )
+        prompt = self._metadata_service.build_execution_start_prompt()
         return self._start_execution_turn(
             project_id,
             node_id,

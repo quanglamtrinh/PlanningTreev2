@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 from typing import Any, TypedDict
 
-from backend.ai.execution_prompt_builder import build_execution_prompt
 from backend.ai.split_context_builder import build_split_context
 from backend.errors.app_errors import FinishTaskNotAllowed, NodeNotFound, ReviewNotAllowed
 from backend.services.finish_task_service import FinishTaskService
@@ -67,6 +66,15 @@ class WorkflowMetadataService:
         }
 
     @staticmethod
+    def build_execution_start_prompt() -> str:
+        return (
+            "Implement the confirmed task in this workspace now.\n"
+            "The complete task context has already been injected into this execution thread.\n"
+            "Do not ask clarifying questions.\n"
+            "Make concrete changes, verify results, and then summarize what changed."
+        )
+
+    @staticmethod
     def build_execution_followup_prompt(
         *,
         spec_content: str,
@@ -74,11 +82,7 @@ class WorkflowMetadataService:
         task_context: dict[str, Any],
         instruction_text: str,
     ) -> str:
-        base = build_execution_prompt(
-            spec_content=spec_content,
-            frame_content=frame_content,
-            task_context=task_context,
-        )
+        del spec_content, frame_content, task_context
         follow_up = (
             "Execution follow-up request:\n"
             "```text\n"
@@ -97,12 +101,10 @@ class WorkflowMetadataService:
         task_context: dict[str, Any],
         review_text: str,
     ) -> str:
-        base = build_execution_prompt(
-            spec_content=spec_content,
-            frame_content=frame_content,
-            task_context=task_context,
-        )
+        del spec_content, frame_content, task_context
         improve = (
+            "The execution/audit context is already available in this thread.\n"
+            "Apply the review feedback below directly in the workspace.\n\n"
             "Latest local review feedback:\n"
             "```markdown\n"
             f"{review_text.strip()}\n"
@@ -110,7 +112,7 @@ class WorkflowMetadataService:
             "Improve the implementation to address this review feedback now. "
             "Keep the solution aligned with the confirmed task and existing codebase."
         )
-        return f"{base}\n\n{improve}"
+        return improve
 
     @staticmethod
     def _truncate_for_prompt(text: str, *, char_limit: int) -> str:
@@ -132,56 +134,29 @@ class WorkflowMetadataService:
         frame_content: str,
         review_commit_sha: str,
     ) -> str:
+        del spec_content, frame_content
         task_number = str(node.get("hierarchical_number") or "").strip()
         task_title = str(node.get("title") or "").strip() or "Task"
         task_label = f"{task_number} {task_title}".strip()
 
-        frame_excerpt = cls._truncate_for_prompt(frame_content, char_limit=6000)
-        spec_excerpt = cls._truncate_for_prompt(spec_content, char_limit=16000)
-
         sections = [
-            "You are reviewing code changes that were just completed in the current workspace.\n\n",
+            "You are reviewing code changes that were just completed in the current workspace.\n",
+            "The complete task context has already been injected into this audit thread.\n\n",
             "I just completed code for task:\n",
             f"- {task_label}\n\n",
+            f"The commit hash is `{review_commit_sha}`.\n",
+            "Please review this implementation.\n",
+            "Do you have any questions or issues?\n\n",
+            "Review requirements:\n",
+            "1. Evaluate strictly against the confirmed spec/frame already present in thread context.\n",
+            "2. Prioritize bugs, regressions, missing tests, and maintainability risks.\n",
+            "3. Ignore changes under `.planningtree/`.\n",
+            "4. If there are no serious issues, state that explicitly.\n",
+            "5. Include concrete file paths for findings whenever possible.\n",
+            f"6. Start by inspecting commit `{review_commit_sha}` and its related diffs.\n",
+            "7. Respond in plain markdown prose for humans.\n",
+            "8. Do NOT return JSON/YAML objects or fenced data payloads.\n",
         ]
-
-        if frame_excerpt:
-            sections.extend(
-                [
-                    "Confirmed frame:\n",
-                    "```markdown\n",
-                    frame_excerpt,
-                    "\n```\n\n",
-                ]
-            )
-        if spec_excerpt:
-            sections.extend(
-                [
-                    "The task spec is:\n",
-                    "```markdown\n",
-                    spec_excerpt,
-                    "\n```\n\n",
-                ]
-            )
-        else:
-            sections.append("The task spec is: (confirmed spec content was not found)\n\n")
-
-        sections.extend(
-            [
-                f"The commit hash is `{review_commit_sha}`.\n",
-                "Please review this implementation.\n",
-                "Do you have any questions or issues?\n\n",
-                "Review requirements:\n",
-                "1. Evaluate strictly against the confirmed spec/frame.\n",
-                "2. Prioritize bugs, regressions, missing tests, and maintainability risks.\n",
-                "3. Ignore changes under `.planningtree/`.\n",
-                "4. If there are no serious issues, state that explicitly.\n",
-                "5. Include concrete file paths for findings whenever possible.\n",
-                f"6. Start by inspecting commit `{review_commit_sha}` and its related diffs.\n",
-                "7. Respond in plain markdown prose for humans.\n",
-                "8. Do NOT return JSON/YAML objects or fenced data payloads.\n",
-            ]
-        )
         return "".join(sections)
 
 
