@@ -674,58 +674,6 @@ def test_session_v4_thread_resume_uses_native_rollout_when_thread_exists(client:
     assert "thread/resume" not in [method for method, _ in fake_transport.requests]
 
 
-def test_session_v4_thread_recover_backfills_provider_turn_into_native_rollout(client: TestClient) -> None:
-    fake_transport = _FakeTransport(
-        responses={
-            "initialize": {"serverInfo": {"version": "1.2.3"}},
-            "thread/read": {
-                "thread": {
-                    "id": "thread-1",
-                    "name": "Provider thread",
-                    "status": {"type": "idle"},
-                    "turns": [
-                        {
-                            "id": "turn-provider-1",
-                            "threadId": "thread-1",
-                            "status": "completed",
-                            "items": [
-                                {
-                                    "id": "item-provider-1",
-                                    "type": "agentMessage",
-                                    "text": "Recovered from provider",
-                                }
-                            ],
-                        }
-                    ],
-                }
-            },
-        },
-    )
-    _install_fake_manager(client, fake_transport)
-
-    assert client.post(
-        "/v4/session/initialize",
-        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
-    ).status_code == 200
-
-    response = client.post("/v4/session/threads/thread-1/recover", json={})
-
-    assert response.status_code == 200, response.json()
-    thread = response.json()["data"]["thread"]
-    assert thread["id"] == "thread-1"
-    assert thread["turns"][0]["id"] == "turn-provider-1"
-    assert thread["turns"][0]["status"] == "completed"
-    assert thread["turns"][0]["items"][0]["text"] == "Recovered from provider"
-    assert ("thread/read", {"threadId": "thread-1", "includeTurns": True}) in fake_transport.requests
-
-    runtime_turn = client.app.state.session_manager_v2.get_runtime_turn(
-        thread_id="thread-1",
-        turn_id="turn-provider-1",
-    )
-    assert runtime_turn["status"] == "completed"
-    assert runtime_turn["items"][0]["text"] == "Recovered from provider"
-
-
 def test_session_v4_turns_list_uses_native_rollout_when_provider_history_unavailable(
     client: TestClient,
 ) -> None:
@@ -787,7 +735,7 @@ def test_session_v4_thread_read_missing_native_rollout_returns_not_found(client:
     assert response.json()["error"]["message"] == "no rollout found for thread id missing-thread"
 
 
-def test_session_v4_thread_recover_rejects_workflow_only_fields(client: TestClient) -> None:
+def test_session_v4_thread_recover_endpoint_not_exposed(client: TestClient) -> None:
     fake_transport = _FakeTransport(responses={"initialize": {"serverInfo": {"version": "1.2.3"}}})
     _install_fake_manager(client, fake_transport)
 
@@ -796,17 +744,8 @@ def test_session_v4_thread_recover_rejects_workflow_only_fields(client: TestClie
         json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
     ).status_code == 200
 
-    response = client.post(
-        "/v4/session/threads/thread-1/recover",
-        json={
-            "projectId": "project-1",
-            "nodeId": "node-1",
-            "role": "execution",
-            "idempotencyKey": "workflow-only",
-        },
-    )
-
-    assert response.status_code == 422
+    response = client.post("/v4/session/threads/thread-1/recover", json={})
+    assert response.status_code in {404, 405}
 
 
 def test_session_v4_thread_read_shadow_mode_returns_native_and_calls_provider(
