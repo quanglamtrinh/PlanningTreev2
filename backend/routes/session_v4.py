@@ -89,6 +89,10 @@ def _manager(request: Request) -> Any:
     return request.app.state.session_manager_v2
 
 
+def _mcp(request: Request) -> Any:
+    return request.app.state.mcp_integration_service
+
+
 def _phase_not_enabled(endpoint: str, *, phase: str) -> JSONResponse:
     return _error_response(
         SessionCoreError(
@@ -173,6 +177,13 @@ class ThreadForkRequest(ThreadConfigOverrides):
     pass
 
 
+class McpTurnContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    projectId: str
+    nodeId: str
+    role: str
+
+
 class TurnStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     input: list[dict[str, Any]]
@@ -186,6 +197,7 @@ class TurnStartRequest(BaseModel):
     summary: str | dict[str, Any] | None = None
     serviceTier: str | None = None
     outputSchema: dict[str, Any] | None = None
+    mcpContext: McpTurnContext | None = None
 
 
 class TurnSteerRequest(BaseModel):
@@ -214,6 +226,140 @@ class RejectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     resolutionKey: str = Field(min_length=1)
     reason: str | None = None
+
+
+class McpRegistryServerRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class McpProfilePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class McpContextRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mcpContext: McpTurnContext | None = None
+
+
+class McpResourceReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server: str = Field(min_length=1)
+    uri: str = Field(min_length=1)
+
+
+class McpToolCallRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server: str = Field(min_length=1)
+    tool: str = Field(min_length=1)
+    arguments: Any | None = None
+    meta: Any | None = Field(default=None, alias="_meta")
+
+
+class McpOauthLoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    scopes: list[str] | None = None
+    timeoutSecs: int | None = None
+
+
+
+
+@router.get("/v4/extensions/mcp/registry")
+def mcp_registry_list_v4(request: Request) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).list_registry()))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_registry_list_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.put("/v4/extensions/mcp/registry/servers/{serverId}")
+def mcp_registry_upsert_v4(serverId: str, payload: McpRegistryServerRequest, request: Request) -> JSONResponse:
+    try:
+        data = payload.model_dump(by_alias=True, exclude_none=True)
+        data["serverId"] = serverId
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).upsert_registry_server(data)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_registry_upsert_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.delete("/v4/extensions/mcp/registry/servers/{serverId}")
+def mcp_registry_delete_v4(serverId: str, request: Request) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).delete_registry_server(serverId)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_registry_delete_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/extensions/mcp/registry/health")
+def mcp_registry_health_v4(request: Request) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).registry_health()))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_registry_health_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/mcp-profile")
+def mcp_profile_read_v4(projectId: str, nodeId: str, role: str, request: Request) -> JSONResponse:
+    try:
+        profile = _mcp(request).read_profile(projectId, nodeId, role)
+        return JSONResponse(status_code=200, content=_ok({"profile": profile}))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_profile_read_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.patch("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/mcp-profile")
+def mcp_profile_patch_v4(projectId: str, nodeId: str, role: str, payload: McpProfilePatchRequest, request: Request) -> JSONResponse:
+    try:
+        patch = payload.model_dump(by_alias=True, exclude_none=True)
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).write_profile(projectId, nodeId, role, patch)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_profile_patch_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/mcp-profile/reset")
+def mcp_profile_reset_v4(projectId: str, nodeId: str, role: str, request: Request) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).reset_profile(projectId, nodeId, role)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_profile_reset_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/mcp-effective-config")
+def mcp_effective_config_v4(
+    projectId: str,
+    nodeId: str,
+    role: str,
+    request: Request,
+    threadId: str | None = Query(default=None),
+) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_ok(_mcp(request).preview_effective_config(projectId, nodeId, role, thread_id=threadId)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("mcp_effective_config_v4 failed")
+        return _unexpected_error_response()
 
 
 @router.post("/v4/session/initialize")
@@ -536,6 +682,82 @@ def session_inject_items_v4(
         return _error_response(exc)
     except Exception:
         logger.exception("session_inject_items_v4 failed")
+        return _unexpected_error_response()
+
+
+
+
+@router.post("/v4/session/threads/{threadId}/mcp/refresh")
+def session_mcp_refresh_v4(threadId: str, payload: McpContextRequest, request: Request) -> JSONResponse:
+    try:
+        response = _manager(request).mcp_runtime_refresh(thread_id=threadId, payload=payload.model_dump(exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_mcp_refresh_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/session/threads/{threadId}/mcp/status")
+def session_mcp_status_v4(
+    threadId: str,
+    request: Request,
+    cursor: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=1000),
+    detail: str | None = Query(default=None),
+) -> JSONResponse:
+    try:
+        del threadId
+        payload: dict[str, Any] = {}
+        if cursor is not None:
+            payload["cursor"] = cursor
+        if limit is not None:
+            payload["limit"] = limit
+        if detail is not None:
+            payload["detail"] = detail
+        response = _manager(request).mcp_server_status_list(payload)
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_mcp_status_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/session/threads/{threadId}/mcp/resource/read")
+def session_mcp_resource_read_v4(threadId: str, payload: McpResourceReadRequest, request: Request) -> JSONResponse:
+    try:
+        response = _manager(request).mcp_resource_read(thread_id=threadId, payload=payload.model_dump(by_alias=True, exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_mcp_resource_read_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/session/threads/{threadId}/mcp/tool/call")
+def session_mcp_tool_call_v4(threadId: str, payload: McpToolCallRequest, request: Request) -> JSONResponse:
+    try:
+        response = _manager(request).mcp_server_tool_call(thread_id=threadId, payload=payload.model_dump(by_alias=True, exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_mcp_tool_call_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/session/mcp/oauth/login")
+def session_mcp_oauth_login_v4(payload: McpOauthLoginRequest, request: Request) -> JSONResponse:
+    try:
+        response = _manager(request).mcp_server_oauth_login(payload.model_dump(exclude_none=True))
+        return JSONResponse(status_code=200, content=_ok(response))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("session_mcp_oauth_login_v4 failed")
         return _unexpected_error_response()
 
 

@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import type { ChangedFileRecord, DetailState, NodeRecord } from '../../api/types'
+import { useEffect, useState } from 'react'
+import { api } from '../../api/client'
+import type { ChangedFileRecord, DetailState, McpEffectiveConfigResponse, McpRegistryServer, McpThreadProfile, McpThreadRole, NodeRecord } from '../../api/types'
 import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
 import styles from './NodeDetailCard.module.css'
 
@@ -181,6 +182,127 @@ function InfoExtensionList({
   )
 }
 
+
+function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; nodeId: string }) {
+  const [role, setRole] = useState<McpThreadRole>('execution')
+  const [registry, setRegistry] = useState<McpRegistryServer[]>([])
+  const [profile, setProfile] = useState<McpThreadProfile | null>(null)
+  const [effective, setEffective] = useState<McpEffectiveConfigResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void load()
+  }, [projectId, nodeId, role])
+
+  async function load() {
+    try {
+      setError(null)
+      const [registryResponse, profileResponse, effectiveResponse] = await Promise.all([
+        api.listMcpRegistry(),
+        api.readMcpThreadProfile(projectId, nodeId, role),
+        api.previewMcpEffectiveConfig(projectId, nodeId, role),
+      ])
+      setRegistry(registryResponse.servers)
+      setProfile(profileResponse.profile)
+      setEffective(effectiveResponse)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Failed to load MCP profile')
+    }
+  }
+
+  async function patchProfile(patch: Partial<McpThreadProfile>) {
+    try {
+      setError(null)
+      const response = await api.updateMcpThreadProfile(projectId, nodeId, role, patch)
+      setProfile(response.profile)
+      setEffective(await api.previewMcpEffectiveConfig(projectId, nodeId, role))
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : 'Failed to update MCP profile')
+    }
+  }
+
+  function toggleServer(serverId: string) {
+    const current = profile?.servers?.[serverId]
+    void patchProfile({
+      servers: {
+        ...(profile?.servers ?? {}),
+        [serverId]: {
+          enabled: !current?.enabled,
+          enabledTools: current?.enabledTools ?? [],
+          disabledTools: current?.disabledTools ?? [],
+          approvalMode: current?.approvalMode ?? profile?.approvalMode ?? 'never',
+          toolApproval: current?.toolApproval ?? {},
+        },
+      },
+    })
+  }
+
+  return (
+    <div className={styles.infoMcpPanel} data-testid="info-tab-mcp-extensions">
+      <div className={styles.infoMcpHeaderRow}>
+        <div>
+          <h3 className={styles.infoMcpTitle}>Thread MCP profile</h3>
+          <p className={styles.infoExtensionDescription}>
+            Enable MCP per node role. Runtime status is for this selected effective profile.
+          </p>
+        </div>
+        <select className={styles.infoMcpSelect} value={role} onChange={(event) => setRole(event.target.value as McpThreadRole)}>
+          <option value="ask_planning">Ask planning</option>
+          <option value="execution">Execution</option>
+          <option value="audit">Audit</option>
+          <option value="package_review">Package review</option>
+        </select>
+      </div>
+
+      {error ? <p className={styles.infoMcpError}>{error}</p> : null}
+
+      <button
+        type="button"
+        role="switch"
+        aria-checked={Boolean(profile?.mcpEnabled)}
+        className={profile?.mcpEnabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+        onClick={() => void patchProfile({ mcpEnabled: !profile?.mcpEnabled })}
+      >
+        <span className={styles.infoExtensionToggleTrack} aria-hidden>
+          <span className={styles.infoExtensionToggleThumb} />
+        </span>
+        <span className={styles.infoExtensionToggleLabel}>{profile?.mcpEnabled ? 'MCP on' : 'MCP off'}</span>
+      </button>
+
+      <div className={styles.infoMcpServerList}>
+        {registry.length === 0 ? (
+          <p className={styles.changedFilesEmpty}>No global MCP servers registered.</p>
+        ) : (
+          registry.map((server) => {
+            const enabled = Boolean(profile?.servers?.[server.serverId]?.enabled)
+            return (
+              <button
+                key={server.serverId}
+                type="button"
+                className={enabled ? styles.infoMcpServerEnabled : styles.infoMcpServer}
+                onClick={() => toggleServer(server.serverId)}
+              >
+                <span>{server.name}</span>
+                <span>{enabled ? 'Enabled' : 'Disabled'}</span>
+              </button>
+            )
+          })
+        )}
+      </div>
+
+      <div className={styles.infoMcpHashBox}>
+        <span>mcpConfigHash</span>
+        <code>{effective?.mcpConfigHash ?? 'unresolved'}</code>
+      </div>
+      <div className={styles.infoMcpRuntimeBox}>
+        <span>Runtime</span>
+        <span>{effective?.runtime.conflict ? 'Conflict' : effective?.runtime.activeRuntimeMcpConfigHash ? 'Active' : 'Idle'}</span>
+      </div>
+    </div>
+  )
+}
+
+
 type Props = {
   node: NodeRecord
   projectId: string
@@ -333,6 +455,7 @@ export function NodeDescribePanel({
                   })
                 }}
               />
+              <ThreadMcpExtensionsPanel projectId={projectId} nodeId={node.node_id} />
             </div>
           </div>
 

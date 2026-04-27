@@ -62,6 +62,7 @@ from backend.conversation.services.thread_runtime_service_v3 import ThreadRuntim
 from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.conversation.services.workflow_event_publisher import WorkflowEventPublisher
 from backend.errors.app_errors import AppError
+from backend.mcp import McpIntegrationService
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import (
     artifacts_v4,
@@ -287,6 +288,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         git_checkpoint_service=git_checkpoint_service,
         codex_client=codex_client,
     )
+    mcp_integration_service = McpIntegrationService(paths)
     session_transport_v2 = StdioJsonRpcTransportV2(
         codex_cmd=codex_cmd,
         server_request_queue_capacity=session_core_v2_server_request_queue_capacity,
@@ -313,6 +315,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         connection_state_machine=session_connection_state_v2,
         thread_rollout_recorder=session_thread_rollout_recorder_v2,
         thread_read_mode=session_core_v2_thread_read_mode,
+        mcp_service=mcp_integration_service,
     )
     workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
     workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
@@ -445,6 +448,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.ask_v3_frontend_enabled = ask_v3_frontend_enabled
     app.state.ask_rollout_metrics_service = ask_rollout_metrics_service
     app.state.session_manager_v2 = session_manager_v2
+    app.state.mcp_integration_service = mcp_integration_service
     app.state.workflow_state_repository_v2 = workflow_state_repository_v2
     app.state.workflow_context_builder_v2 = workflow_context_builder_v2
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2

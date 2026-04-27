@@ -11,6 +11,11 @@ import type {
   FrameGenAcceptedResponse,
   FrameGenStatusResponse,
   LocalUsageSnapshot,
+  McpEffectiveConfigResponse,
+  McpRegistryResponse,
+  McpRegistryServer,
+  McpThreadProfile,
+  McpThreadRole,
   NodeDocument,
   NodeDocumentKind,
   ResetThreadV3Response,
@@ -276,6 +281,57 @@ async function jsonFetchV2<T>(path: string, init?: RequestInit, body?: JsonBody)
 }
 
 export const api = {
+
+  listMcpRegistry(): Promise<McpRegistryResponse> {
+    return jsonFetchV2<McpRegistryResponse>('/v4/extensions/mcp/registry')
+  },
+  upsertMcpRegistryServer(server: Partial<McpRegistryServer> & { serverId: string }): Promise<{ server: McpRegistryServer }> {
+    return jsonFetchV2<{ server: McpRegistryServer }>(
+      `/v4/extensions/mcp/registry/servers/${encodeURIComponent(server.serverId)}`,
+      { method: 'PUT' },
+      server as Record<string, unknown>,
+    )
+  },
+  deleteMcpRegistryServer(serverId: string): Promise<{ deleted: boolean; serverId: string }> {
+    return jsonFetchV2<{ deleted: boolean; serverId: string }>(
+      `/v4/extensions/mcp/registry/servers/${encodeURIComponent(serverId)}`,
+      { method: 'DELETE' },
+    )
+  },
+  readMcpThreadProfile(projectId: string, nodeId: string, role: McpThreadRole): Promise<{ profile: McpThreadProfile }> {
+    return jsonFetchV2<{ profile: McpThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-profile`,
+    )
+  },
+  updateMcpThreadProfile(
+    projectId: string,
+    nodeId: string,
+    role: McpThreadRole,
+    patch: Partial<McpThreadProfile>,
+  ): Promise<{ profile: McpThreadProfile }> {
+    return jsonFetchV2<{ profile: McpThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-profile`,
+      { method: 'PATCH' },
+      patch as Record<string, unknown>,
+    )
+  },
+  resetMcpThreadProfile(projectId: string, nodeId: string, role: McpThreadRole): Promise<{ profile: McpThreadProfile }> {
+    return jsonFetchV2<{ profile: McpThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-profile/reset`,
+      { method: 'POST' },
+    )
+  },
+  previewMcpEffectiveConfig(
+    projectId: string,
+    nodeId: string,
+    role: McpThreadRole,
+    threadId?: string | null,
+  ): Promise<McpEffectiveConfigResponse> {
+    const query = threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''
+    return jsonFetchV2<McpEffectiveConfigResponse>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-effective-config${query}`,
+    )
+  },
   getBootstrapStatus(): Promise<BootstrapStatus> {
     return jsonFetch('/v3/bootstrap/status')
   },

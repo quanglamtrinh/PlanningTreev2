@@ -34,6 +34,41 @@
   flex-shrink: 0;
 }
 
+.backButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-3);
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: var(--line-height-ui);
+  transition: background 0.12s ease;
+}
+
+.backButton:hover {
+  background: var(--surface-container-highest);
+}
+
+.backButton:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--primary) 36%, transparent),
+    var(--shadow-xs);
+}
+
+.backButton svg {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
 .eyebrow {
   margin: 0 0 var(--space-2);
   font-size: var(--font-size-xs);
@@ -279,4 +314,55 @@
   .grid {
     grid-template-columns: 1fr;
   }
+}
+
+.errorBanner {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--error, #dc2626) 10%, var(--surface-container-lowest));
+  color: var(--error, #b91c1c);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.healthRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.healthOk {
+  color: var(--success, #15803d);
+  font-weight: 600;
+}
+
+.healthBad {
+  color: var(--error, #b91c1c);
+  font-weight: 600;
+}
+
+.healthIssue {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.secondaryButton {
+  padding: 7px 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 10%, transparent);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: var(--line-height-ui);
+}
+
+.secondaryButton:hover {
+  background: color-mix(in srgb, var(--on-surface) 5%, var(--surface-container-low));
 }

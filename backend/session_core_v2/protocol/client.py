@@ -81,6 +81,25 @@ class SessionProtocolClientV2:
         payload = {"threadId": thread_id, "turnId": turn_id}
         return self._transport.request("turn/interrupt", payload)
 
+    def mcp_server_refresh(self) -> dict[str, Any]:
+        return self._transport.request("config/mcpServer/reload", None)
+
+    def mcp_server_status_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._transport.request("mcpServerStatus/list", params or {})
+
+    def mcp_resource_read(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        payload = {"threadId": thread_id}
+        payload.update(params)
+        return self._transport.request("mcpServer/resource/read", payload)
+
+    def mcp_server_tool_call(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
+        payload = {"threadId": thread_id}
+        payload.update(params)
+        return self._transport.request("mcpServer/tool/call", payload)
+
+    def mcp_server_oauth_login(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._transport.request("mcpServer/oauth/login", params)
+
     def respond_to_server_request(self, raw_request_id: Any, result: dict[str, Any] | None = None) -> None:
         self._transport.respond_to_server_request(raw_request_id, result)
 

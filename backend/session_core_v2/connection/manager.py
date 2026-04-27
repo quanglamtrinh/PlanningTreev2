@@ -56,6 +56,7 @@ class SessionManagerV2:
         connection_state_machine: ConnectionStateMachine,
         thread_rollout_recorder: ThreadRolloutRecorder | None = None,
         thread_read_mode: str = "native",
+        mcp_service: Any | None = None,
     ) -> None:
         self._protocol_client = protocol_client
         self._runtime_store = runtime_store
@@ -64,6 +65,7 @@ class SessionManagerV2:
         self._thread_service = ThreadServiceV2(protocol_client, logger=logger)
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
         self._thread_read_mode = self._normalize_thread_read_mode(thread_read_mode)
+        self._mcp_service = mcp_service
         self._turn_metadata_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         # Serialize initialize to avoid concurrent connecting->connecting races.
         self._initialize_lock = threading.Lock()
@@ -568,12 +570,19 @@ class SessionManagerV2:
                 details={"threadId": thread_id, "activeTurnId": active_turn.get("id")},
             )
 
-        rpc_payload = self._with_default_turn_permissions(payload)
+        prepared_payload = self._prepare_mcp_turn_payload(thread_id=thread_id, payload=payload)
+        pending_mcp_hash = self._optional_non_empty_str(prepared_payload.pop("_mcpPendingRuntimeHash", None))
+        rpc_payload = self._with_default_turn_permissions(prepared_payload)
         rpc_payload.pop("clientActionId", None)
         rpc_payload.pop("metadata", None)
-        response = self._turn_service.turn_start(thread_id=thread_id, params=rpc_payload)
+        try:
+            response = self._turn_service.turn_start(thread_id=thread_id, params=rpc_payload)
+        except Exception:
+            self._release_mcp_runtime_turn(thread_id=thread_id, turn_id="__pending__")
+            raise
         turn_id = self._extract_turn_id_from_response(response)
         if not turn_id:
+            self._release_mcp_runtime_turn(thread_id=thread_id, turn_id="__pending__")
             raise SessionCoreError(
                 code="ERR_INTERNAL",
                 message="turn/start response missing turnId (provider contract violation).",
@@ -584,7 +593,9 @@ class SessionManagerV2:
                 },
             )
 
-        turn_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None
+        turn_metadata = prepared_payload.get("metadata") if isinstance(prepared_payload.get("metadata"), dict) else None
+        if pending_mcp_hash and self._mcp_service is not None:
+            self._mcp_service.commit_runtime_turn(thread_id=thread_id, turn_id=turn_id, pending_hash=pending_mcp_hash)
         if isinstance(turn_metadata, dict) and turn_metadata:
             self._turn_metadata_by_key[(thread_id, turn_id)] = dict(turn_metadata)
         existing_turn = self._runtime_store.get_turn(thread_id=thread_id, turn_id=turn_id)
@@ -782,6 +793,7 @@ class SessionManagerV2:
             allow_same=True,
             last_codex_status="interrupted",
         )
+        self._release_mcp_runtime_turn(thread_id=thread_id, turn_id=turn_id)
         response = {"status": "accepted"}
         logger.info(
             "session_core_v2 turn/interrupt accepted",
@@ -794,6 +806,38 @@ class SessionManagerV2:
             },
         )
         return response
+
+
+
+    def mcp_server_status_list(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._protocol_client.mcp_server_status_list(payload)
+
+    def mcp_resource_read(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._protocol_client.mcp_resource_read(thread_id, payload)
+
+    def mcp_server_tool_call(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._protocol_client.mcp_server_tool_call(thread_id, payload)
+
+    def mcp_server_oauth_login(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        return self._protocol_client.mcp_server_oauth_login(payload)
+
+    def mcp_runtime_refresh(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._ensure_initialized()
+        if self._mcp_service is None:
+            self._protocol_client.mcp_server_refresh()
+            return {"status": "accepted"}
+        prepared = self._mcp_service.prepare_turn_start(
+            thread_id=thread_id,
+            payload={"input": [], "metadata": {}, "mcpContext": payload.get("mcpContext")},
+            protocol_client=self._protocol_client,
+        )
+        mcp_hash = self._optional_non_empty_str(prepared.get("_mcpPendingRuntimeHash"))
+        self._release_mcp_runtime_turn(thread_id=thread_id, turn_id="__pending__")
+        return {"status": "accepted", "mcpConfigHash": mcp_hash}
 
     # ------------------------------------------------------------------
     # Server requests
@@ -1112,6 +1156,22 @@ class SessionManagerV2:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+
+    def _prepare_mcp_turn_payload(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._mcp_service is None:
+            return dict(payload)
+        return self._mcp_service.prepare_turn_start(
+            thread_id=thread_id,
+            payload=payload,
+            protocol_client=self._protocol_client,
+        )
+
+    def _release_mcp_runtime_turn(self, *, thread_id: str, turn_id: str) -> None:
+        if self._mcp_service is None:
+            return
+        self._mcp_service.release_runtime_turn(thread_id=thread_id, turn_id=turn_id)
+
     def _ensure_initialized(self) -> None:
         if self._connection_state_machine.phase != "initialized":
             raise SessionCoreError(
@@ -1131,6 +1191,15 @@ class SessionManagerV2:
                     turn_payload = params.get("turn")
                     if isinstance(turn_payload, dict):
                         params_turn_id = self._optional_non_empty_str(turn_payload.get("id"))
+                if method in {"turn/completed", "turn/failed", "turn/interrupted"}:
+                    release_thread_id = envelope.get("threadId") if isinstance(envelope, dict) else params_thread_id
+                    release_turn_id = envelope.get("turnId") if isinstance(envelope, dict) else params_turn_id
+                    if not release_turn_id:
+                        turn_payload = params.get("turn")
+                        if isinstance(turn_payload, dict):
+                            release_turn_id = self._optional_non_empty_str(turn_payload.get("id"))
+                    if release_thread_id and release_turn_id:
+                        self._release_mcp_runtime_turn(thread_id=str(release_thread_id), turn_id=str(release_turn_id))
                 logger.info(
                     "session_core_v2 notification ingest",
                     extra={

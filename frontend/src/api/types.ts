@@ -1332,3 +1332,67 @@ export interface WorkflowActionAcceptedResponse {
   reviewThreadId?: string | null
   workflowPhase?: WorkflowPhase | null
 }
+
+
+// MCP registry/profile types
+export type McpThreadRole = 'ask_planning' | 'execution' | 'audit' | 'package_review'
+export type McpTransportType = 'stdio' | 'streamable_http'
+
+export interface McpRegistryServer {
+  serverId: string
+  name: string
+  description: string
+  transport: Record<string, unknown> & { type: McpTransportType }
+  installStatus: string
+  trustStatus: string
+  metadata: Record<string, unknown>
+  updatedAt: string | null
+  health?: {
+    valid: boolean
+    errors: Array<{ code: string; message: string }>
+    warnings: Array<{ code: string; message: string }>
+    installStatus: string
+    trustStatus: string
+  }
+}
+
+export interface McpRegistryResponse {
+  servers: McpRegistryServer[]
+  updatedAt: string | null
+}
+
+export interface McpThreadServerProfile {
+  enabled: boolean
+  enabledTools: string[]
+  disabledTools: string[]
+  approvalMode: string
+  toolApproval: Record<string, unknown>
+}
+
+export interface McpThreadProfile {
+  projectId: string
+  nodeId: string
+  role: McpThreadRole
+  mcpEnabled: boolean
+  approvalMode: string
+  servers: Record<string, McpThreadServerProfile>
+  policyOverrides: Record<string, unknown>
+  updatedAt: string | null
+}
+
+export interface McpRuntimeState {
+  activeRuntimeMcpConfigHash: string | null
+  activeTurns: Array<{ threadId: string; turnId: string; mcpConfigHash: string }>
+  conflict: boolean
+}
+
+export interface McpEffectiveConfigResponse {
+  projectId: string
+  nodeId: string
+  role: McpThreadRole
+  threadId: string | null
+  profile: McpThreadProfile
+  effectiveConfig: Record<string, unknown>
+  mcpConfigHash: string
+  runtime: McpRuntimeState
+}
