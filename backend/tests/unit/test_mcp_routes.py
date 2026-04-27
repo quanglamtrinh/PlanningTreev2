@@ -7,9 +7,25 @@ class FakeMcpManager:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
+    def mcp_runtime_refresh(self, *, thread_id: str, payload: dict) -> dict:
+        self.calls.append({"method": "refresh", "threadId": thread_id, "payload": dict(payload)})
+        return {"refreshed": True}
+
+    def mcp_server_status_list(self, payload: dict) -> dict:
+        self.calls.append({"method": "status", "payload": dict(payload)})
+        return {"servers": []}
+
+    def mcp_resource_read(self, *, thread_id: str, payload: dict) -> dict:
+        self.calls.append({"method": "resource", "threadId": thread_id, "payload": dict(payload)})
+        return {"contents": []}
+
     def mcp_server_tool_call(self, *, thread_id: str, payload: dict) -> dict:
-        self.calls.append({"threadId": thread_id, "payload": dict(payload)})
+        self.calls.append({"method": "tool", "threadId": thread_id, "payload": dict(payload)})
         return {"content": [{"type": "text", "text": payload.get("arguments", {}).get("message", "")}], "isError": False}
+
+    def mcp_server_oauth_login(self, payload: dict) -> dict:
+        self.calls.append({"method": "oauth", "payload": dict(payload)})
+        return {"login": "started"}
 
 
 def test_mcp_tool_call_route_proxies_echo_payload(client: TestClient) -> None:
@@ -33,6 +49,7 @@ def test_mcp_tool_call_route_proxies_echo_payload(client: TestClient) -> None:
     }
     assert manager.calls == [
         {
+            "method": "tool",
             "threadId": "thread-1",
             "payload": {
                 "server": "echo",
@@ -41,4 +58,35 @@ def test_mcp_tool_call_route_proxies_echo_payload(client: TestClient) -> None:
                 "_meta": {"requestId": "req-1"},
             },
         }
+    ]
+
+
+
+def test_mcp_runtime_routes_proxy_payloads(client: TestClient) -> None:
+    manager = FakeMcpManager()
+    client.app.state.session_manager_v2 = manager
+
+    assert client.post(
+        "/v4/session/threads/thread-1/mcp/refresh",
+        json={"mcpContext": {"projectId": "project-1", "nodeId": "node-1", "role": "execution"}},
+    ).json()["data"] == {"refreshed": True}
+    assert client.get("/v4/session/threads/thread-1/mcp/status?cursor=abc&limit=10&detail=full").json()["data"] == {"servers": []}
+    assert client.post(
+        "/v4/session/threads/thread-1/mcp/resource/read",
+        json={"server": "fs", "uri": "file:///tmp/a.txt"},
+    ).json()["data"] == {"contents": []}
+    assert client.post(
+        "/v4/session/mcp/oauth/login",
+        json={"name": "remote", "scopes": ["read"], "timeoutSecs": 5},
+    ).json()["data"] == {"login": "started"}
+
+    assert manager.calls == [
+        {
+            "method": "refresh",
+            "threadId": "thread-1",
+            "payload": {"mcpContext": {"projectId": "project-1", "nodeId": "node-1", "role": "execution"}},
+        },
+        {"method": "status", "payload": {"cursor": "abc", "limit": 10, "detail": "full"}},
+        {"method": "resource", "threadId": "thread-1", "payload": {"server": "fs", "uri": "file:///tmp/a.txt"}},
+        {"method": "oauth", "payload": {"name": "remote", "scopes": ["read"], "timeoutSecs": 5}},
     ]

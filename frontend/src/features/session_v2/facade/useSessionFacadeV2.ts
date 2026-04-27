@@ -73,7 +73,11 @@ export type SessionFacadeCommands = {
   refreshThreads: () => Promise<void>
   submitSessionAction: (action: SessionInputAction) => Promise<void>
   setModel: (model: string) => void
-  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
+  submit: (
+    payload: ComposerSubmitPayload,
+    policy?: TurnExecutionPolicy,
+    context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
+  ) => Promise<void>
   interrupt: () => Promise<void>
   resolveRequest: (requestId: string, result: Record<string, unknown>) => Promise<void>
   rejectRequest: (requestId: string, reason?: string | null) => Promise<void>
@@ -336,9 +340,16 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     }
   }, [])
 
-  const submit = useCallback(async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => {
-    await runtimeControllerRef.current?.submit(payload, policy)
-  }, [])
+  const submit = useCallback(
+    async (
+      payload: ComposerSubmitPayload,
+      policy?: TurnExecutionPolicy,
+      context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
+    ) => {
+      await runtimeControllerRef.current?.submit(payload, policy, context)
+    },
+    [],
+  )
 
   const interrupt = useCallback(async () => {
     await runtimeControllerRef.current?.interrupt()

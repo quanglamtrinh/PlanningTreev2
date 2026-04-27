@@ -887,7 +887,13 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         lane: workflowLane,
         requestedPolicy: payload.requestedPolicy,
       })
-      await sessionCommands.submit(payload, turnPolicy)
+      await sessionCommands.submit(
+        payload,
+        turnPolicy,
+        projectId && nodeId
+          ? { mcpContext: { projectId, nodeId, role: workflowRoleForThreadTab(threadTab) } }
+          : undefined,
+      )
       if (!projectId || !nodeId) {
         return
       }
@@ -901,6 +907,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       sessionCommands.selectThread,
       sessionCommands.submit,
       sessionState.activeThreadId,
+      threadTab,
       workflowLane,
       workflowModelPolicy,
     ],

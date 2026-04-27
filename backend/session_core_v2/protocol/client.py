@@ -21,6 +21,12 @@ class SessionProtocolClientV2:
     def set_server_request_handler(self, handler: ServerRequestHandler) -> None:
         self._transport.set_server_request_handler(handler)
 
+    def app_server_process_generation(self) -> int:
+        return self._transport.process_generation()
+
+    def app_server_process_running(self) -> bool:
+        return self._transport.is_process_running()
+
     def initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         response = self._transport.request("initialize", params)
         self._transport.notify("initialized", {})
@@ -80,6 +86,9 @@ class SessionProtocolClientV2:
     def turn_interrupt(self, thread_id: str, turn_id: str) -> dict[str, Any]:
         payload = {"threadId": thread_id, "turnId": turn_id}
         return self._transport.request("turn/interrupt", payload)
+
+    def config_batch_write(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._transport.request("config/batchWrite", params)
 
     def mcp_server_refresh(self) -> dict[str, Any]:
         return self._transport.request("config/mcpServer/reload", None)

@@ -325,6 +325,38 @@ describe('sessionRuntimeController', () => {
     expect(request.sandboxPolicy).toEqual({ type: 'dangerFullAccess' })
   })
 
+
+
+  it('includes MCP context in turn/start without mixing it into execution policy', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit(
+      {
+        input: [{ type: 'text', text: 'use mcp' }],
+        text: 'use mcp',
+        requestedPolicy: {
+          accessMode: 'full-access',
+          model: null,
+        },
+      },
+      { effort: 'high' },
+      { mcpContext: { projectId: 'project-1', nodeId: 'node-1', role: 'execution' } },
+    )
+
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'use mcp' }],
+        model: 'gpt-5',
+        effort: 'high',
+        mcpContext: { projectId: 'project-1', nodeId: 'node-1', role: 'execution' },
+      }),
+    )
+  })
+
   it('maps default Codex composer model and high effort into turn/start config', async () => {
     harness.runtimeSnapshot.activeThreadId = 'thread-1'
     harness.runtimeSnapshot.activeTurns = []

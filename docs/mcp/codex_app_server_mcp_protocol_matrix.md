@@ -28,12 +28,17 @@ This matrix is the PlanningTree implementation source of truth for proxying MCP 
 
 Related non-MCP server requests already sharing the pending-request path: `item/tool/requestUserInput`, `item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, and `item/permissions/requestApproval`.
 
-## Config Refresh And Thread Scope Findings
+## Config Apply, Refresh, And Thread Scope Findings
 
 - Codex app-server `config/mcpServer/reload` has no params. It loads the latest Codex config itself and queues `McpServerRefreshConfig` on the internal thread manager.
+- PlanningTree applies the thread-scoped effective MCP config by calling `config/batchWrite` with `keyPath: "mcp_servers"`, `mergeStrategy: "replace"`, and `reloadUserConfig: true`, then calls `config/mcpServer/reload` before `turn/start`.
 - `McpServerRefreshConfig` contains serialized `mcp_servers` and `mcp_oauth_credentials_store_mode`.
 - App-server comments state refresh requests are queued per thread and each thread rebuilds MCP connections on its next active turn.
-- The public app-server API does not expose a direct request parameter for an arbitrary per-thread MCP config. PlanningTree must therefore apply a PlanningTree-scoped effective config at the controlled `turn_start` boundary and guard against conflicting active configs if the underlying runtime behaves as process-global.
+- The public app-server API does not expose a direct request parameter for an arbitrary per-thread MCP config. PlanningTree must therefore apply a PlanningTree-scoped effective config at the controlled `turn_start` boundary and guard against conflicting active configs because the written Codex user config is shared.
+- PlanningTree stores `mcpConfigHash` only as internal runtime/journal metadata. It does not send this hash to provider `turn/start`, and it does not persist full effective config in metadata because that config may contain environment names, headers, or args that should not be exposed in UI/journal/event payloads.
+- PlanningTree scopes its last-applied MCP config cache to the Codex app-server process generation. If the app-server restarts, PlanningTree must reapply config even when the requested hash matches the previous in-memory value.
+- If `config/batchWrite` succeeds but `config/mcpServer/reload` fails, PlanningTree fails the turn start, leaves the applied-hash cache unchanged, and retries the full apply path on the next turn.
+- Older app-server binaries that do not support `config/batchWrite` must fail fast with a clear unsupported-version error rather than continuing with stale or unapplied MCP config.
 
 ## Unsupported Or Deferred Gaps
 

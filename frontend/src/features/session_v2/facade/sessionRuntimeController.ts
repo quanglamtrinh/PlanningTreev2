@@ -151,7 +151,7 @@ export type SessionRuntimeController = {
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
   submitSessionAction: (action: SessionInputAction) => Promise<void>
-  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
+  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy, context?: Extract<SessionInputAction, { type: 'turn.start' }>['context']) => Promise<void>
   interrupt: () => Promise<void>
   resetHydratedState: () => void
   dispose: () => void
@@ -664,6 +664,7 @@ export function createSessionRuntimeController(
     runtime: RuntimeSnapshot,
     payload: ComposerSubmitPayload,
     policy?: TurnExecutionPolicy,
+    context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
   ): SessionInputAction | null => {
     const activeThreadId = runtime.activeThreadId
     if (!activeThreadId) {
@@ -684,6 +685,7 @@ export function createSessionRuntimeController(
       threadId: activeThreadId,
       input: payload.input,
       policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
+      context,
     }
   }
 
@@ -720,6 +722,9 @@ export function createSessionRuntimeController(
     }
     if (model) {
       request.model = model
+    }
+    if (action.context?.mcpContext) {
+      request.mcpContext = action.context.mcpContext
     }
 
     const result = await api.startTurn(action.threadId, request)
@@ -808,9 +813,13 @@ export function createSessionRuntimeController(
     }
   }
 
-  const submit = async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy): Promise<void> => {
+  const submit = async (
+    payload: ComposerSubmitPayload,
+    policy?: TurnExecutionPolicy,
+    context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
+  ): Promise<void> => {
     const runtime = dependencies.getRuntimeSnapshot()
-    const action = actionFromSubmit(runtime, payload, policy)
+    const action = actionFromSubmit(runtime, payload, policy, context)
     if (!action) {
       return
     }

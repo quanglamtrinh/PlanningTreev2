@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
@@ -15,11 +16,13 @@ from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now
 
 VALID_ROLES = {"ask_planning", "execution", "audit", "package_review"}
 VALID_APPROVAL_MODES = {"never", "onRequest", "onFailure", "untrusted"}
+logger = logging.getLogger(__name__)
 
 
 def canonical_effective_config_hash(config: dict[str, Any]) -> str:
     payload = json.dumps(config, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 
 
 class McpIntegrationService:
@@ -30,6 +33,8 @@ class McpIntegrationService:
         self._lock = threading.RLock()
         self._active_runtime_hash: str | None = None
         self._active_turn_hashes: dict[tuple[str, str], str] = {}
+        self._last_applied_mcp_config_hash: str | None = None
+        self._last_applied_process_generation: int | None = None
 
     # ------------------------------------------------------------------
     # Global registry
@@ -131,8 +136,7 @@ class McpIntegrationService:
         pending_key = (thread_id, "__pending__")
         self._acquire_runtime_turn(pending_key, mcp_hash)
         try:
-            if effective.get("mcp_servers"):
-                protocol_client.mcp_server_refresh()
+            self._apply_effective_config_if_needed(effective, mcp_hash, protocol_client)
         except Exception:
             self.release_runtime_turn(thread_id=thread_id, turn_id="__pending__")
             raise
@@ -141,7 +145,7 @@ class McpIntegrationService:
         next_payload.pop("mcpContext", None)
         metadata = dict(next_payload.get("metadata")) if isinstance(next_payload.get("metadata"), dict) else {}
         metadata["mcpConfigHash"] = mcp_hash
-        metadata["mcpEffectiveConfig"] = effective
+        metadata["mcpEffectiveConfigSummary"] = self._effective_config_summary(effective)
         next_payload["metadata"] = metadata
         next_payload["_mcpPendingRuntimeHash"] = mcp_hash
         return next_payload
@@ -182,6 +186,88 @@ class McpIntegrationService:
                 "conflict": conflict,
             }
 
+
+    def _apply_effective_config_if_needed(self, effective: dict[str, Any], mcp_hash: str, protocol_client: Any) -> None:
+        generation = self._protocol_process_generation(protocol_client)
+        process_running = self._protocol_process_running(protocol_client)
+        with self._lock:
+            must_apply = (
+                not process_running
+                or self._last_applied_mcp_config_hash != mcp_hash
+                or self._last_applied_process_generation != generation
+            )
+        if not must_apply:
+            return
+
+        batch_payload = {
+            "edits": [
+                {
+                    "keyPath": "mcp_servers",
+                    "value": copy.deepcopy(effective.get("mcp_servers") or {}),
+                    "mergeStrategy": "replace",
+                }
+            ],
+            "filePath": None,
+            "expectedVersion": None,
+            "reloadUserConfig": True,
+        }
+        try:
+            protocol_client.config_batch_write(batch_payload)
+            protocol_client.mcp_server_refresh()
+        except SessionCoreError as exc:
+            if exc.details.get("rpcCode") == -32601 or exc.code == "ERR_PROVIDER_METHOD_UNSUPPORTED":
+                raise SessionCoreError(
+                    code="ERR_MCP_CONFIG_APPLY_UNSUPPORTED",
+                    message="MCP effective config apply requires a Codex app-server version that supports config/batchWrite.",
+                    status_code=502,
+                    details={"method": "config/batchWrite", "cause": exc.details},
+                ) from exc
+            logger.warning(
+                "MCP effective config apply failed; turn start will not continue",
+                extra={
+                    "mcpConfigHash": mcp_hash,
+                    "appServerProcessGeneration": generation,
+                    "errorCode": exc.code,
+                },
+            )
+            raise
+        except Exception:
+            logger.warning(
+                "MCP effective config apply failed unexpectedly; turn start will not continue",
+                extra={"mcpConfigHash": mcp_hash, "appServerProcessGeneration": generation},
+                exc_info=True,
+            )
+            raise
+
+        applied_generation = self._protocol_process_generation(protocol_client)
+        with self._lock:
+            self._last_applied_mcp_config_hash = mcp_hash
+            self._last_applied_process_generation = applied_generation
+
+    @staticmethod
+    def _protocol_process_generation(protocol_client: Any) -> int:
+        getter = getattr(protocol_client, "app_server_process_generation", None)
+        if callable(getter):
+            try:
+                return int(getter())
+            except Exception:
+                return 0
+        return 0
+
+    @staticmethod
+    def _protocol_process_running(protocol_client: Any) -> bool:
+        getter = getattr(protocol_client, "app_server_process_running", None)
+        if callable(getter):
+            try:
+                return bool(getter())
+            except Exception:
+                return False
+        return True
+
+    @staticmethod
+    def _effective_config_summary(effective: dict[str, Any]) -> dict[str, Any]:
+        servers = effective.get("mcp_servers") if isinstance(effective.get("mcp_servers"), dict) else {}
+        return {"serverIds": sorted(str(server_id) for server_id in servers), "serverCount": len(servers)}
 
     # ------------------------------------------------------------------
     # Internals
@@ -364,8 +450,7 @@ class McpIntegrationService:
     def _load_registry_locked(self) -> dict[str, Any]:
         if not self._registry_path.exists():
             return {"schemaVersion": 1, "servers": [], "updatedAt": None}
-        with self._registry_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = self._load_json_file_locked(self._registry_path, default={"schemaVersion": 1, "servers": [], "updatedAt": None})
         if not isinstance(payload, dict):
             return {"schemaVersion": 1, "servers": [], "updatedAt": None}
         servers = payload.get("servers") if isinstance(payload.get("servers"), list) else []
@@ -375,11 +460,27 @@ class McpIntegrationService:
         ensure_dir(self._paths.config_root)
         atomic_write_json(self._registry_path, registry)
 
+    def _load_json_file_locked(self, path: Path, *, default: Any) -> Any:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            self._quarantine_corrupt_json_locked(path, exc)
+            return copy.deepcopy(default)
+
+    @staticmethod
+    def _quarantine_corrupt_json_locked(path: Path, exc: Exception) -> None:
+        logger.warning("MCP JSON store is corrupt; using empty defaults", extra={"path": str(path), "reason": str(exc)})
+        try:
+            quarantine = path.with_name(f"{path.name}.corrupt.{iso_now().replace(':', '-')}")
+            path.replace(quarantine)
+        except OSError:
+            logger.warning("Failed to quarantine corrupt MCP JSON store", extra={"path": str(path)}, exc_info=True)
+
     def _load_profiles_locked(self) -> dict[str, Any]:
         if not self._profiles_path.exists():
             return {}
-        with self._profiles_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = self._load_json_file_locked(self._profiles_path, default={})
         return payload if isinstance(payload, dict) else {}
 
     def _write_profiles_locked(self, profiles: dict[str, Any]) -> None:

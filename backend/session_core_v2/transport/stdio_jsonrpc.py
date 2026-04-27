@@ -35,6 +35,7 @@ class StdioJsonRpcTransportV2:
         self._default_timeout_sec = max(1, int(default_timeout_sec))
         self._server_request_queue_capacity = max(1, int(server_request_queue_capacity))
         self._process: subprocess.Popen[str] | None = None
+        self._process_generation = 0
         self._reader_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._server_request_worker_thread: threading.Thread | None = None
@@ -69,6 +70,7 @@ class StdioJsonRpcTransportV2:
                 bufsize=1,
                 env=env,
             )
+            self._process_generation += 1
         except FileNotFoundError as exc:
             raise SessionCoreError(
                 code="ERR_PROVIDER_UNAVAILABLE",
@@ -115,6 +117,13 @@ class StdioJsonRpcTransportV2:
                         )
                     )
             self._pending.clear()
+
+
+    def process_generation(self) -> int:
+        return self._process_generation
+
+    def is_process_running(self) -> bool:
+        return self._process is not None and self._process.poll() is None
 
     def request(
         self,
@@ -403,6 +412,9 @@ class StdioJsonRpcTransportV2:
         if "not initialized" in message.lower():
             mapped_code = "ERR_SESSION_NOT_INITIALIZED"
             status_code = 409
+        elif code == -32601:
+            mapped_code = "ERR_PROVIDER_METHOD_UNSUPPORTED"
+            status_code = 502
         elif code == -32602:
             mapped_code = "ERR_INTERNAL"
             status_code = 400

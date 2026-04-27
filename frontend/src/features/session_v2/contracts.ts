@@ -240,6 +240,12 @@ export interface ServerRequestEnvelope {
   params: Record<string, unknown>
 }
 
+export interface McpTurnContextV4 {
+  projectId: string
+  nodeId: string
+  role: string
+}
+
 export interface TurnStartRequestV4 {
   input: Array<Record<string, unknown>>
   model?: string | null
@@ -252,6 +258,7 @@ export interface TurnStartRequestV4 {
   summary?: string | Record<string, unknown> | null
   serviceTier?: string | null
   outputSchema?: Record<string, unknown> | null
+  mcpContext?: McpTurnContextV4 | null
 }
 
 export type ThreadCreationPolicy = Partial<{
@@ -277,6 +284,7 @@ export type SessionInputAction =
       threadId: string
       input: Array<Record<string, unknown>>
       policy?: TurnExecutionPolicy
+      context?: { mcpContext?: McpTurnContextV4 | null }
     }
   | {
       type: 'turn.steer'
