@@ -1186,10 +1186,6 @@ def test_session_v4_inject_items_uses_codex_payload_without_starting_turn(client
         "content": [{"type": "input_text", "text": "Workflow context"}],
         "metadata": {"workflowContext": True},
     }
-    thread_with_context = _fake_thread("thread-1")
-    thread_with_context["turns"] = [
-        {"id": "context-turn-1", "status": "completed", "items": [injected_item]},
-    ]
     fake_transport = _FakeTransport(
         responses={
             "initialize": {"serverInfo": {"version": "1.2.3"}},
@@ -1232,16 +1228,11 @@ def test_session_v4_inject_items_uses_codex_payload_without_starting_turn(client
     active_turn = runtime_store.get_active_turn(thread_id="thread-1")
     assert active_turn is None
 
-    read_response = client.get("/v4/session/threads/thread-1/read?includeTurns=true")
-    assert read_response.status_code == 200
-    replayed_item = read_response.json()["data"]["thread"]["turns"][0]["items"][0]
-    assert replayed_item["type"] == injected_item["type"]
-    assert replayed_item["content"] == injected_item["content"]
-    assert replayed_item["metadata"] == injected_item["metadata"]
-    assert replayed_item["status"] == "completed"
+    journal = runtime_store.read_thread_journal("thread-1")
+    assert journal == []
 
 
-def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidden_metadata(client: TestClient) -> None:
+def test_session_v4_inject_items_workflow_context_is_passthrough_without_synthetic_events(client: TestClient) -> None:
     fake_transport = _FakeTransport(
         responses={
             "initialize": {"serverInfo": {"version": "1.2.3"}},
@@ -1249,7 +1240,7 @@ def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidde
             "thread/turns/list": {"data": [], "nextCursor": None},
         }
     )
-    _install_fake_manager(client, fake_transport)
+    _install_fake_manager(client, fake_transport, thread_read_mode="codex")
 
     assert client.post(
         "/v4/session/initialize",
@@ -1276,20 +1267,14 @@ def test_session_v4_inject_items_workflow_context_is_replayable_and_marked_hidde
     runtime_store = client.app.state.session_manager_v2._runtime_store  # noqa: SLF001
     journal = runtime_store.read_thread_journal("thread-1")
     methods = [str(event.get("method") or "") for event in journal]
-    assert "turn/started" in methods
-    assert "item/completed" in methods
-    assert "turn/completed" in methods
-    context_item_events = [event for event in journal if str(event.get("method") or "") == "item/completed"]
-    assert context_item_events
-    context_item = context_item_events[-1]["params"]["item"]
-    assert context_item["metadata"]["workflowContext"] is True
-    assert context_item["metadata"]["role"] == "execution"
-    assert context_item["metadata"]["contextPacketHash"] == "sha256:packet"
+    assert "turn/started" not in methods
+    assert "item/completed" not in methods
+    assert "turn/completed" not in methods
 
     turns_response = client.get("/v4/session/threads/thread-1/turns")
     assert turns_response.status_code == 200
     turns = turns_response.json()["data"]["data"]
-    assert any(str(turn.get("status") or "") == "completed" for turn in turns)
+    assert turns == []
 
 
 def test_session_v4_pending_requests_lists_all_phase3_methods(client: TestClient) -> None:
