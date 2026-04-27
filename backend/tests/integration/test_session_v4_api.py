@@ -1765,6 +1765,80 @@ def test_session_v4_events_stream_drops_non_session_namespace_events(client: Tes
     assert data_lines == []
 
 
+def test_session_v4_events_stream_aliases_session_error_event_name(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    manager = client.app.state.session_manager_v2
+    runtime_store = manager._runtime_store  # noqa: SLF001
+    runtime_store.append_event(
+        thread_id="thread-1",
+        method="error",
+        params={"threadId": "thread-1", "error": {"message": "model rejected"}},
+        turn_id="turn-1",
+        source="journal",
+        replayable=True,
+    )
+
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        stream_response = client.get("/v4/session/threads/thread-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+    assert stream_response.status_code == 200
+    assert "event: session/error" in stream_response.text
+    assert "event: error" not in stream_response.text
+    assert '"method": "error"' in stream_response.text
+
+
+def test_session_v4_events_stream_includes_task_namespace_events(client: TestClient) -> None:
+    fake_transport = _FakeTransport(
+        responses={
+            "initialize": {"serverInfo": {"version": "1.2.3"}},
+        }
+    )
+    _install_fake_manager(client, fake_transport)
+    assert client.post(
+        "/v4/session/initialize",
+        json={"clientInfo": {"name": "PlanningTree", "version": "0.1.0"}},
+    ).status_code == 200
+
+    manager = client.app.state.session_manager_v2
+    runtime_store = manager._runtime_store  # noqa: SLF001
+    runtime_store.append_event(
+        thread_id="thread-1",
+        method="task/completed",
+        params={
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "id": "task-1",
+            "status": "completed",
+        },
+        turn_id="turn-1",
+        source="journal",
+        replayable=True,
+    )
+
+    original_read_stream_event = manager.read_stream_event
+    manager.read_stream_event = lambda **_: None
+    try:
+        stream_response = client.get("/v4/session/threads/thread-1/events?cursor=0")
+    finally:
+        manager.read_stream_event = original_read_stream_event
+    assert stream_response.status_code == 200
+    assert "event: task/completed" in stream_response.text
+    assert '"method": "task/completed"' in stream_response.text
+
+
 def test_session_v4_remaining_phase_gated_route_returns_deterministic_501(client: TestClient) -> None:
     response = client.post("/v4/session/threads/thread-1/archive", json={})
     assert response.status_code == 501

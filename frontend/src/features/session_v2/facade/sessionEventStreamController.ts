@@ -3,7 +3,10 @@ import { openThreadEventsStreamV2 } from '../api/client'
 import type { SessionEventEnvelope, SessionNotificationMethod } from '../contracts'
 import { parseSessionEvent } from '../state/sessionEventParser'
 
-const EVENT_METHODS: SessionNotificationMethod[] = [
+type SessionSseEventName = SessionNotificationMethod | 'session/error'
+
+const EVENT_METHODS: SessionSseEventName[] = [
+  'session/error',
   'thread/started',
   'thread/status/changed',
   'thread/closed',

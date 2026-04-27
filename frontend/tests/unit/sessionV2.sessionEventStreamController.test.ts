@@ -36,7 +36,7 @@ class FakeEventSource {
     this.onerror?.call(this as unknown as EventSource, new Event('error'))
   }
 
-  emit(method: SessionNotificationMethod, envelope: SessionEventEnvelope): void {
+  emit(method: SessionNotificationMethod | 'session/error', envelope: SessionEventEnvelope): void {
     const listeners = this.listeners.get(method)
     if (!listeners) {
       return
@@ -177,6 +177,44 @@ describe('sessionEventStreamController', () => {
     expect(sources).toHaveLength(2)
     expect(markDisconnected).toHaveBeenCalledWith('thread-1')
     expect(markDisconnected).not.toHaveBeenCalledWith('thread-2')
+  })
+
+  it('handles session error notifications without treating them as stream disconnects', () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+    const markDisconnected = vi.fn()
+    const markReconnect = vi.fn()
+    const runtimeError = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: markDisconnected,
+      markStreamReconnect: markReconnect,
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: runtimeError,
+    })
+
+    controller.open('thread-1')
+    const sessionError = envelope({
+      eventId: 'thread-1:2',
+      eventSeq: 2,
+      method: 'error',
+      params: { error: { message: 'model rejected' } },
+    })
+    sources[0].emit('session/error', sessionError)
+
+    expect(applyEventsBatch).toHaveBeenCalledWith([sessionError])
+    expect(markDisconnected).not.toHaveBeenCalled()
+    expect(markReconnect).not.toHaveBeenCalled()
+    expect(runtimeError).not.toHaveBeenCalledWith('Session stream disconnected. Reconnecting...')
   })
 
   it('retries reconnect after stream error', async () => {

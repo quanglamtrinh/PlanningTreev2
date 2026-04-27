@@ -13,7 +13,15 @@ from backend.session_core_v2.errors import SessionCoreError, error_envelope
 
 router = APIRouter(tags=["session-v4"])
 logger = logging.getLogger(__name__)
-_SESSION_EVENT_PREFIXES: tuple[str, ...] = ("thread/", "turn/", "item/", "serverRequest/")
+_SESSION_EVENT_PREFIXES: tuple[str, ...] = (
+    "thread/",
+    "turn/",
+    "task/",
+    "item/",
+    "hook/",
+    "rawResponseItem/",
+    "serverRequest/",
+)
 _SESSION_EVENT_EXPLICIT_METHODS: frozenset[str] = frozenset({"error"})
 _SESSION_TRACE_METHODS: frozenset[str] = frozenset(
     {
@@ -39,6 +47,13 @@ def _is_allowed_session_event_method(method: str) -> bool:
     if normalized in _SESSION_EVENT_EXPLICIT_METHODS:
         return True
     return normalized.startswith(_SESSION_EVENT_PREFIXES)
+
+
+def _sse_event_name_for_method(method: str) -> str:
+    normalized = str(method or "").strip()
+    if normalized == "error":
+        return "session/error"
+    return normalized or "message"
 
 
 def _ok(data: dict[str, Any]) -> dict[str, Any]:
@@ -630,15 +645,16 @@ def session_thread_events_v4(
 
         def _encode_sse(event: dict[str, Any]) -> str:
             event_seq = event.get("eventSeq")
-            event_name = str(event.get("method") or "message")
-            if not _is_allowed_session_event_method(event_name):
+            method = str(event.get("method") or "")
+            if not _is_allowed_session_event_method(method):
                 raise SessionCoreError(
                     code="ERR_INTERNAL",
-                    message=f"Session stream received unsupported event method: {event_name}",
+                    message=f"Session stream received unsupported event method: {method}",
                     status_code=500,
-                    details={"threadId": threadId, "method": event_name, "eventSeq": event_seq},
+                    details={"threadId": threadId, "method": method, "eventSeq": event_seq},
                 )
             data = json.dumps(event, ensure_ascii=True)
+            event_name = _sse_event_name_for_method(method)
             return f"id: {event_seq}\nevent: {event_name}\ndata: {data}\n\n"
 
         def _iter_sse() -> Iterator[str]:

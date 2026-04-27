@@ -594,8 +594,7 @@ class ExecutionAuditOrchestratorV2:
         replay = self._resolve_idempotent(state, "request_improvements", key, payload_hash)
         if replay is not None:
             return replay
-        decision = state.current_audit_decision
-        review_text = str(decision.final_review_text if decision is not None and decision.final_review_text else "").strip()
+        review_text = self._resolve_review_text_for_improvement(state)
         if not review_text:
             raise WorkflowActionNotAllowedError(
                 "improve_in_execution",
@@ -633,6 +632,43 @@ class ExecutionAuditOrchestratorV2:
             summary_seed=review_text,
             execution_run_id=execution_run_id,
         )
+
+    def _resolve_review_text_for_improvement(self, state: NodeWorkflowStateV2) -> str:
+        decision = state.current_audit_decision
+        decision_text = str(decision.final_review_text if decision is not None and decision.final_review_text else "").strip()
+        if decision_text:
+            return decision_text
+
+        audit_run_id = (
+            decision.source_audit_run_id
+            if decision is not None and decision.source_audit_run_id
+            else state.latest_audit_run_id
+        )
+        audit_run = state.audit_runs.get(str(audit_run_id or ""))
+        if audit_run is None:
+            return ""
+
+        run_text = str(audit_run.final_review_text or "").strip()
+        if run_text:
+            return run_text
+
+        runtime_turn_getter = getattr(self._session_manager, "get_runtime_turn", None)
+        if not callable(runtime_turn_getter):
+            return ""
+        thread_id = str(audit_run.thread_id or "").strip()
+        turn_id = str(audit_run.turn_id or "").strip()
+        if not thread_id or not turn_id:
+            return ""
+        try:
+            turn = runtime_turn_getter(thread_id=thread_id, turn_id=turn_id)
+        except Exception:
+            logger.debug(
+                "workflow_v2 improve review text fallback runtime lookup failed",
+                exc_info=True,
+                extra={"threadId": thread_id, "turnId": turn_id},
+            )
+            return ""
+        return str(_extract_final_review_text(turn) or "").strip()
 
     def start_package_review(
         self,

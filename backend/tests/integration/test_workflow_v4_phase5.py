@@ -380,6 +380,92 @@ def test_audit_settlement_uses_final_review_message_for_improve_prompt(
     assert "Earlier audit note should not drive improve." not in improve_prompt
 
 
+def test_improve_uses_runtime_turn_message_when_audit_decision_text_missing(
+    client: TestClient,
+    workspace_root: Path,
+) -> None:
+    project_id, node_id = _project_with_confirmed_docs(client, workspace_root)
+    manager = FakeSessionManager()
+    orchestrator = _install_phase5_orchestrator(client, manager, use_git_checkpoint_service=True)
+
+    start = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/start",
+        json={"idempotencyKey": "exec-start-before-audit-fallback"},
+    )
+    assert start.status_code == 200, start.json()
+    start_payload = start.json()
+    execution_settled = orchestrator.settle_terminal_turn(
+        thread_id=start_payload["threadId"],
+        turn_id=start_payload["turnId"],
+        status="completed",
+        turn={
+            "status": "completed",
+            "items": [{"type": "agentMessage", "text": "Implemented the requested task."}],
+        },
+    )
+    assert execution_settled is not None
+    workspace_hash = execution_settled["workflowState"]["decisions"]["execution"]["candidateWorkspaceHash"]
+
+    audit = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/audit/start",
+        json={"idempotencyKey": "audit-start-review-text-fallback", "expectedWorkspaceHash": workspace_hash},
+    )
+    assert audit.status_code == 200, audit.json()
+    audit_payload = audit.json()
+    audit_settled = orchestrator.settle_terminal_turn(
+        thread_id=audit_payload["threadId"],
+        turn_id=audit_payload["turnId"],
+        status="completed",
+        turn={
+            "status": "completed",
+            "items": [
+                {
+                    "type": "reasoning",
+                    "summary": "Reasoning summary should not become improve review text.",
+                },
+            ],
+        },
+    )
+    assert audit_settled is not None
+    audit_decision = audit_settled["workflowState"]["decisions"]["audit"]
+    assert audit_decision["finalReviewText"] is None
+
+    runtime_audit_text = "Please apply the requested fixes from this completed review message."
+
+    def runtime_turn(*, thread_id: str, turn_id: str) -> dict[str, Any] | None:
+        if thread_id != audit_payload["threadId"] or turn_id != audit_payload["turnId"]:
+            return None
+        return {
+            "id": turn_id,
+            "status": "completed",
+            "items": [
+                {
+                    "type": "reasoning",
+                    "summary": "Reasoning summary should not become improve review text.",
+                },
+                {
+                    "type": "agentMessage",
+                    "content": [{"type": "text", "text": runtime_audit_text}],
+                },
+            ],
+        }
+
+    manager.get_runtime_turn = runtime_turn  # type: ignore[attr-defined]
+
+    improve = client.post(
+        f"/v4/projects/{project_id}/nodes/{node_id}/execution/improve",
+        json={
+            "idempotencyKey": "execution-improve-runtime-turn-review-fallback",
+            "expectedReviewCommitSha": audit_decision["reviewCommitSha"],
+        },
+    )
+
+    assert improve.status_code == 200, improve.json()
+    improve_prompt = manager.turns[-1]["payload"]["input"][0]["text"]
+    assert runtime_audit_text in improve_prompt
+    assert "Reasoning summary should not become improve review text." not in improve_prompt
+
+
 def test_v4_execution_start_fails_when_session_turn_start_missing_turn_id(
     client: TestClient,
     workspace_root: Path,
