@@ -89,6 +89,42 @@ def test_registry_profile_effective_config_hash_and_secret_rejection(tmp_path) -
     assert preview["mcpConfigHash"].startswith("sha256:")
 
 
+def test_project_scoped_filesystem_server_uses_project_cwd(tmp_path) -> None:
+    project_root = tmp_path / "project-worktree"
+    project_root.mkdir()
+    service = McpIntegrationService(
+        build_app_paths(tmp_path / "appdata"),
+        project_cwd_resolver=lambda project_id: str(project_root),
+    )
+    service.upsert_registry_server(
+        {
+            "serverId": "filesystem",
+            "name": "Filesystem",
+            "transport": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/Thong/PlanningTreeMain"],
+                "cwd": "C:/Users/Thong/PlanningTreeMain",
+            },
+        }
+    )
+    service.write_profile(
+        "project-1",
+        "node-1",
+        "execution",
+        {"mcpEnabled": True, "servers": {"filesystem": {"enabled": True}}},
+    )
+
+    preview = service.preview_effective_config("project-1", "node-1", "execution")
+
+    assert preview["effectiveConfig"]["mcp_servers"]["filesystem"] == {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", str(project_root.resolve())],
+        "cwd": str(project_root.resolve()),
+        "default_tools_approval_mode": "auto",
+    }
+
+
 def test_runtime_conflict_guard_rejects_different_active_hash(tmp_path) -> None:
     service = McpIntegrationService(build_app_paths(tmp_path))
     protocol = FakeProtocol()

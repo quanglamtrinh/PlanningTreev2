@@ -7,6 +7,7 @@ import {
   selectActiveThread,
   selectActiveTranscriptModel,
   selectActiveTurns,
+  selectVisibleTranscriptRows,
   selectThreadsSorted,
   useThreadSessionStore,
 } from '../../src/features/session_v2/store/threadSessionStore'
@@ -631,6 +632,402 @@ describe('threadSessionStore', () => {
     expect(snapshot.itemsByTurn['thread-1:turn-stale']).toBeUndefined()
     expect(snapshot.itemsByTurn['thread-1:turn-fresh']?.map((item) => item.id)).toEqual(['item-fresh'])
     expect(snapshot.itemsByTurn['thread-2:turn-other']?.map((item) => item.id)).toEqual(['item-other'])
+  })
+
+  it('stores hydrated turns without retaining turn item render payloads', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 2,
+        error: null,
+        items: [
+          {
+            id: 'item-1',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            kind: 'userMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            payload: { type: 'userMessage', text: 'hello' },
+          } as SessionItem,
+        ],
+      },
+    ])
+
+    const snapshot = useThreadSessionStore.getState()
+    expect(snapshot.turnsByThread['thread-1'][0].items).toEqual([])
+    expect(snapshot.itemsByTurn['thread-1:turn-1']).toHaveLength(1)
+  })
+
+  it('does not duplicate same-id items when live arrives before hydrate', () => {
+    const store = useThreadSessionStore.getState()
+    store.setItemsForTurn('thread-1', 'turn-1', [
+      {
+        id: 'item-1',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        kind: 'userMessage',
+        status: 'inProgress',
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        payload: { type: 'userMessage', text: 'Build it' },
+      },
+    ])
+
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 3,
+        error: null,
+        items: [
+          {
+            id: 'item-1',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            kind: 'userMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            payload: { type: 'userMessage', text: 'Build it' },
+          } as SessionItem,
+        ],
+      },
+    ])
+
+    const items = useThreadSessionStore.getState().itemsByTurn['thread-1:turn-1']
+    expect(items).toHaveLength(1)
+    expect(items[0].id).toBe('item-1')
+  })
+
+  it('does not duplicate same-id items when hydrate arrives before live', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 3,
+        error: null,
+        items: [
+          {
+            id: 'thread-1:2',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            kind: 'userMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            payload: { type: 'userMessage', text: 'Build it' },
+          } as SessionItem,
+        ],
+      },
+    ])
+    store.applyEvent({
+      schemaVersion: 1,
+      eventId: 'thread-1:2',
+      eventSeq: 2,
+      tier: 'tier0',
+      method: 'user/message',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      occurredAtMs: 2,
+      replayable: true,
+      snapshotVersion: null,
+      source: 'journal',
+      params: { text: 'Build it' },
+    })
+
+    const items = useThreadSessionStore.getState().itemsByTurn['thread-1:turn-1']
+    expect(items).toHaveLength(1)
+    expect(items[0].payload.text).toBe('Build it')
+  })
+
+  it('preserves richer streaming live payload when stale hydrate arrives', () => {
+    const store = useThreadSessionStore.getState()
+    store.setItemsForTurn('thread-1', 'turn-1', [
+      {
+        id: 'item-1',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        kind: 'agentMessage',
+        status: 'inProgress',
+        createdAtMs: 1,
+        updatedAtMs: 5,
+        payload: { type: 'agentMessage', text: 'Hello streaming world' },
+      },
+    ])
+
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 4,
+        error: null,
+        items: [
+          {
+            id: 'item-1',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            kind: 'agentMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 2,
+            payload: { type: 'agentMessage', text: 'Hello' },
+          } as SessionItem,
+        ],
+      },
+    ])
+
+    const item = useThreadSessionStore.getState().itemsByTurn['thread-1:turn-1'][0]
+    expect(item.status).toBe('inProgress')
+    expect(item.payload.text).toBe('Hello streaming world')
+  })
+
+  it('replace hydrate merges backend fallback message into live event-id message', () => {
+    const store = useThreadSessionStore.getState()
+    store.setItemsForTurn('thread-1', 'turn-1', [
+      {
+        id: 'thread-1:2',
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        kind: 'message',
+        normalizedKind: 'userMessage',
+        status: 'inProgress',
+        createdAtMs: 2,
+        updatedAtMs: 3,
+        payload: { type: 'message', role: 'user', text: 'Build it' },
+      } as SessionItem,
+    ])
+
+    store.setThreadTurns(
+      'thread-1',
+      [
+        {
+          id: 'turn-1',
+          threadId: 'thread-1',
+          status: 'completed',
+          lastCodexStatus: 'completed',
+          startedAtMs: 1,
+          completedAtMs: 4,
+          error: null,
+          items: [
+            {
+              id: 'item-1',
+              threadId: 'thread-1',
+              turnId: 'turn-1',
+              kind: 'userMessage',
+              status: 'completed',
+              createdAtMs: 2,
+              updatedAtMs: 4,
+              payload: { type: 'userMessage', text: 'Build it' },
+            } as SessionItem,
+          ],
+        },
+      ],
+      { mode: 'replace' },
+    )
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-1']
+    expect(items).toHaveLength(1)
+    expect(items[0].id).toBe('item-1')
+    expect(items[0].payload.text).toBe('Build it')
+    expect(selectVisibleTranscriptRows(snapshot, 'thread-1').map((row) => row.item.payload.text)).toEqual(['Build it'])
+  })
+
+  it('replace hydrate preserves workflow metadata and replaces duplicate live items', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-frame',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 2,
+        error: null,
+        metadata: {
+          workflowInternal: true,
+          workflowInternalKind: 'artifact_generation',
+          artifactKind: 'frame',
+        },
+        items: [
+          {
+            id: 'live-user',
+            threadId: 'thread-1',
+            turnId: 'turn-frame',
+            kind: 'userMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            payload: { type: 'userMessage', text: 'Generate frame' },
+          } as SessionItem,
+          {
+            id: 'live-agent',
+            threadId: 'thread-1',
+            turnId: 'turn-frame',
+            kind: 'agentMessage',
+            status: 'completed',
+            createdAtMs: 2,
+            updatedAtMs: 2,
+            payload: { type: 'agentMessage', text: '{"content":"Generated frame"}' },
+          } as SessionItem,
+        ],
+      },
+    ])
+
+    store.setThreadTurns(
+      'thread-1',
+      [
+        {
+          id: 'turn-frame',
+          threadId: 'thread-1',
+          status: 'completed',
+          lastCodexStatus: 'completed',
+          startedAtMs: 1,
+          completedAtMs: 2,
+          error: null,
+          items: [
+            {
+              id: 'hydrate-user',
+              threadId: 'thread-1',
+              turnId: 'turn-frame',
+              kind: 'userMessage',
+              status: 'completed',
+              createdAtMs: 1,
+              updatedAtMs: 3,
+              payload: { type: 'userMessage', content: [{ type: 'text', text: 'Generate frame' }] },
+            } as SessionItem,
+            {
+              id: 'hydrate-agent',
+              threadId: 'thread-1',
+              turnId: 'turn-frame',
+              kind: 'agentMessage',
+              status: 'completed',
+              createdAtMs: 2,
+              updatedAtMs: 3,
+              payload: { type: 'agentMessage', text: '{"content":"Generated frame"}' },
+            } as SessionItem,
+          ],
+        },
+      ],
+      { mode: 'replace' },
+    )
+
+    const snapshot = useThreadSessionStore.getState()
+    const turn = snapshot.turnsByThread['thread-1'][0]
+    const items = snapshot.itemsByTurn['thread-1:turn-frame']
+    expect(turn.metadata?.workflowInternal).toBe(true)
+    expect(items.map((item) => item.id)).toEqual(['hydrate-user', 'hydrate-agent'])
+    expect(selectVisibleTranscriptRows(snapshot, 'thread-1')).toEqual([])
+  })
+
+  it('selectVisibleTranscriptRows hides internal workflow raw chat for generate and regenerate frame/spec', () => {
+    const store = useThreadSessionStore.getState()
+    const cases = [
+      ['turn-generate-frame', 'frame', undefined, 'Hidden generate frame prompt'],
+      ['turn-regenerate-frame', 'frame', 'regenerate_frame', 'Hidden regenerate frame prompt'],
+      ['turn-generate-spec', 'spec', undefined, 'Hidden generate spec prompt'],
+      ['turn-regenerate-spec', 'spec', 'regenerate_spec', 'Hidden regenerate spec prompt'],
+    ] as const
+
+    store.setThreadTurns('thread-1', cases.map(([turnId, artifactKind, workflowKind, text], index) => ({
+      id: turnId,
+      threadId: 'thread-1',
+      status: 'completed',
+      lastCodexStatus: 'completed',
+      startedAtMs: index + 1,
+      completedAtMs: index + 2,
+      error: null,
+      metadata: {
+        workflowInternal: true,
+        workflowInternalKind: 'artifact_generation',
+        artifactKind,
+        ...(workflowKind ? { workflowKind } : {}),
+      },
+      items: [
+        {
+          id: `${turnId}:user`,
+          threadId: 'thread-1',
+          turnId,
+          kind: 'userMessage',
+          status: 'completed',
+          createdAtMs: index + 1,
+          updatedAtMs: index + 1,
+          payload: { type: 'userMessage', text },
+        } as SessionItem,
+        {
+          id: `${turnId}:agent`,
+          threadId: 'thread-1',
+          turnId,
+          kind: 'agentMessage',
+          status: 'completed',
+          createdAtMs: index + 1,
+          updatedAtMs: index + 1,
+          payload: { type: 'agentMessage', text: `{"hidden":"${artifactKind}"}` },
+        } as SessionItem,
+      ],
+    })))
+
+    const rows = selectVisibleTranscriptRows(useThreadSessionStore.getState(), 'thread-1')
+    expect(rows).toEqual([])
+  })
+
+  it('selectVisibleTranscriptRows hides explicitly internal items and emits visible chat', () => {
+    const store = useThreadSessionStore.getState()
+    store.setThreadTurns('thread-1', [
+      {
+        id: 'turn-1',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 1,
+        completedAtMs: 2,
+        error: null,
+        items: [
+          {
+            id: 'item-internal',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            kind: 'agentMessage',
+            status: 'completed',
+            createdAtMs: 1,
+            updatedAtMs: 1,
+            payload: { type: 'agentMessage', text: 'hidden', metadata: { workflowInternal: true } },
+          } as SessionItem,
+          {
+            id: 'item-visible',
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            kind: 'agentMessage',
+            status: 'completed',
+            createdAtMs: 2,
+            updatedAtMs: 2,
+            payload: { type: 'agentMessage', text: 'visible' },
+          } as SessionItem,
+        ],
+      },
+    ])
+
+    const rows = selectVisibleTranscriptRows(useThreadSessionStore.getState(), 'thread-1')
+    expect(rows.map((row) => row.item.id)).toEqual(['item-visible'])
+    expect(rows[0].item.renderAs).toBe('chatBubble')
+    expect(rows[0].item.visibility).toBe('user')
   })
 
   it('applies batched stream envelopes in order for delta-heavy updates', () => {

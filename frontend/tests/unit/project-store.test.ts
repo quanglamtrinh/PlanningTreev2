@@ -169,7 +169,7 @@ describe('project-store', () => {
             node_id: 'task-1',
             parent_id: 'root',
             child_ids: [],
-            title: 'New Task',
+            title: 'Implement auth flow',
             description: 'Implement auth flow',
             status: 'ready',
             node_kind: 'original',

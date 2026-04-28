@@ -311,7 +311,7 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
   })
 
-  it('renders package lane from Workflow V2 package review thread binding', async () => {
+  it('falls back package thread routes to the execution lane', async () => {
     seedBaseStores(
       makeWorkflowState({
         phase: 'done',
@@ -325,7 +325,7 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
       makeProjectSnapshot('original'),
     )
     const facade = makeFacade({
-      activeThreadId: 'package-thread-1',
+      activeThreadId: 'exec-thread-1',
       isActiveThreadReady: true,
     })
     mockUseSessionFacadeV2.mockReturnValue(facade)
@@ -339,9 +339,9 @@ describe('BreadcrumbChatViewV2 Workflow V2 cutover integration', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'package-thread-1')
+      expect(screen.getByTestId('transcript-panel')).toHaveAttribute('data-thread-id', 'exec-thread-1')
     })
-    expect(facade.commands.selectThread).not.toHaveBeenCalled()
-    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+    expect(screen.getByTestId('breadcrumb-thread-tab-execution')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('breadcrumb-thread-tab-package')).not.toBeInTheDocument()
   })
 })

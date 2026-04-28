@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
@@ -11,6 +11,8 @@ import styles from './GraphWorkspace.module.css'
 
 export function GraphWorkspace() {
   const navigate = useNavigate()
+  const previousSplitStatusRef = useRef<'idle' | 'active' | 'failed'>('idle')
+  const lastSplitNodeIdRef = useRef<string | null>(null)
 
   const {
     initialize,
@@ -99,29 +101,59 @@ export function GraphWorkspace() {
     }
   }
 
-  async function handleOpenBreadcrumb(nodeId: string) {
-    const latestState = useProjectStore.getState()
-    const latestSnapshot = latestState.snapshot
-    const projectId = latestSnapshot?.project.id ?? latestState.activeProjectId
-    if (!projectId) {
-      return
-    }
+  const openBreadcrumbForNode = useCallback(
+    async (nodeId: string) => {
+      const latestState = useProjectStore.getState()
+      const latestSnapshot = latestState.snapshot
+      const projectId = latestSnapshot?.project.id ?? latestState.activeProjectId
+      if (!projectId) {
+        return
+      }
 
-    if (
-      latestSnapshot &&
-      latestSnapshot.project.id === projectId &&
-      !latestSnapshot.tree_state.node_registry.some((item) => item.node_id === nodeId)
+      if (
+        latestSnapshot &&
+        latestSnapshot.project.id === projectId &&
+        !latestSnapshot.tree_state.node_registry.some((item) => item.node_id === nodeId)
       ) {
+        return
+      }
+
+      const targetNode = latestSnapshot?.tree_state.node_registry.find((item) => item.node_id === nodeId)
+      const destination =
+        targetNode?.node_kind === 'review'
+          ? buildChatV2Url(projectId, nodeId, 'audit')
+          : buildChatV2Url(projectId, nodeId, 'ask')
+      navigate(destination)
+      void selectNode(nodeId, true)
+    },
+    [navigate, selectNode],
+  )
+
+  useEffect(() => {
+    if (splitStatus === 'active' && splitNodeId) {
+      lastSplitNodeIdRef.current = splitNodeId
+    }
+  }, [splitNodeId, splitStatus])
+
+  useEffect(() => {
+    const previousStatus = previousSplitStatusRef.current
+    previousSplitStatusRef.current = splitStatus
+
+    if (previousStatus !== 'active' || splitStatus !== 'idle') {
       return
     }
 
-    const targetNode = latestSnapshot?.tree_state.node_registry.find((item) => item.node_id === nodeId)
-    const destination =
-      targetNode?.node_kind === 'review'
-        ? buildChatV2Url(projectId, nodeId, 'audit')
-        : buildChatV2Url(projectId, nodeId, 'ask')
-    navigate(destination)
-    void selectNode(nodeId, true)
+    const completedSplitNodeId = lastSplitNodeIdRef.current
+    if (!completedSplitNodeId) {
+      return
+    }
+
+    lastSplitNodeIdRef.current = null
+    void openBreadcrumbForNode(completedSplitNodeId)
+  }, [openBreadcrumbForNode, splitStatus])
+
+  async function handleOpenBreadcrumb(nodeId: string) {
+    await openBreadcrumbForNode(nodeId)
   }
 
   async function handleSplitNode(nodeId: string, mode: SplitMode) {

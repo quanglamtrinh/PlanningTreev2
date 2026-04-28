@@ -124,9 +124,10 @@ def test_create_task_from_init_node_uses_description_and_keeps_locking_rules(
     nodes = internal_nodes(second)
 
     assert first_task_id != second_task_id
-    assert nodes[first_task_id]["title"] == "New Task"
+    assert nodes[first_task_id]["title"] == "Build task breakdown from prompt"
     assert nodes[first_task_id]["description"] == "Build task breakdown from prompt"
     assert nodes[first_task_id]["status"] == "ready"
+    assert nodes[second_task_id]["title"] == "Prepare rollout checklist"
     assert nodes[second_task_id]["description"] == "Prepare rollout checklist"
     assert nodes[second_task_id]["status"] == "locked"
 

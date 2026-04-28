@@ -459,16 +459,6 @@ function seedStores(options: {
       reviewThreadId: null,
       reviewCommitSha: null,
     }),
-    startPackageReview: vi.fn().mockResolvedValue({
-      workflowState,
-      threadId: workflowState.threads.packageReview,
-      turnId: null,
-      executionRunId: null,
-      auditRunId: null,
-      reviewCycleId: null,
-      reviewThreadId: null,
-      reviewCommitSha: null,
-    }),
   } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
@@ -870,64 +860,33 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Workflow failed first')
   })
 
-  it('starts package review through Workflow V2 action path', async () => {
-    const workflowState = makeWorkflowState({
-      phase: 'done',
-      threads: {
-        packageReview: null,
-      },
-      allowedActions: ['start_package_review'],
+  it('does not expose package review action from Breadcrumb', () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        phase: 'done',
+        allowedActions: ['start_package_review'],
+      }),
     })
-    seedStores({ workflowState })
-    const startPackageReview = vi.fn().mockResolvedValue(
-      {
-        workflowState: makeWorkflowState({
-          phase: 'done',
-          threads: { packageReview: 'package-thread-1' },
-          allowedActions: [],
-        }),
-        threadId: 'package-thread-1',
-        turnId: null,
-        executionRunId: null,
-        auditRunId: null,
-        reviewCycleId: null,
-        reviewThreadId: null,
-        reviewCommitSha: null,
-      },
-    )
-    useWorkflowStateStoreV2.setState({
-      startPackageReview,
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
     mockUseSessionFacadeV2.mockReturnValue(
       makeFacade({
-        selectedModel: 'gpt-5.4',
-        activeThread: makeThread('model-source-thread'),
+        activeThreadId: 'exec-thread-1',
+        activeThread: makeThread('exec-thread-1'),
+        isActiveThreadReady: true,
       }),
     )
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=package']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
         <Routes>
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('workflow-start-package-review'))
-
-    await waitFor(() => {
-      expect(startPackageReview).toHaveBeenCalledWith(
-        'project-1',
-        'root',
-        expect.objectContaining({
-          model: 'gpt-5.4',
-          modelProvider: 'openai',
-        }),
-      )
-    })
+    expect(screen.queryByTestId('workflow-start-package-review')).not.toBeInTheDocument()
   })
 
-  it('primes execution turn into session projection when workflow action returns turnId', async () => {
+  it('does not expose start execution action from the execution lane', () => {
     const workflowState = makeWorkflowState({
       phase: 'ready_for_execution',
       threads: {
@@ -936,20 +895,7 @@ describe('BreadcrumbViewV2', () => {
       allowedActions: ['start_execution'],
     })
     seedStores({ workflowState })
-    const startExecution = vi.fn().mockResolvedValue({
-      workflowState: makeWorkflowState({
-        phase: 'executing',
-        threads: { execution: 'exec-thread-1' },
-        allowedActions: [],
-      }),
-      threadId: 'exec-thread-1',
-      turnId: 'turn-exec-1',
-      executionRunId: 'exec-run-1',
-      auditRunId: null,
-      reviewCycleId: null,
-      reviewThreadId: null,
-      reviewCommitSha: null,
-    })
+    const startExecution = vi.fn()
     useWorkflowStateStoreV2.setState({
       startExecution,
     } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
@@ -969,19 +915,8 @@ describe('BreadcrumbViewV2', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('workflow-start-execution'))
-
-    await waitFor(() => {
-      expect(startExecution).toHaveBeenCalledWith(
-        'project-1',
-        'root',
-        expect.any(Object),
-      )
-    })
-    await waitFor(() => {
-      const turns = useThreadSessionStore.getState().turnsByThread['exec-thread-1'] ?? []
-      expect(turns.map((turn) => turn.id)).toContain('turn-exec-1')
-    })
+    expect(screen.queryByTestId('workflow-start-execution')).not.toBeInTheDocument()
+    expect(startExecution).not.toHaveBeenCalled()
   })
 
   it('shows debug panel when debugSession query flag is enabled', async () => {

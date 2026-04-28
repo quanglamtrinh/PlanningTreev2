@@ -382,7 +382,7 @@ describe('applySessionEvent', () => {
     const preloaded = baseState()
     preloaded.itemsByTurn['thread-1:turn-1'] = [
       {
-        id: 'turn-1:item-0',
+        id: 'item-1',
         threadId: 'thread-1',
         turnId: 'turn-1',
         kind: 'userMessage',

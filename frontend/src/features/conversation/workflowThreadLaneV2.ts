@@ -7,7 +7,6 @@ export type WorkflowPolicyKindV2 =
   | 'ask'
   | 'execution'
   | 'audit'
-  | 'package'
   | 'review-readonly'
   | 'default'
 
@@ -82,7 +81,7 @@ function resolveWorkflowThreadId(
   if (lane === 'audit') {
     return workflowState.threads.audit ?? null
   }
-  return workflowState.threads.packageReview ?? null
+  return null
 }
 
 function resolveWorkflowPolicy(input: {
@@ -139,15 +138,6 @@ function resolveWorkflowActions(
   }
   if (lane === 'execution') {
     const actions: WorkflowLaneActionV2[] = []
-    if (hasAction(workflowState, 'start_execution')) {
-      actions.push({
-        kind: 'start_execution',
-        variant: 'primary',
-        testId: 'workflow-start-execution',
-        idleLabel: 'Start Execution Run',
-        busyLabel: 'Starting Execution Run...',
-      })
-    }
     if (hasAction(workflowState, 'review_in_audit')) {
       actions.push({
         kind: 'review_in_audit',
@@ -190,19 +180,6 @@ function resolveWorkflowActions(
         idleLabel: 'Mark Done',
         busyLabel: 'Marking Done...',
         reviewCommitSha: workflowState.decisions.audit?.reviewCommitSha ?? null,
-      })
-    }
-    return actions
-  }
-  if (lane === 'package') {
-    const actions: WorkflowLaneActionV2[] = []
-    if (hasAction(workflowState, 'start_package_review')) {
-      actions.push({
-        kind: 'start_package_review',
-        variant: 'primary',
-        testId: 'workflow-start-package-review',
-        idleLabel: 'Start Package Review',
-        busyLabel: 'Starting Package Review...',
       })
     }
     return actions
@@ -288,7 +265,6 @@ export function buildWorkflowProjectionV2(
     ask: resolveLane('ask'),
     execution: resolveLane('execution'),
     audit: resolveLane('audit'),
-    package: resolveLane('package'),
   }
 
   return {

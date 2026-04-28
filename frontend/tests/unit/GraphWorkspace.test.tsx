@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -331,5 +331,47 @@ describe('GraphWorkspace', () => {
     })
 
     expect(screen.getByTestId('location-path').textContent).toBe('/projects/project-1/nodes/root/chat-v2?thread=audit')
+  })
+
+  it('auto-redirects out of graph when split finishes', async () => {
+    useProjectStore.setState({
+      ...useProjectStore.getInitialState(),
+      hasInitialized: true,
+      isInitializing: false,
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+      },
+      projects: [makeProjectSummary('project-1')],
+      activeProjectId: 'project-1',
+      snapshot: makeSnapshot('project-1'),
+      selectedNodeId: 'root',
+      splitStatus: 'active',
+      splitNodeId: 'root',
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/graph']}>
+        <GraphWorkspace />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+
+    await screen.findByTestId('tree-graph')
+
+    await act(async () => {
+      useProjectStore.setState({
+        splitStatus: 'idle',
+        splitNodeId: null,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path').textContent).toBe(
+        '/projects/project-1/nodes/root/chat-v2?thread=ask',
+      )
+    })
   })
 })

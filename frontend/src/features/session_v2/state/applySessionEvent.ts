@@ -284,7 +284,7 @@ function extractContentText(content: unknown): string {
 function payloadSignature(item: SessionItem): string {
   const payload = item.payload && typeof item.payload === 'object' ? (item.payload as Record<string, unknown>) : {}
   const type = normalizeText(payload.type)
-  const kind = type || item.normalizedKind || item.kind
+  const kind = item.normalizedKind || normalizeKnownItemKind(type) || type || item.kind
   const directText = normalizeText(payload.text)
   const contentText = extractContentText(payload.content)
   const outputText = normalizeText(payload.aggregatedOutput ?? payload.output)
@@ -297,7 +297,7 @@ function payloadSignature(item: SessionItem): string {
 }
 
 function isHydratedFallbackItemId(turnId: string, itemId: string): boolean {
-  return itemId.startsWith(`${turnId}:item-`)
+  return itemId.startsWith(`${turnId}:item-`) || /^item-\d+$/.test(itemId)
 }
 
 function findHydratedFallbackMatchIndex(

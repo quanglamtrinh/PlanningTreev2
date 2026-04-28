@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import { isItemKind } from '../contracts'
-import type { ItemKind, SessionItem, SessionTurn } from '../contracts'
+import type { ItemKind, SessionItem, SessionTurn, VisibleTranscriptRow } from '../contracts'
 
 type TranscriptPanelProps = {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  visibleRows?: VisibleTranscriptRow[]
   workflowContextItem?: SessionItem | null
   showWorkflowContext?: boolean
 }
@@ -589,21 +590,6 @@ function isContextCompactionItem(item: SessionItem): boolean {
   return payloadTypeOf(item) === 'contextCompaction'
 }
 
-function isInternalWorkflowTurn(turn: SessionTurn): boolean {
-  return isRecord(turn.metadata) && turn.metadata.workflowInternal === true
-}
-
-function isInternalWorkflowItem(item: SessionItem): boolean {
-  const payload = isRecord(item.payload) ? item.payload : {}
-  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
-  if (metadata.workflowInternal === true) {
-    return true
-  }
-  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
-  const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
-  return rawMetadata.workflowInternal === true
-}
-
 function isWorkflowContextItem(item: SessionItem): boolean {
   const payload = isRecord(item.payload) ? item.payload : {}
   const metadata = isRecord(payload.metadata) ? payload.metadata : {}
@@ -1170,43 +1156,6 @@ function getCollapsedUserMessageText(text: string): string {
   return `${trimmed}\n...`
 }
 
-function dedupeTurnItems(items: SessionItem[]): SessionItem[] {
-  if (items.length <= 1) {
-    return items
-  }
-  const deduped: SessionItem[] = []
-  const indexById = new Map<string, number>()
-  for (const item of items) {
-    const existingIndex = indexById.get(item.id)
-    if (existingIndex === undefined) {
-      indexById.set(item.id, deduped.length)
-      deduped.push(item)
-      continue
-    }
-    const existing = deduped[existingIndex]
-    if (item.updatedAtMs >= existing.updatedAtMs) {
-      deduped[existingIndex] = {
-        ...existing,
-        ...item,
-        createdAtMs: existing.createdAtMs,
-      }
-    }
-  }
-  return deduped
-}
-
-function mergedTurnItems(turn: SessionTurn, storeItems: SessionItem[] | undefined): SessionItem[] {
-  const hydratedItems = Array.isArray(turn.items) ? turn.items : []
-  const liveItems = Array.isArray(storeItems) ? storeItems : []
-  if (hydratedItems.length === 0) {
-    return liveItems
-  }
-  if (liveItems.length === 0) {
-    return hydratedItems
-  }
-  return dedupeTurnItems([...hydratedItems, ...liveItems])
-}
-
 function getActiveAgentStreamToken(
   threadId: string,
   turns: SessionTurn[],
@@ -1214,7 +1163,7 @@ function getActiveAgentStreamToken(
 ): string | null {
   for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = turns[turnIndex]
-    const items = dedupeTurnItems(itemsByTurn[`${threadId}:${turn.id}`] ?? [])
+    const items = itemsByTurn[`${threadId}:${turn.id}`] ?? []
     for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
       const item = items[itemIndex]
       if (!isAgentMessageItem(item) || item.status !== 'inProgress') {
@@ -1259,18 +1208,18 @@ async function copyTextToClipboard(value: string): Promise<void> {
   }
 }
 
-function buildTranscriptRows(
-  threadId: string,
-  turns: SessionTurn[],
-  itemsByTurn: Record<string, SessionItem[]>,
-): TranscriptRow[] {
+function buildTranscriptRows(visibleRows: VisibleTranscriptRow[]): TranscriptRow[] {
   const rows: TranscriptRow[] = []
-  for (const turn of turns) {
-    if (isInternalWorkflowTurn(turn)) {
-      continue
+  const rowsByTurn = new Map<string, { turn: SessionTurn; items: SessionItem[] }>()
+  for (const row of visibleRows) {
+    const existing = rowsByTurn.get(row.turn.id)
+    if (existing) {
+      existing.items.push(row.item)
+    } else {
+      rowsByTurn.set(row.turn.id, { turn: row.turn, items: [row.item] })
     }
-    const key = `${threadId}:${turn.id}`
-    const items = mergedTurnItems(turn, itemsByTurn[key]).filter((item) => !isInternalWorkflowItem(item) && !isWorkflowContextItem(item))
+  }
+  for (const { turn, items } of rowsByTurn.values()) {
     if (items.length === 0) {
       continue
     }
@@ -1368,6 +1317,10 @@ function buildTranscriptRows(
           hiddenToolCluster.push(item)
           continue
         }
+        if (isAgentMessageItem(item)) {
+          flushHiddenToolCluster()
+          continue
+        }
         if (resolveRowVariant(item) !== 'user') {
           flushHiddenToolCluster()
           hiddenReasoningEntries.push({
@@ -1432,7 +1385,7 @@ function latestWorkflowContextItem(
   let latest: SessionItem | null = null
   for (const turn of turns) {
     const key = `${threadId}:${turn.id}`
-    for (const item of mergedTurnItems(turn, itemsByTurn[key])) {
+    for (const item of itemsByTurn[key] ?? []) {
       if (!isWorkflowContextItem(item)) {
         continue
       }
@@ -1451,6 +1404,7 @@ export function TranscriptPanel({
   threadId,
   turns,
   itemsByTurn,
+  visibleRows,
   workflowContextItem = null,
   showWorkflowContext = true,
 }: TranscriptPanelProps) {
@@ -1495,7 +1449,7 @@ export function TranscriptPanel({
     }, SCROLL_SNAPSHOT_DEBOUNCE_MS)
   }
 
-  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
+  const rows = threadId ? buildTranscriptRows(visibleRows ?? []) : []
   const contextItem = showWorkflowContext
     ? workflowContextItem ?? (threadId ? latestWorkflowContextItem(threadId, turns, itemsByTurn) : null)
     : null

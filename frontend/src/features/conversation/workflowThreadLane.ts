@@ -7,7 +7,6 @@ export type WorkflowPolicyKind =
   | 'ask'
   | 'execution'
   | 'audit'
-  | 'package'
   | 'review-readonly'
   | 'default'
 
@@ -263,7 +262,6 @@ export function resolveWorkflowProjection(
     ask: resolveLane('ask'),
     execution: resolveLane('execution'),
     audit: resolveLane('audit'),
-    package: resolveLane('package'),
   }
 
   return {

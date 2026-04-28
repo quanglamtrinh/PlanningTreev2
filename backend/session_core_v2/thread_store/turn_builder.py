@@ -71,7 +71,12 @@ class ThreadHistoryBuilder:
         if method in {"user/message", "user_message"}:
             self._append_item(
                 turn_id=turn_id,
-                item={"type": "userMessage", "text": self._text_from_params(params), "occurredAtMs": occurred_at_ms},
+                item=self._legacy_message_item(
+                    event=event,
+                    params=params,
+                    item_type="userMessage",
+                    timestamp_ms=occurred_at_ms,
+                ),
                 thread_id=thread_id,
                 timestamp_ms=occurred_at_ms,
             )
@@ -80,7 +85,12 @@ class ThreadHistoryBuilder:
         if method in {"assistant/message", "assistant_message", "agent/message"}:
             self._append_item(
                 turn_id=turn_id,
-                item={"type": "agentMessage", "text": self._text_from_params(params), "occurredAtMs": occurred_at_ms},
+                item=self._legacy_message_item(
+                    event=event,
+                    params=params,
+                    item_type="agentMessage",
+                    timestamp_ms=occurred_at_ms,
+                ),
                 thread_id=thread_id,
                 timestamp_ms=occurred_at_ms,
             )
@@ -158,6 +168,14 @@ class ThreadHistoryBuilder:
             error = None
             if isinstance(turn_payload, dict):
                 status = str(turn_payload.get("status") or status)
+                metadata = turn_payload.get("metadata")
+                if isinstance(metadata, dict):
+                    self._ensure_turn(
+                        completed_turn_id,
+                        thread_id=thread_id,
+                        timestamp_ms=occurred_at_ms,
+                        metadata=metadata,
+                    )
                 items = turn_payload.get("items")
                 if isinstance(items, list):
                     for item in items:
@@ -186,6 +204,33 @@ class ThreadHistoryBuilder:
             response_item = {k: v for k, v in item.items() if k != "type"}
         turn_id = self._extract_turn_id(response_item)
         self._append_item(turn_id=turn_id, item=response_item, thread_id=self._extract_thread_id(response_item), timestamp_ms=self._extract_timestamp_ms(response_item))
+
+    def _legacy_message_item(
+        self,
+        *,
+        event: dict[str, Any],
+        params: dict[str, Any],
+        item_type: str,
+        timestamp_ms: int | None,
+    ) -> dict[str, Any]:
+        item: dict[str, Any] = {
+            "type": item_type,
+            "text": self._text_from_params(params),
+            "occurredAtMs": timestamp_ms,
+        }
+        item_id = self._legacy_message_item_id(event=event, params=params)
+        if item_id:
+            item["id"] = item_id
+        return item
+
+    @staticmethod
+    def _legacy_message_item_id(*, event: dict[str, Any], params: dict[str, Any]) -> str | None:
+        for payload in (params, event):
+            for key in ("itemId", "item_id", "id", "eventId", "event_id"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     def _ensure_turn(
         self,
@@ -265,7 +310,38 @@ class ThreadHistoryBuilder:
                 if isinstance(existing, dict) and str(existing.get("id") or "").strip() == item_id:
                     turn["items"][index] = {**existing, **item}
                     return
+        duplicate_index = self._matching_message_item_index(turn, item)
+        if duplicate_index is not None:
+            existing = turn["items"][duplicate_index]
+            turn["items"][duplicate_index] = {**existing, **item}
+            return
         self._append_item(turn_id=str(turn["id"]), item=item, thread_id=thread_id, timestamp_ms=timestamp_ms)
+
+
+    @classmethod
+    def _matching_message_item_index(cls, turn: dict[str, Any], item: dict[str, Any]) -> int | None:
+        item_type = str(item.get("type") or "").strip()
+        if item_type not in {"userMessage", "agentMessage"}:
+            return None
+        item_text = cls._message_item_text(item)
+        if item_text == "":
+            return None
+        for index, existing in enumerate(turn["items"]):
+            if not isinstance(existing, dict):
+                continue
+            if str(existing.get("type") or "").strip() != item_type:
+                continue
+            if cls._message_item_text(existing) == item_text:
+                return index
+        return None
+
+    @staticmethod
+    def _message_item_text(item: dict[str, Any]) -> str:
+        for key in ("text", "message", "content"):
+            value = item.get(key)
+            if isinstance(value, str):
+                return value
+        return ""
 
     def _set_turn_status(
         self,

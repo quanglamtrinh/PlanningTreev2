@@ -288,7 +288,10 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         git_checkpoint_service=git_checkpoint_service,
         codex_client=codex_client,
     )
-    mcp_integration_service = McpIntegrationService(paths)
+    mcp_integration_service = McpIntegrationService(
+        paths,
+        project_cwd_resolver=storage.workspace_store.get_folder_path,
+    )
     session_transport_v2 = StdioJsonRpcTransportV2(
         codex_cmd=codex_cmd,
         server_request_queue_capacity=session_core_v2_server_request_queue_capacity,

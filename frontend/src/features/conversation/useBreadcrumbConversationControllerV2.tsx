@@ -35,14 +35,11 @@ export type BreadcrumbConversationControllerV2 = {
   detailPaneProps: BreadcrumbDetailPaneProps
 }
 
-type WorkflowThreadKeyV2 = 'askPlanning' | 'execution' | 'audit' | 'packageReview'
+type WorkflowThreadKeyV2 = 'askPlanning' | 'execution' | 'audit'
 
 function workflowRoleForThreadTab(threadTab: ThreadTab): WorkflowThreadRoleV2 {
   if (threadTab === 'ask') {
     return 'ask_planning'
-  }
-  if (threadTab === 'package') {
-    return 'package_review'
   }
   return threadTab
 }
@@ -186,7 +183,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     startAudit,
     improveExecution,
     acceptAudit,
-    startPackageReview,
   } = useWorkflowStateV2(projectId, nodeId)
   const sessionProjectionState = useThreadSessionStore(
     useShallow((state) => ({
@@ -1048,36 +1044,6 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         void navigate('/')
         return
       }
-      if (action.kind === 'start_package_review') {
-        const preActionCursor = captureWorkflowStreamCursor(workflowProjection.lanes.package.threadId)
-        const result = await startPackageReview(projectId, nodeId, workflowModelPolicy)
-        const threadId = resolveThreadFromMutationResult(result, {
-          workflowThreadKey: 'packageReview',
-          laneFallbackThreadId: workflowProjection.lanes.package.threadId,
-        })
-        emitSessionCorrelation({
-          type: 'workflow_action',
-          action: action.kind,
-          projectId,
-          nodeId,
-          role: 'package_review',
-          threadId: threadId ?? null,
-          turnId: result.turnId ?? null,
-          executionRunId: result.executionRunId ?? null,
-          auditRunId: result.auditRunId ?? null,
-        })
-        navigateTargetLane('package', threadId)
-        await primeAndSelectWorkflowTurn({
-          actionKind: action.kind,
-          targetLane: 'package',
-          threadId: threadId ?? null,
-          turnId: result.turnId ?? null,
-          projectId,
-          nodeId,
-          preActionCursor,
-          selectThread: sessionCommands.selectThread,
-        })
-      }
     },
     [
       acceptAudit,
@@ -1090,10 +1056,8 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       setActiveSurface,
       startAudit,
       startExecution,
-      startPackageReview,
       workflowProjection.lanes.audit.threadId,
       workflowProjection.lanes.execution.threadId,
-      workflowProjection.lanes.package.threadId,
       workflowModelPolicy,
     ],
   )
@@ -1138,6 +1102,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         threadId: null,
         turns: [],
         itemsByTurn: {},
+        visibleRows: [],
         workflowContextItem,
       }
     }
@@ -1145,6 +1110,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       threadId: sessionState.activeThreadId,
       turns: sessionState.activeTurns,
       itemsByTurn: sessionState.activeItemsByTurn,
+      visibleRows: sessionState.activeVisibleTranscriptRows,
       workflowContextItem,
     }
   }, [
@@ -1152,6 +1118,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     isLaneThreadSelected,
     sessionState.activeItemsByTurn,
     sessionState.activeThreadId,
+    sessionState.activeVisibleTranscriptRows,
     sessionState.activeTurns,
     workflowContextItem,
   ])

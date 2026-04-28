@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { ApprovalOverlay } from '../../session_v2/components/ApprovalOverlay'
-import type { PendingServerRequest, SessionItem, SessionTurn } from '../../session_v2/contracts'
+import type { PendingServerRequest, SessionItem, SessionTurn, VisibleTranscriptRow } from '../../session_v2/contracts'
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
 import { McpElicitationOverlay } from '../../session_v2/components/McpElicitationOverlay'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
@@ -26,6 +26,7 @@ export type BreadcrumbThreadTranscriptProps = {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  visibleRows: VisibleTranscriptRow[]
   workflowContextItem?: SessionItem | null
 }
 
@@ -163,6 +164,7 @@ export function BreadcrumbThreadPaneV2({
                 threadId={transcriptProps.threadId}
                 turns={transcriptProps.turns}
                 itemsByTurn={transcriptProps.itemsByTurn}
+                visibleRows={transcriptProps.visibleRows}
                 showWorkflowContext={false}
               />
             </div>

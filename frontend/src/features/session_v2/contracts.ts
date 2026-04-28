@@ -29,6 +29,12 @@ export function isItemKind(value: unknown): value is ItemKind {
 
 export type ItemStatus = 'inProgress' | 'completed' | 'failed'
 
+export type SessionItemVisibility = 'user' | 'internal' | 'debug'
+
+export type SessionItemRenderAs = 'chatBubble' | 'workflowContext' | 'frameArtifact' | 'specArtifact' | 'hidden'
+
+export type SessionItemWorkflowKind = 'generate_frame' | 'regenerate_frame' | 'generate_spec' | 'regenerate_spec'
+
 export type PendingRequestStatus = 'pending' | 'submitted' | 'resolved' | 'rejected' | 'expired'
 
 export type EventTier = 'tier0' | 'tier1' | 'tier2'
@@ -106,8 +112,17 @@ export interface SessionItem {
   createdAtMs: number
   updatedAtMs: number
   payload: Record<string, unknown>
+  visibility?: SessionItemVisibility
+  renderAs?: SessionItemRenderAs
+  workflowKind?: SessionItemWorkflowKind
   rawItem?: ThreadItem
   rawParams?: Record<string, unknown>
+}
+
+export type VisibleTranscriptItem = SessionItem & {
+  visibility: SessionItemVisibility
+  renderAs: SessionItemRenderAs
+  workflowKind?: SessionItemWorkflowKind
 }
 
 export interface SessionTurn {
@@ -120,6 +135,11 @@ export interface SessionTurn {
   items: SessionItem[]
   error: SessionError | null
   metadata?: Record<string, unknown>
+}
+
+export type VisibleTranscriptRow = {
+  turn: SessionTurn
+  item: VisibleTranscriptItem
 }
 
 export interface SessionThread {

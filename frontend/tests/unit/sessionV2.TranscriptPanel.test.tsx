@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
 
-import type { SessionItem, SessionTurn } from '../../src/features/session_v2/contracts'
-import { TranscriptPanel } from '../../src/features/session_v2/components/TranscriptPanel'
+import type { SessionItem, SessionTurn, VisibleTranscriptRow } from '../../src/features/session_v2/contracts'
+import { TranscriptPanel as TranscriptPanelComponent } from '../../src/features/session_v2/components/TranscriptPanel'
 
 function baseTurn(items: SessionItem[], status: SessionTurn['status'] = 'completed'): SessionTurn {
   return {
@@ -15,6 +16,58 @@ function baseTurn(items: SessionItem[], status: SessionTurn['status'] = 'complet
     error: null,
     items,
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object'
+}
+
+function isRawChatItem(item: SessionItem): boolean {
+  return item.normalizedKind === 'userMessage' || item.normalizedKind === 'agentMessage' || item.kind === 'userMessage' || item.kind === 'agentMessage'
+}
+
+function isWorkflowContextItem(item: SessionItem): boolean {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
+  return metadata.workflowContext === true
+}
+
+function isInternalItem(turn: SessionTurn, item: SessionItem): boolean {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
+  return metadata.workflowInternal === true || (turn.metadata?.workflowInternal === true && isRawChatItem(item))
+}
+
+function visibleRowsFor(turns: SessionTurn[], itemsByTurn?: Record<string, SessionItem[]>): VisibleTranscriptRow[] {
+  const rows: VisibleTranscriptRow[] = []
+  for (const turn of turns) {
+    const items = itemsByTurn?.[`${turn.threadId}:${turn.id}`] ?? turn.items
+    for (const item of items) {
+      if (isInternalItem(turn, item) || isWorkflowContextItem(item)) {
+        continue
+      }
+      rows.push({
+        turn,
+        item: {
+          ...item,
+          visibility: item.visibility ?? 'user',
+          renderAs: item.renderAs ?? 'chatBubble',
+        },
+      })
+    }
+  }
+  return rows
+}
+
+type TranscriptPanelProps = ComponentProps<typeof TranscriptPanelComponent>
+
+function TranscriptPanel(props: TranscriptPanelProps) {
+  return (
+    <TranscriptPanelComponent
+      {...props}
+      visibleRows={props.visibleRows ?? visibleRowsFor(props.turns, props.itemsByTurn)}
+    />
+  )
 }
 
 function expandWorkflowContext() {
@@ -148,8 +201,9 @@ describe('TranscriptPanel', () => {
     render(
       <TranscriptPanel
         threadId="thread-1"
-        turns={[baseTurn([contextItem])]}
+        turns={[baseTurn([])]}
         itemsByTurn={{}}
+        workflowContextItem={contextItem}
       />,
     )
 
@@ -618,7 +672,7 @@ describe('TranscriptPanel', () => {
     expect(screen.queryByText('commandExecution')).not.toBeInTheDocument()
   })
 
-  it('hides tool summary lines inside reasoning summary and expands timeline in original order', () => {
+  it('keeps final summaries out of reasoning summary and expands work timeline in original order', () => {
     const messageA: SessionItem = {
       id: 'item-msg-a',
       threadId: 'thread-1',
@@ -725,22 +779,80 @@ describe('TranscriptPanel', () => {
     expect(posFileSummary).toBeGreaterThan(posMessageC)
 
     fireEvent.click(reasoningSummaryToggle)
-    expect(screen.getByText('Step A')).toBeInTheDocument()
-    expect(screen.getByText('Step B')).toBeInTheDocument()
+    expect(screen.queryByText('Step A')).not.toBeInTheDocument()
+    expect(screen.queryByText('Step B')).not.toBeInTheDocument()
     expect(screen.getByText('Ran 2 commands')).toBeInTheDocument()
     expect(screen.getByText('Edited 1 file')).toBeInTheDocument()
 
     const expandedText = container.textContent ?? ''
-    const posExpandedStepA = expandedText.indexOf('Step A')
     const posExpandedRan = expandedText.indexOf('Ran 2 commands')
-    const posExpandedStepB = expandedText.indexOf('Step B')
     const posExpandedEdited = expandedText.indexOf('Edited 1 file')
     const posExpandedStepC = expandedText.indexOf('Step C')
-    expect(posExpandedStepA).toBeGreaterThanOrEqual(0)
-    expect(posExpandedRan).toBeGreaterThan(posExpandedStepA)
-    expect(posExpandedStepB).toBeGreaterThan(posExpandedRan)
-    expect(posExpandedEdited).toBeGreaterThan(posExpandedStepB)
+    expect(posExpandedRan).toBeGreaterThanOrEqual(0)
+    expect(posExpandedEdited).toBeGreaterThan(posExpandedRan)
     expect(posExpandedStepC).toBeGreaterThan(posExpandedEdited)
+  })
+
+  it('keeps duplicate terminal assistant summary outside expanded reasoning summary', () => {
+    const duplicateSummary: SessionItem = {
+      id: 'item-summary-duplicate',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      normalizedKind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      payload: {
+        type: 'agentMessage',
+        text: 'Final conclusion summary',
+      },
+    }
+    const reasoning: SessionItem = {
+      id: 'item-reasoning',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'reasoning',
+      normalizedKind: 'reasoning',
+      status: 'completed',
+      createdAtMs: 2,
+      updatedAtMs: 2,
+      payload: {
+        type: 'reasoning',
+        summary: ['Checked constraints'],
+        content: ['Compared options'],
+      },
+    }
+    const finalSummary: SessionItem = {
+      id: 'item-summary-final',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      kind: 'agentMessage',
+      normalizedKind: 'agentMessage',
+      status: 'completed',
+      createdAtMs: 3,
+      updatedAtMs: 3,
+      payload: {
+        type: 'agentMessage',
+        text: 'Final conclusion summary',
+      },
+    }
+
+    const items = [duplicateSummary, reasoning, finalSummary]
+    const { container } = render(
+      <TranscriptPanel
+        threadId="thread-1"
+        turns={[baseTurn(items, 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
+      />,
+    )
+
+    expect(screen.getByText('Final conclusion summary')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Reasoning summary/i }))
+    const expandedText = container.textContent ?? ''
+    expect(expandedText).toContain('Checked constraints')
+    expect(expandedText).toContain('Compared options')
+    expect(expandedText.match(/Final conclusion summary/g)).toHaveLength(1)
   })
 
   it('renders context compaction marker instead of raw tool payload', () => {
@@ -903,11 +1015,12 @@ describe('TranscriptPanel', () => {
       },
     }
 
+    const items = [fileChange, message]
     render(
       <TranscriptPanel
         threadId="thread-1"
-        turns={[baseTurn([fileChange], 'completed')]}
-        itemsByTurn={{ 'thread-1:turn-1': [message] }}
+        turns={[baseTurn([], 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
       />,
     )
 

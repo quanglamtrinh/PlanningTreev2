@@ -2249,6 +2249,47 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-co
   gap: 12px;
 }
 
+.infoMcpRoleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.infoMcpRoleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, var(--color-text-primary) 14%);
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-lowest);
+  box-sizing: border-box;
+}
+
+.infoMcpRoleHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.infoMcpMasterRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.infoMcpListHeading {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--on-surface);
+  letter-spacing: 0.02em;
+}
+
 .infoMcpTitle {
   margin: 0;
   font-size: var(--font-size-sm);

@@ -1,6 +1,17 @@
 import { create } from 'zustand'
 import { isItemKind } from '../contracts'
-import type { ItemKind, SessionEventEnvelope, SessionItem, SessionThread, SessionTurn } from '../contracts'
+import type {
+  ItemKind,
+  SessionEventEnvelope,
+  SessionItem,
+  SessionItemRenderAs,
+  SessionItemVisibility,
+  SessionItemWorkflowKind,
+  SessionThread,
+  SessionTurn,
+  VisibleTranscriptItem,
+  VisibleTranscriptRow,
+} from '../contracts'
 import {
   applySessionEvent,
   applySessionEventsBatch,
@@ -70,6 +81,7 @@ function toNonEmptyString(value: unknown): string | null {
 
 function normalizeItemKindValue(
   explicitKind: unknown,
+  explicitNormalizedKind: unknown,
   payload: Record<string, unknown>,
 ): { kind: string; normalizedKind: ItemKind | null } {
   const payloadType = toNonEmptyString(payload.type)
@@ -89,6 +101,7 @@ function normalizeItemKindValue(
     payloadType ??
     'unknown'
   const normalizedKind =
+    (isItemKind(explicitNormalizedKind) ? explicitNormalizedKind : null) ??
     (isItemKind(explicitKind) ? explicitKind : null) ??
     (isItemKind(payload.kind) ? payload.kind : null) ??
     (isItemKind(payload.type) ? payload.type : null)
@@ -202,7 +215,7 @@ function normalizeItemForStore(
   const item = value && typeof value === 'object' ? (value as Partial<SessionItem>) : {}
   const itemRecord = item as unknown as Record<string, unknown>
   const payload = normalizeItemPayload(item)
-  const { kind, normalizedKind } = normalizeItemKindValue(item.kind, payload)
+  const { kind, normalizedKind } = normalizeItemKindValue(item.kind, item.normalizedKind, payload)
   const status = normalizeItemStatusValue(item.status, payload, fallbackStatus)
   const now = Date.now()
   const createdAtMs = resolveItemTimestampMs(
@@ -346,16 +359,41 @@ function compareTurnsChronologically(left: SessionTurn, right: SessionTurn): num
   return left.id.localeCompare(right.id)
 }
 
+function normalizeTurnMetadataForStore(threadId: string, turn: SessionTurn): SessionTurn {
+  return {
+    ...turn,
+    threadId,
+    items: [],
+  }
+}
+
 function normalizeTurnsForThread(threadId: string, turns: SessionTurn[]): SessionTurn[] {
-  const normalized = turns.map((turn) => {
-    const normalizedItems = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
-    return {
-      ...turn,
-      threadId,
-      items: normalizedItems,
-    }
-  })
+  const normalized = turns.map((turn) => normalizeTurnMetadataForStore(threadId, turn))
   return [...normalized].sort(compareTurnsChronologically)
+}
+
+function mergeTurnMetadata(
+  existing: SessionTurn['metadata'] | undefined,
+  incoming: SessionTurn['metadata'] | undefined,
+): SessionTurn['metadata'] | undefined {
+  if (!existing) {
+    return incoming
+  }
+  if (!incoming) {
+    return existing
+  }
+  return { ...existing, ...incoming }
+}
+
+function mergeHydratedTurnWithExisting(existing: SessionTurn | undefined, incoming: SessionTurn): SessionTurn {
+  if (!existing) {
+    return incoming
+  }
+  const metadata = mergeTurnMetadata(existing.metadata, incoming.metadata)
+  return {
+    ...incoming,
+    ...(metadata ? { metadata } : {}),
+  }
 }
 
 function isTerminalTurnStatus(status: SessionTurn['status']): boolean {
@@ -377,22 +415,112 @@ function mergeTurnForStore(existing: SessionTurn | undefined, incoming: SessionT
   const nextError = preserveExistingTerminal
     ? existing.error ?? incoming.error
     : incoming.error ?? existing.error
-  const incomingItems = Array.isArray(incoming.items) ? incoming.items : []
-  const existingItems = Array.isArray(existing.items) ? existing.items : []
+  const metadata = mergeTurnMetadata(existing.metadata, incoming.metadata)
   return {
     ...existing,
     ...incoming,
     status: nextStatus,
     lastCodexStatus: nextLastCodexStatus,
     completedAtMs: nextCompletedAtMs,
-    items: incomingItems.length > 0 ? incomingItems : existingItems,
+    items: [],
     error: nextError,
+    ...(metadata ? { metadata } : {}),
   }
+}
+
+function textLikeValue(payload: Record<string, unknown>, key: string): string {
+  const value = payload[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function isRicherExistingPayload(existing: SessionItem, incoming: SessionItem): boolean {
+  const existingPayload = isRecord(existing.payload) ? existing.payload : {}
+  const incomingPayload = isRecord(incoming.payload) ? incoming.payload : {}
+  for (const key of ['text', 'aggregatedOutput', 'output']) {
+    const existingText = textLikeValue(existingPayload, key)
+    const incomingText = textLikeValue(incomingPayload, key)
+    if (existingText.length > incomingText.length) {
+      return true
+    }
+  }
+  return false
+}
+
+function mergeItemForStore(existing: SessionItem, incoming: SessionItem): SessionItem {
+  const shouldPreserveCompleted = existing.status === 'completed' && incoming.status !== 'completed'
+  const shouldPreserveLive = existing.status === 'inProgress' && incoming.status !== 'inProgress'
+  const existingPayload = isRecord(existing.payload) ? existing.payload : {}
+  const incomingPayload = isRecord(incoming.payload) ? incoming.payload : {}
+  const preserveRicherPayload = isRicherExistingPayload(existing, incoming)
+  const payload = preserveRicherPayload ? { ...incomingPayload, ...existingPayload } : { ...existingPayload, ...incomingPayload }
+  const rawItem = incoming.rawItem ?? existing.rawItem
+  const rawParams = incoming.rawParams ?? existing.rawParams
+  return {
+    ...existing,
+    ...incoming,
+    payload,
+    createdAtMs: existing.createdAtMs,
+    updatedAtMs: Math.max(existing.updatedAtMs, incoming.updatedAtMs),
+    status: shouldPreserveCompleted || shouldPreserveLive ? existing.status : incoming.status,
+    ...(rawItem ? { rawItem } : {}),
+    ...(rawParams ? { rawParams } : {}),
+  }
+}
+
+function textFromContent(value: unknown): string {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (!Array.isArray(value)) {
+    return ''
+  }
+  return value
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return ''
+      }
+      return textLikeValue(entry, 'text')
+    })
+    .filter(Boolean)
+    .join('\n')
+}
+
+function messageDedupeKey(item: SessionItem): string | null {
+  const normalizedKind = normalizedKindOfItem(item)
+  if (normalizedKind !== 'userMessage' && normalizedKind !== 'agentMessage') {
+    return null
+  }
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const text = textLikeValue(payload, 'text') || textLikeValue(payload, 'message') || textFromContent(payload.content)
+  if (!text) {
+    return null
+  }
+  return `${normalizedKind}:${text}`
+}
+
+function dedupeItemsForTurn(items: SessionItem[]): SessionItem[] {
+  const byMessage = new Map<string, number>()
+  const deduped: SessionItem[] = []
+  for (const item of items) {
+    const key = messageDedupeKey(item)
+    if (!key) {
+      deduped.push(item)
+      continue
+    }
+    const existingIndex = byMessage.get(key)
+    if (existingIndex === undefined) {
+      byMessage.set(key, deduped.length)
+      deduped.push(item)
+      continue
+    }
+    deduped[existingIndex] = mergeItemForStore(deduped[existingIndex], item)
+  }
+  return deduped
 }
 
 function mergeItemsForTurn(existing: SessionItem[] | undefined, incoming: SessionItem[]): SessionItem[] {
   if (!Array.isArray(existing) || existing.length === 0) {
-    return incoming
+    return dedupeItemsForTurn(incoming)
   }
   if (incoming.length === 0) {
     return existing
@@ -410,19 +538,9 @@ function mergeItemsForTurn(existing: SessionItem[] | undefined, incoming: Sessio
       order.push(item.id)
       continue
     }
-    const shouldPreserveCompleted = previous.status === 'completed' && item.status !== 'completed'
-    byId.set(
-      item.id,
-      shouldPreserveCompleted
-        ? previous
-        : {
-            ...previous,
-            ...item,
-            createdAtMs: previous.createdAtMs,
-          },
-    )
+    byId.set(item.id, mergeItemForStore(previous, item))
   }
-  return order.map((itemId) => byId.get(itemId)).filter((item): item is SessionItem => Boolean(item))
+  return dedupeItemsForTurn(order.map((itemId) => byId.get(itemId)).filter((item): item is SessionItem => Boolean(item)))
 }
 
 function areStringArraysEqual(left: string[] | undefined, right: string[] | undefined): boolean {
@@ -591,6 +709,125 @@ function parseThreadTimestampMs(value: unknown): number {
   return 0
 }
 
+function normalizedText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizedKindOfItem(item: SessionItem): ItemKind | null {
+  if (isItemKind(item.normalizedKind)) {
+    return item.normalizedKind
+  }
+  if (isItemKind(item.kind)) {
+    return item.kind
+  }
+  const payload = isRecord(item.payload) ? item.payload : {}
+  return isItemKind(payload.type) ? payload.type : null
+}
+
+function itemMetadata(item: SessionItem): Record<string, unknown> {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const payloadMetadata = isRecord(payload.metadata) ? payload.metadata : {}
+  if (Object.keys(payloadMetadata).length > 0) {
+    return payloadMetadata
+  }
+  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
+  const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
+  if (Object.keys(rawMetadata).length > 0) {
+    return rawMetadata
+  }
+  return {}
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string {
+  return normalizedText(metadata[key]).toLowerCase().replace(/[\s-]+/g, '_')
+}
+
+function inferWorkflowKind(metadata: Record<string, unknown>): SessionItemWorkflowKind | undefined {
+  const direct = metadataString(metadata, 'workflowKind')
+  if (
+    direct === 'generate_frame' ||
+    direct === 'regenerate_frame' ||
+    direct === 'generate_spec' ||
+    direct === 'regenerate_spec'
+  ) {
+    return direct
+  }
+
+  const action =
+    metadataString(metadata, 'workflowAction') ||
+    metadataString(metadata, 'action') ||
+    metadataString(metadata, 'operation')
+  const artifactKind = metadataString(metadata, 'artifactKind')
+  const isRegenerate = action.includes('regenerate') || metadata.regenerate === true || metadata.isRegenerate === true
+  if (artifactKind === 'frame') {
+    return isRegenerate ? 'regenerate_frame' : 'generate_frame'
+  }
+  if (artifactKind === 'spec') {
+    return isRegenerate ? 'regenerate_spec' : 'generate_spec'
+  }
+  return undefined
+}
+
+function isWorkflowContextItem(item: SessionItem): boolean {
+  return itemMetadata(item).workflowContext === true
+}
+
+function isRawChatItem(item: SessionItem): boolean {
+  const normalizedKind = normalizedKindOfItem(item)
+  return normalizedKind === 'userMessage' || normalizedKind === 'agentMessage'
+}
+
+function classifyTranscriptItem(turn: SessionTurn, item: SessionItem): VisibleTranscriptItem {
+  const metadata = itemMetadata(item)
+  const turnMetadata = isRecord(turn.metadata) ? turn.metadata : {}
+  const workflowKind = inferWorkflowKind(metadata) ?? inferWorkflowKind(turnMetadata)
+  const turnWorkflowInternal = turnMetadata.workflowInternal === true
+  const itemWorkflowInternal = metadata.workflowInternal === true
+  const explicitRenderAs = normalizedText(item.renderAs) as SessionItemRenderAs
+
+  let renderAs: SessionItemRenderAs = 'chatBubble'
+  if (explicitRenderAs === 'workflowContext') {
+    renderAs = 'workflowContext'
+  } else if (explicitRenderAs === 'frameArtifact') {
+    renderAs = 'frameArtifact'
+  } else if (explicitRenderAs === 'specArtifact') {
+    renderAs = 'specArtifact'
+  } else if (explicitRenderAs === 'hidden') {
+    renderAs = 'hidden'
+  } else if (isWorkflowContextItem(item)) {
+    renderAs = 'workflowContext'
+  }
+
+  let visibility: SessionItemVisibility = item.visibility ?? 'user'
+  if (renderAs === 'hidden' || itemWorkflowInternal) {
+    visibility = 'internal'
+  }
+  if (isRawChatItem(item) && (turnWorkflowInternal || Boolean(workflowKind))) {
+    visibility = 'internal'
+    renderAs = 'hidden'
+  }
+  if ((renderAs === 'frameArtifact' || renderAs === 'specArtifact' || renderAs === 'workflowContext') && !itemWorkflowInternal) {
+    visibility = item.visibility ?? 'user'
+  }
+
+  return {
+    ...item,
+    visibility,
+    renderAs,
+    ...(workflowKind ? { workflowKind } : {}),
+  }
+}
+
+function shouldEmitVisibleTranscriptItem(item: VisibleTranscriptItem): boolean {
+  if (item.visibility === 'internal' || item.renderAs === 'hidden') {
+    return false
+  }
+  if ((item.renderAs === 'frameArtifact' || item.renderAs === 'specArtifact') && item.visibility !== 'user') {
+    return false
+  }
+  return true
+}
+
 export function selectThreadsSorted(state: ThreadSessionStoreState): SessionThread[] {
   const indexById = new Map<string, number>()
   state.threadOrder.forEach((threadId, index) => {
@@ -644,15 +881,39 @@ export function selectActiveItemsByTurn(state: ThreadSessionStoreState): Record<
   return rows
 }
 
+export function selectVisibleTranscriptRows(
+  state: ThreadSessionStoreState,
+  threadId: string | null = state.activeThreadId,
+): VisibleTranscriptRow[] {
+  if (!threadId) {
+    return []
+  }
+  const turns = state.turnsByThread[threadId] ?? []
+  const rows: VisibleTranscriptRow[] = []
+  for (const turn of turns) {
+    const key = `${threadId}:${turn.id}`
+    const items = state.itemsByTurn[key] ?? []
+    for (const item of items) {
+      const classified = classifyTranscriptItem(turn, item)
+      if (shouldEmitVisibleTranscriptItem(classified)) {
+        rows.push({ turn, item: classified })
+      }
+    }
+  }
+  return rows
+}
+
 export function selectActiveTranscriptModel(state: ThreadSessionStoreState): {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  visibleRows: VisibleTranscriptRow[]
 } {
   return {
     threadId: state.activeThreadId,
     turns: selectActiveTurns(state),
     itemsByTurn: selectActiveItemsByTurn(state),
+    visibleRows: selectVisibleTranscriptRows(state),
   }
 }
 
@@ -750,6 +1011,13 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
     set({ activeThreadId: threadId })
   },
   setThreadTurns(threadId, turns, options) {
+    const incomingHydratedItemsByTurn = new Map<string, SessionItem[]>()
+    for (const turn of turns) {
+      incomingHydratedItemsByTurn.set(
+        turn.id,
+        normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status),
+      )
+    }
     const normalizedTurns = normalizeTurnsForThread(threadId, turns)
     const mode = options?.mode === 'replace' ? 'replace' : 'merge'
     set((state) => {
@@ -757,25 +1025,30 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
       let nextItemsByTurn: Record<string, SessionItem[]>
 
       if (mode === 'replace') {
-        const incomingIds = new Set(normalizedTurns.map((turn) => turn.id))
-        const existingActiveTurns = (state.turnsByThread[threadId] ?? []).filter(
+        const existingTurns = state.turnsByThread[threadId] ?? []
+        const existingTurnById = new Map(existingTurns.map((turn) => [turn.id, turn]))
+        const hydratedTurns = normalizedTurns.map((turn) => mergeHydratedTurnWithExisting(existingTurnById.get(turn.id), turn))
+        const incomingIds = new Set(hydratedTurns.map((turn) => turn.id))
+        const existingActiveTurns = existingTurns.filter(
           (turn) =>
             !incomingIds.has(turn.id) &&
             !isTerminalTurnStatus(turn.status) &&
             turn.metadata?.primedByWorkflowAction === true,
         )
-        nextTurns = normalizeTurnsForThread(threadId, [...normalizedTurns, ...existingActiveTurns])
+        nextTurns = normalizeTurnsForThread(threadId, [...hydratedTurns, ...existingActiveTurns])
         const prefix = `${threadId}:`
         nextItemsByTurn = {}
         for (const [key, items] of Object.entries(state.itemsByTurn)) {
-          if (key.startsWith(prefix)) {
-            continue
+          if (!key.startsWith(prefix)) {
+            nextItemsByTurn[key] = items
           }
-          nextItemsByTurn[key] = items
         }
         for (const turn of nextTurns) {
           const key = `${threadId}:${turn.id}`
-          nextItemsByTurn[key] = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
+          const hydratedItems = incomingHydratedItemsByTurn.get(turn.id)
+          nextItemsByTurn[key] = hydratedItems
+            ? mergeItemsForTurn(state.itemsByTurn[key], hydratedItems)
+            : state.itemsByTurn[key] ?? []
         }
       } else {
         const existingTurns = state.turnsByThread[threadId] ?? []
@@ -800,10 +1073,12 @@ export const useThreadSessionStore = create<ThreadSessionStoreState>((set) => ({
           .sort(compareTurnsChronologically)
 
         nextItemsByTurn = { ...state.itemsByTurn }
-        for (const turn of nextTurns) {
+        for (const turn of normalizedTurns) {
           const key = `${threadId}:${turn.id}`
-          const hydratedItems = normalizeItemsForTurnByStatus(threadId, turn.id, turn.items, turn.status)
-          nextItemsByTurn[key] = mergeItemsForTurn(state.itemsByTurn[key], hydratedItems)
+          nextItemsByTurn[key] = mergeItemsForTurn(
+            state.itemsByTurn[key],
+            incomingHydratedItemsByTurn.get(turn.id) ?? [],
+          )
         }
       }
 

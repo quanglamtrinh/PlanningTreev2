@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -26,8 +27,9 @@ def canonical_effective_config_hash(config: dict[str, Any]) -> str:
 
 
 class McpIntegrationService:
-    def __init__(self, paths: AppPaths) -> None:
+    def __init__(self, paths: AppPaths, project_cwd_resolver: Callable[[str], str] | None = None) -> None:
         self._paths = paths
+        self._project_cwd_resolver = project_cwd_resolver
         self._registry_path = paths.config_root / "mcp_registry.json"
         self._profiles_path = paths.data_root / "mcp_profiles.json"
         self._lock = threading.RLock()
@@ -104,9 +106,10 @@ class McpIntegrationService:
         thread_id: str | None = None,
     ) -> dict[str, Any]:
         profile = self.read_profile(project_id, node_id, role)
+        project_cwd = self._resolve_project_cwd(project_id)
         with self._lock:
             registry = self._load_registry_locked()
-        effective = self._compose_effective_config(registry.get("servers", []), profile)
+        effective = self._compose_effective_config(registry.get("servers", []), profile, project_cwd=project_cwd)
         mcp_hash = canonical_effective_config_hash(effective)
         return {
             "projectId": project_id,
@@ -291,7 +294,13 @@ class McpIntegrationService:
             self._active_runtime_hash = mcp_config_hash
             self._active_turn_hashes[key] = mcp_config_hash
 
-    def _compose_effective_config(self, servers: list[dict[str, Any]], profile: dict[str, Any]) -> dict[str, Any]:
+    def _compose_effective_config(
+        self,
+        servers: list[dict[str, Any]],
+        profile: dict[str, Any],
+        *,
+        project_cwd: str | None = None,
+    ) -> dict[str, Any]:
         if not profile.get("mcpEnabled", False):
             return {"mcp_servers": {}}
         profile_servers = profile.get("servers") if isinstance(profile.get("servers"), dict) else {}
@@ -304,6 +313,10 @@ class McpIntegrationService:
             if not thread_settings.get("enabled", False):
                 continue
             effective = self._registry_server_to_codex_config(server)
+            if project_cwd and self._is_stdio_server(server):
+                effective["cwd"] = project_cwd
+                if self._is_filesystem_server(server, effective):
+                    effective["args"] = self._filesystem_args_for_project(effective.get("args"), project_cwd)
             enabled_tools = thread_settings.get("enabledTools")
             disabled_tools = thread_settings.get("disabledTools")
             if isinstance(enabled_tools, list) and enabled_tools:
@@ -315,6 +328,65 @@ class McpIntegrationService:
                 effective["default_tools_approval_mode"] = approval_mode
             effective_servers[server_id] = effective
         return {"mcp_servers": effective_servers}
+
+
+    def _resolve_project_cwd(self, project_id: str) -> str | None:
+        if self._project_cwd_resolver is None:
+            return None
+        try:
+            raw_path = self._project_cwd_resolver(project_id)
+        except Exception as exc:
+            raise SessionCoreError(
+                code="ERR_MCP_PROJECT_CWD_UNAVAILABLE",
+                message="Unable to resolve project workspace folder for MCP server access.",
+                status_code=404,
+                details={"projectId": project_id},
+            ) from exc
+        normalized = str(raw_path or "").strip()
+        if not normalized:
+            raise SessionCoreError(
+                code="ERR_MCP_PROJECT_CWD_UNAVAILABLE",
+                message="Project workspace folder is empty; MCP server access cannot be scoped.",
+                status_code=404,
+                details={"projectId": project_id},
+            )
+        path = Path(normalized).expanduser().resolve()
+        if not path.exists() or not path.is_dir():
+            raise SessionCoreError(
+                code="ERR_MCP_PROJECT_CWD_UNAVAILABLE",
+                message="Project workspace folder does not exist; MCP server access cannot be scoped.",
+                status_code=404,
+                details={"projectId": project_id, "cwd": str(path)},
+            )
+        return str(path)
+
+    @staticmethod
+    def _is_stdio_server(server: dict[str, Any]) -> bool:
+        transport = server.get("transport") if isinstance(server.get("transport"), dict) else {}
+        return transport.get("type") == "stdio"
+
+    @staticmethod
+    def _is_filesystem_server(server: dict[str, Any], effective: dict[str, Any]) -> bool:
+        transport = server.get("transport") if isinstance(server.get("transport"), dict) else {}
+        tokens = [
+            str(server.get("serverId") or ""),
+            str(server.get("name") or ""),
+            str(transport.get("command") or effective.get("command") or ""),
+            *[str(arg) for arg in effective.get("args", []) if arg is not None],
+        ]
+        haystack = " ".join(tokens).lower()
+        return "server-filesystem" in haystack or "filesystem" in haystack
+
+    @staticmethod
+    def _filesystem_args_for_project(raw_args: Any, project_cwd: str) -> list[str]:
+        args = [str(arg) for arg in raw_args] if isinstance(raw_args, list) else []
+        package_index = next(
+            (idx for idx, arg in enumerate(args) if "server-filesystem" in arg.lower()),
+            None,
+        )
+        if package_index is not None:
+            return args[: package_index + 1] + [project_cwd]
+        return [project_cwd]
 
     def _registry_server_to_codex_config(self, server: dict[str, Any]) -> dict[str, Any]:
         transport = server.get("transport") if isinstance(server.get("transport"), dict) else {}

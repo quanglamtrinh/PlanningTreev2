@@ -16,7 +16,6 @@ export const BREADCRUMB_THREAD_TAB_DESIGN: ReadonlyArray<BreadcrumbThreadTabDesi
   { value: 'ask', label: 'Ask', testId: 'breadcrumb-thread-tab-ask' },
   { value: 'execution', label: 'Execution', testId: 'breadcrumb-thread-tab-execution' },
   { value: 'audit', label: 'Review', testId: 'breadcrumb-thread-tab-audit' },
-  { value: 'package', label: 'Package', testId: 'breadcrumb-thread-tab-package' },
 ]
 
 export function renderQueueStatusLabel(

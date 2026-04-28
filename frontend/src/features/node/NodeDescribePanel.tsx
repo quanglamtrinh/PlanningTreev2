@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
-import type { ChangedFileRecord, DetailState, McpEffectiveConfigResponse, McpRegistryServer, McpThreadProfile, McpThreadRole, NodeRecord } from '../../api/types'
+import type { ChangedFileRecord, DetailState, McpEffectiveConfigResponse, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord } from '../../api/types'
 import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
 import styles from './NodeDetailCard.module.css'
 
@@ -18,33 +18,16 @@ const INFO_TAB_DOCS_PATHS = [
   'workflows/development-rules.md',
 ] as const
 
-type DummyInfoExtension = {
-  id: string
-  name: string
-  description: string
-  badge: string
+function mcpTransportBadge(transport: McpRegistryServer['transport']): string {
+  const t = transport?.type as McpTransportType | undefined
+  if (t === 'stdio') {
+    return 'stdio'
+  }
+  if (t === 'streamable_http') {
+    return 'HTTP'
+  }
+  return t ? String(t) : 'MCP'
 }
-
-const INFO_TAB_DUMMY_EXTENSIONS: readonly DummyInfoExtension[] = [
-  {
-    id: 'context-sync',
-    name: 'Context Sync',
-    description: 'Keeps node context, docs, and latest workspace notes aligned before execution.',
-    badge: 'Workspace',
-  },
-  {
-    id: 'risk-scan',
-    name: 'Risk Scan',
-    description: 'Highlights dependency, migration, and rollout risks while planning a task.',
-    badge: 'Review',
-  },
-  {
-    id: 'handoff-pack',
-    name: 'Handoff Pack',
-    description: 'Drafts a compact handoff with open questions, changed files, and next actions.',
-    badge: 'Docs',
-  },
-] as const
 
 /** Maps list row path to project-root path for workspace-text-file API. */
 export function infoTabListPathToWorkspaceRelative(
@@ -141,96 +124,166 @@ function InfoPathList({
   )
 }
 
-function InfoExtensionList({
-  extensions,
-  enabledExtensionIds,
-  onToggleExtension,
-}: {
-  extensions: readonly DummyInfoExtension[]
-  enabledExtensionIds: ReadonlySet<string>
-  onToggleExtension: (id: string) => void
-}) {
-  return (
-    <ul className={styles.infoExtensionList} data-testid="info-tab-extensions">
-      {extensions.map((extension) => {
-        const enabled = enabledExtensionIds.has(extension.id)
-        return (
-          <li key={extension.id} className={styles.infoExtensionItem}>
-            <div className={styles.infoExtensionCopy}>
-              <div className={styles.infoExtensionTitleRow}>
-                <span className={styles.infoExtensionName}>{extension.name}</span>
-                <span className={styles.infoExtensionBadge}>{extension.badge}</span>
-              </div>
-              <p className={styles.infoExtensionDescription}>{extension.description}</p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
-              onClick={() => onToggleExtension(extension.id)}
-            >
-              <span className={styles.infoExtensionToggleTrack} aria-hidden>
-                <span className={styles.infoExtensionToggleThumb} />
-              </span>
-              <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
-            </button>
-          </li>
-        )
-      })}
-    </ul>
+type InfoTabMcpRole = Extract<McpThreadRole, 'ask_planning' | 'execution' | 'audit'>
+
+type InfoTabMcpRoleBlock = {
+  role: InfoTabMcpRole
+  title: string
+  description: string
+}
+
+type McpRolePanelState = {
+  profile: McpThreadProfile | null
+  effective: McpEffectiveConfigResponse | null
+  error: string | null
+}
+
+const INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
+  {
+    role: 'ask_planning',
+    title: 'Ask planning',
+    description: 'Planning and clarification thread for this node.',
+  },
+  {
+    role: 'execution',
+    title: 'Execution',
+    description: 'Implementation thread that applies changes.',
+  },
+  {
+    role: 'audit',
+    title: 'Audit',
+    description: 'Review thread for checking the execution result.',
+  },
+]
+
+function createEmptyMcpRoleStates(): Record<InfoTabMcpRole, McpRolePanelState> {
+  return INFO_TAB_MCP_ROLE_BLOCKS.reduce(
+    (states, { role }) => {
+      states[role] = { profile: null, effective: null, error: null }
+      return states
+    },
+    {} as Record<InfoTabMcpRole, McpRolePanelState>,
   )
 }
 
+function mcpErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
+function mcpRuntimeLabel(effective: McpEffectiveConfigResponse | null): string {
+  if (effective?.runtime.conflict) {
+    return 'Conflict'
+  }
+  if (effective?.runtime.activeRuntimeMcpConfigHash) {
+    return 'Active'
+  }
+  return 'Idle'
+}
 
 function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; nodeId: string }) {
-  const [role, setRole] = useState<McpThreadRole>('execution')
   const [registry, setRegistry] = useState<McpRegistryServer[]>([])
-  const [profile, setProfile] = useState<McpThreadProfile | null>(null)
-  const [effective, setEffective] = useState<McpEffectiveConfigResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [registryError, setRegistryError] = useState<string | null>(null)
+  const [roleStates, setRoleStates] = useState<Record<InfoTabMcpRole, McpRolePanelState>>(() =>
+    createEmptyMcpRoleStates(),
+  )
 
   useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setRegistryError(null)
+      setRegistry([])
+      setRoleStates(createEmptyMcpRoleStates())
+
+      try {
+        const [registryResponse, roleResponses] = await Promise.all([
+          api.listMcpRegistry(),
+          Promise.all(
+            INFO_TAB_MCP_ROLE_BLOCKS.map(async ({ role }) => {
+              try {
+                const [profileResponse, effectiveResponse] = await Promise.all([
+                  api.readMcpThreadProfile(projectId, nodeId, role),
+                  api.previewMcpEffectiveConfig(projectId, nodeId, role),
+                ])
+                return {
+                  role,
+                  state: {
+                    profile: profileResponse.profile,
+                    effective: effectiveResponse,
+                    error: null,
+                  },
+                }
+              } catch (loadError) {
+                return {
+                  role,
+                  state: {
+                    profile: null,
+                    effective: null,
+                    error: mcpErrorMessage(loadError, 'Failed to load MCP profile'),
+                  },
+                }
+              }
+            }),
+          ),
+        ])
+        if (cancelled) {
+          return
+        }
+
+        const nextRoleStates = createEmptyMcpRoleStates()
+        roleResponses.forEach(({ role, state }) => {
+          nextRoleStates[role] = state
+        })
+        setRegistry(registryResponse.servers)
+        setRoleStates(nextRoleStates)
+      } catch (loadError) {
+        if (cancelled) {
+          return
+        }
+        setRegistry([])
+        setRegistryError(mcpErrorMessage(loadError, 'Failed to load MCP registry'))
+      }
+    }
+
     void load()
-  }, [projectId, nodeId, role])
-
-  async function load() {
-    try {
-      setError(null)
-      const [registryResponse, profileResponse, effectiveResponse] = await Promise.all([
-        api.listMcpRegistry(),
-        api.readMcpThreadProfile(projectId, nodeId, role),
-        api.previewMcpEffectiveConfig(projectId, nodeId, role),
-      ])
-      setRegistry(registryResponse.servers)
-      setProfile(profileResponse.profile)
-      setEffective(effectiveResponse)
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load MCP profile')
+    return () => {
+      cancelled = true
     }
-  }
+  }, [projectId, nodeId])
 
-  async function patchProfile(patch: Partial<McpThreadProfile>) {
+  async function patchProfile(role: InfoTabMcpRole, patch: Partial<McpThreadProfile>) {
     try {
-      setError(null)
       const response = await api.updateMcpThreadProfile(projectId, nodeId, role, patch)
-      setProfile(response.profile)
-      setEffective(await api.previewMcpEffectiveConfig(projectId, nodeId, role))
+      const effectiveResponse = await api.previewMcpEffectiveConfig(projectId, nodeId, role)
+      setRoleStates((current) => ({
+        ...current,
+        [role]: {
+          profile: response.profile,
+          effective: effectiveResponse,
+          error: null,
+        },
+      }))
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : 'Failed to update MCP profile')
+      setRoleStates((current) => ({
+        ...current,
+        [role]: {
+          ...current[role],
+          error: mcpErrorMessage(updateError, 'Failed to update MCP profile'),
+        },
+      }))
     }
   }
 
-  function toggleServer(serverId: string) {
-    const current = profile?.servers?.[serverId]
-    void patchProfile({
+  function toggleServer(role: InfoTabMcpRole, state: McpRolePanelState, serverId: string) {
+    const current = state.profile?.servers?.[serverId]
+    void patchProfile(role, {
       servers: {
-        ...(profile?.servers ?? {}),
+        ...(state.profile?.servers ?? {}),
         [serverId]: {
           enabled: !current?.enabled,
           enabledTools: current?.enabledTools ?? [],
           disabledTools: current?.disabledTools ?? [],
-          approvalMode: current?.approvalMode ?? profile?.approvalMode ?? 'never',
+          approvalMode: current?.approvalMode ?? state.profile?.approvalMode ?? 'never',
           toolApproval: current?.toolApproval ?? {},
         },
       },
@@ -240,68 +293,96 @@ function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; no
   return (
     <div className={styles.infoMcpPanel} data-testid="info-tab-mcp-extensions">
       <div className={styles.infoMcpHeaderRow}>
-        <div>
-          <h3 className={styles.infoMcpTitle}>Thread MCP profile</h3>
-          <p className={styles.infoExtensionDescription}>
-            Enable MCP per node role. Runtime status is for this selected effective profile.
-          </p>
-        </div>
-        <select className={styles.infoMcpSelect} value={role} onChange={(event) => setRole(event.target.value as McpThreadRole)}>
-          <option value="ask_planning">Ask planning</option>
-          <option value="execution">Execution</option>
-          <option value="audit">Audit</option>
-          <option value="package_review">Package review</option>
-        </select>
+        <p className={styles.infoExtensionDescription}>
+          Global servers are managed in <strong>Graph - Extensions</strong>. Configure MCP separately
+          for each workflow thread below.
+        </p>
       </div>
 
-      {error ? <p className={styles.infoMcpError}>{error}</p> : null}
+      {registryError ? <p className={styles.infoMcpError}>{registryError}</p> : null}
 
-      <button
-        type="button"
-        role="switch"
-        aria-checked={Boolean(profile?.mcpEnabled)}
-        className={profile?.mcpEnabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
-        onClick={() => void patchProfile({ mcpEnabled: !profile?.mcpEnabled })}
-      >
-        <span className={styles.infoExtensionToggleTrack} aria-hidden>
-          <span className={styles.infoExtensionToggleThumb} />
-        </span>
-        <span className={styles.infoExtensionToggleLabel}>{profile?.mcpEnabled ? 'MCP on' : 'MCP off'}</span>
-      </button>
+      <div className={styles.infoMcpRoleGrid}>
+        {INFO_TAB_MCP_ROLE_BLOCKS.map(({ role, title, description }) => {
+          const state = roleStates[role]
+          const profile = state.profile
+          const effective = state.effective
+          return (
+            <section key={role} className={styles.infoMcpRoleBlock} data-testid={`info-tab-mcp-role-${role}`}>
+              <div className={styles.infoMcpRoleHeader}>
+                <div>
+                  <h3 className={styles.infoMcpTitle}>{title}</h3>
+                  <p className={styles.infoExtensionDescription}>{description}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(profile?.mcpEnabled)}
+                  disabled={!profile}
+                  className={profile?.mcpEnabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                  onClick={() => void patchProfile(role, { mcpEnabled: !profile?.mcpEnabled })}
+                >
+                  <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                    <span className={styles.infoExtensionToggleThumb} />
+                  </span>
+                  <span className={styles.infoExtensionToggleLabel}>{profile?.mcpEnabled ? 'MCP on' : 'MCP off'}</span>
+                </button>
+              </div>
 
-      <div className={styles.infoMcpServerList}>
-        {registry.length === 0 ? (
-          <p className={styles.changedFilesEmpty}>No global MCP servers registered.</p>
-        ) : (
-          registry.map((server) => {
-            const enabled = Boolean(profile?.servers?.[server.serverId]?.enabled)
-            return (
-              <button
-                key={server.serverId}
-                type="button"
-                className={enabled ? styles.infoMcpServerEnabled : styles.infoMcpServer}
-                onClick={() => toggleServer(server.serverId)}
-              >
-                <span>{server.name}</span>
-                <span>{enabled ? 'Enabled' : 'Disabled'}</span>
-              </button>
-            )
-          })
-        )}
-      </div>
+              {state.error ? <p className={styles.infoMcpError}>{state.error}</p> : null}
 
-      <div className={styles.infoMcpHashBox}>
-        <span>mcpConfigHash</span>
-        <code>{effective?.mcpConfigHash ?? 'unresolved'}</code>
-      </div>
-      <div className={styles.infoMcpRuntimeBox}>
-        <span>Runtime</span>
-        <span>{effective?.runtime.conflict ? 'Conflict' : effective?.runtime.activeRuntimeMcpConfigHash ? 'Active' : 'Idle'}</span>
+              <p className={styles.infoMcpListHeading}>Include servers</p>
+              <ul className={styles.infoExtensionList} data-testid={`info-tab-extensions-${role}`}>
+                {registry.length === 0 ? (
+                  <li className={styles.infoExtensionItem}>
+                    <p className={styles.changedFilesEmpty}>No global MCP servers registered yet.</p>
+                  </li>
+                ) : (
+                  registry.map((server) => {
+                    const enabled = Boolean(profile?.servers?.[server.serverId]?.enabled)
+                    const desc = server.description.trim() || `Server id: ${server.serverId}`
+                    return (
+                      <li key={server.serverId} className={styles.infoExtensionItem}>
+                        <div className={styles.infoExtensionCopy}>
+                          <div className={styles.infoExtensionTitleRow}>
+                            <span className={styles.infoExtensionName}>{server.name}</span>
+                            <span className={styles.infoExtensionBadge}>{mcpTransportBadge(server.transport)}</span>
+                          </div>
+                          <p className={styles.infoExtensionDescription}>{desc}</p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled}
+                          disabled={!profile}
+                          className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                          onClick={() => toggleServer(role, state, server.serverId)}
+                        >
+                          <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                            <span className={styles.infoExtensionToggleThumb} />
+                          </span>
+                          <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
+                        </button>
+                      </li>
+                    )
+                  })
+                )}
+              </ul>
+
+              <div className={styles.infoMcpHashBox}>
+                <span>mcpConfigHash</span>
+                <code>{effective?.mcpConfigHash ?? 'unresolved'}</code>
+              </div>
+              <div className={styles.infoMcpRuntimeBox}>
+                <span>Runtime</span>
+                <span>{mcpRuntimeLabel(effective)}</span>
+              </div>
+            </section>
+          )
+        })}
       </div>
     </div>
   )
 }
-
 
 type Props = {
   node: NodeRecord
@@ -360,9 +441,6 @@ export function NodeDescribePanel({
     variant: 'docs' | 'skills'
     path: string
   } | null>(null)
-  const [enabledExtensionIds, setEnabledExtensionIds] = useState<ReadonlySet<string>>(
-    () => new Set(['context-sync', 'handoff-pack']),
-  )
 
   const initialSha = displaySha(detailState?.initial_sha)
   const headSha = displaySha(detailState?.head_sha)
@@ -440,21 +518,6 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeExtensionsSection}>
               <h2 className={styles.describeSectionTitle}>Extensions</h2>
-              <InfoExtensionList
-                extensions={INFO_TAB_DUMMY_EXTENSIONS}
-                enabledExtensionIds={enabledExtensionIds}
-                onToggleExtension={(extensionId) => {
-                  setEnabledExtensionIds((current) => {
-                    const next = new Set(current)
-                    if (next.has(extensionId)) {
-                      next.delete(extensionId)
-                    } else {
-                      next.add(extensionId)
-                    }
-                    return next
-                  })
-                }}
-              />
               <ThreadMcpExtensionsPanel projectId={projectId} nodeId={node.node_id} />
             </div>
           </div>

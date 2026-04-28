@@ -1,18 +1,10 @@
-export type ThreadTab = 'ask' | 'execution' | 'audit' | 'package'
+export type ThreadTab = 'ask' | 'execution' | 'audit'
 
 export function parseThreadTab(rawValue: string | null): ThreadTab | null {
   if (rawValue === 'review') {
     return 'audit'
   }
-  if (rawValue === 'package-review') {
-    return 'package'
-  }
-  if (
-    rawValue === 'ask' ||
-    rawValue === 'execution' ||
-    rawValue === 'audit' ||
-    rawValue === 'package'
-  ) {
+  if (rawValue === 'ask' || rawValue === 'execution' || rawValue === 'audit') {
     return rawValue
   }
   return null
@@ -41,11 +33,7 @@ export function resolveV2RouteTarget(options: {
   if (requestedThreadTab === 'ask') {
     return { surface: 'v2', threadTab: 'ask' }
   }
-  if (
-    requestedThreadTab === 'execution' ||
-    requestedThreadTab === 'audit' ||
-    requestedThreadTab === 'package'
-  ) {
+  if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
     return { surface: 'v2', threadTab: requestedThreadTab }
   }
   return { surface: 'v2', threadTab: 'execution' }

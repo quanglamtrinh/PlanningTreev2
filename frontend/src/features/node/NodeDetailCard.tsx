@@ -209,6 +209,11 @@ export function NodeDetailCard({
     [variant],
   )
 
+  const displayNodeNumber = useMemo(
+    () => (node ? normalizeDetailNodeNumber(node.hierarchical_number, node.is_init_node === true) : null),
+    [node?.hierarchical_number, node?.is_init_node],
+  )
+
   if (state !== 'ready' || !node || !projectId) {
     return (
       <section
@@ -233,11 +238,6 @@ export function NodeDetailCard({
       </section>
     )
   }
-
-  const displayNodeNumber = useMemo(
-    () => normalizeDetailNodeNumber(node.hierarchical_number, node.is_init_node === true),
-    [node.hierarchical_number, node.is_init_node],
-  )
 
   const breadcrumbPanelId = 'breadcrumb-node-detail-panel'
 
