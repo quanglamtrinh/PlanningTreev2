@@ -161,190 +161,196 @@ export function SkillsPage() {
       <Sidebar />
       <div className={`${graphStyles.mainColumn} ${styles.mainColumn}`}>
         <div className={styles.scroll}>
-          <header className={styles.hero}>
-            <button
-              type="button"
-              className={styles.backButton}
-              onClick={() => navigate('/graph')}
-              aria-label="Back to graph"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="m15 18-6-6 6-6" />
-              </svg>
-              Back
-            </button>
-            <p className={styles.eyebrow}>Skills</p>
-            <h1 className={styles.title}>Global skills registry</h1>
-            <p className={styles.subtitle}>
-              Browse global skills as reusable blocks, then draft a new skill from a compact form or
-              a manual skill.md authoring surface.
-            </p>
-          </header>
-
-          <section className={styles.registryPanel} aria-labelledby="global-skills-title">
-            <div className={styles.panelHeader}>
-              <div>
-                <h2 id="global-skills-title" className={styles.sectionTitle}>Global skills</h2>
-                <p className={styles.sectionDescription}>
-                  UI-only registry preview. New entries are added locally until this screen is wired to persistence.
-                </p>
-              </div>
-            </div>
-
-            <div className={styles.registryGrid} aria-label="Global skills">
-              {skills.length === 0 ? (
-                <p className={styles.emptyState}>No global skills registered yet.</p>
-              ) : (
-                skills.map((skill) => <SkillRegistryCard key={skill.id} skill={skill} />)
-              )}
-            </div>
-          </section>
-
-          <section className={styles.addPanel} aria-labelledby="add-skill-title">
-            <div className={styles.panelHeader}>
-              <div>
-                <h2 id="add-skill-title" className={styles.sectionTitle}>Add skill</h2>
-                <p className={styles.sectionDescription}>
-                  Choose the quick form or draft a full skill.md with the same Rich View used by frame.md and spec.md.
-                </p>
-              </div>
-            </div>
-
-            {statusMessage ? <div className={styles.statusBanner}>{statusMessage}</div> : null}
-
-            <div className={styles.modeTabs} role="tablist" aria-label="Add skill method">
+          <div className={styles.pageContent}>
+            <header className={styles.hero}>
               <button
                 type="button"
-                className={`${styles.modeTab} ${addMode === 'form' ? styles.modeTabActive : ''}`}
-                role="tab"
-                aria-selected={addMode === 'form'}
-                onClick={() => setAddMode('form')}
+                className={styles.backButton}
+                onClick={() => navigate('/graph')}
+                aria-label="Back to graph"
               >
-                Form
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+                Back
               </button>
-              <button
-                type="button"
-                className={`${styles.modeTab} ${addMode === 'manual' ? styles.modeTabActive : ''}`}
-                role="tab"
-                aria-selected={addMode === 'manual'}
-                onClick={() => setAddMode('manual')}
-              >
-                Manual skill.md
-              </button>
-            </div>
+              <div className={styles.titleGroup}>
+                <p className={styles.eyebrow}>Skills</p>
+                <h1 className={styles.title}>Global skills registry</h1>
+              </div>
+              <p className={styles.subtitle}>
+                Browse global skills as reusable blocks, then draft a new skill from a compact form or
+                a manual skill.md authoring surface.
+              </p>
+            </header>
 
-            {addMode === 'form' ? (
-              <form className={styles.skillForm} onSubmit={handleAddSkillFromForm}>
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Skill name</span>
-                  <input
-                    className={styles.input}
-                    value={skillFormDraft.name}
-                    onChange={(event) => setSkillFormDraft((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Browser automation"
-                  />
-                </label>
-                <label className={`${styles.field} ${styles.fieldWide}`}>
-                  <span className={styles.fieldLabel}>Description</span>
-                  <input
-                    className={styles.input}
-                    value={skillFormDraft.description}
-                    onChange={(event) => setSkillFormDraft((current) => ({ ...current, description: event.target.value }))}
-                    placeholder="Use when a task requires persistent browser interaction."
-                  />
-                </label>
-                <label className={`${styles.field} ${styles.fieldWide}`}>
-                  <span className={styles.fieldLabel}>Repo path</span>
-                  <input
-                    className={styles.input}
-                    value={skillFormDraft.repoPath}
-                    onChange={(event) => setSkillFormDraft((current) => ({ ...current, repoPath: event.target.value }))}
-                    placeholder=".codex/skills/browser-automation"
-                  />
-                </label>
-                <div className={styles.formActions}>
-                  <button type="submit" className={styles.primaryButton} disabled={!canAddFromForm}>
-                    Add skill
-                  </button>
+            <section className={styles.registryPanel} aria-labelledby="global-skills-title">
+              <div className={styles.panelHeader}>
+                <div>
+                  <h2 id="global-skills-title" className={styles.sectionTitle}>Global skills</h2>
+                  <p className={styles.sectionDescription}>
+                    UI-only registry preview. New entries are added locally until this screen is wired to persistence.
+                  </p>
                 </div>
-              </form>
-            ) : (
-              <form className={styles.manualForm} onSubmit={handleAddManualSkill}>
-                <div className={styles.editorShell}>
-                  <div className={styles.editorHeader}>
-                    <span className={styles.editorTitle}>skill.md</span>
-                    <div className={styles.editorModeToggle} role="group" aria-label="Manual skill view mode">
-                      <button
-                        type="button"
-                        className={`${styles.editorModeToggleButton} ${manualViewMode === 'edit' ? styles.editorModeToggleButtonActive : ''}`}
-                        aria-pressed={manualViewMode === 'edit'}
-                        onClick={() => setManualViewMode('edit')}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        className={`${styles.editorModeToggleButton} ${manualViewMode === 'rich' ? styles.editorModeToggleButtonActive : ''}`}
-                        aria-pressed={manualViewMode === 'rich'}
-                        onClick={() => setManualViewMode('rich')}
-                      >
-                        Rich View
-                      </button>
-                    </div>
-                  </div>
-                  <div className={styles.editorBody}>
-                    {manualViewMode === 'rich' ? (
-                      <div className={styles.richViewSurface} data-testid="manual-skill-rich-view">
-                        {manualDraft.trim() ? (
-                          <SharedMarkdownRenderer content={manualDraft} variant="document" />
-                        ) : (
-                          <p className={styles.richViewEmpty}>No content yet.</p>
-                        )}
-                      </div>
-                    ) : (
-                      <CodeMirror
-                        className={styles.markdownEditor}
-                        value={manualDraft}
-                        height="100%"
-                        theme="none"
-                        extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
-                        basicSetup={{
-                          foldGutter: false,
-                          lineNumbers: true,
-                        }}
-                        onChange={setManualDraft}
-                      />
-                    )}
-                  </div>
+              </div>
+
+              <div className={styles.registryGrid} aria-label="Global skills">
+                {skills.length === 0 ? (
+                  <p className={styles.emptyState}>No global skills registered yet.</p>
+                ) : (
+                  skills.map((skill) => <SkillRegistryCard key={skill.id} skill={skill} />)
+                )}
+              </div>
+            </section>
+
+            <section className={styles.addPanel} aria-labelledby="add-skill-title">
+              <div className={styles.panelHeader}>
+                <div>
+                  <h2 id="add-skill-title" className={styles.sectionTitle}>Add skill</h2>
+                  <p className={styles.sectionDescription}>
+                    Choose the quick form or draft a full skill.md with the same Rich View used by frame.md and spec.md.
+                  </p>
                 </div>
-                <div className={styles.formActions}>
+              </div>
+
+              <div className={styles.addSurface}>
+                {statusMessage ? <div className={styles.statusBanner}>{statusMessage}</div> : null}
+
+                <div className={styles.modeTabs} role="tablist" aria-label="Add skill method">
                   <button
                     type="button"
-                    className={styles.secondaryButton}
-                    onClick={() => {
-                      setManualDraft(MANUAL_SKILL_TEMPLATE)
-                      setManualViewMode('edit')
-                    }}
+                    className={`${styles.modeTab} ${addMode === 'form' ? styles.modeTabActive : ''}`}
+                    role="tab"
+                    aria-selected={addMode === 'form'}
+                    onClick={() => setAddMode('form')}
                   >
-                    Reset template
+                    Form
                   </button>
-                  <button type="submit" className={styles.primaryButton}>
-                    Add manual skill
+                  <button
+                    type="button"
+                    className={`${styles.modeTab} ${addMode === 'manual' ? styles.modeTabActive : ''}`}
+                    role="tab"
+                    aria-selected={addMode === 'manual'}
+                    onClick={() => setAddMode('manual')}
+                  >
+                    Manual skill.md
                   </button>
                 </div>
-              </form>
-            )}
-          </section>
+
+                {addMode === 'form' ? (
+                  <form className={styles.skillForm} onSubmit={handleAddSkillFromForm}>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Skill name</span>
+                      <input
+                        className={styles.input}
+                        value={skillFormDraft.name}
+                        onChange={(event) => setSkillFormDraft((current) => ({ ...current, name: event.target.value }))}
+                        placeholder="Browser automation"
+                      />
+                    </label>
+                    <label className={`${styles.field} ${styles.fieldWide}`}>
+                      <span className={styles.fieldLabel}>Description</span>
+                      <input
+                        className={styles.input}
+                        value={skillFormDraft.description}
+                        onChange={(event) => setSkillFormDraft((current) => ({ ...current, description: event.target.value }))}
+                        placeholder="Use when a task requires persistent browser interaction."
+                      />
+                    </label>
+                    <label className={`${styles.field} ${styles.fieldWide}`}>
+                      <span className={styles.fieldLabel}>Repo path</span>
+                      <input
+                        className={styles.input}
+                        value={skillFormDraft.repoPath}
+                        onChange={(event) => setSkillFormDraft((current) => ({ ...current, repoPath: event.target.value }))}
+                        placeholder=".codex/skills/browser-automation"
+                      />
+                    </label>
+                    <div className={styles.formActions}>
+                      <button type="submit" className={styles.primaryButton} disabled={!canAddFromForm}>
+                        Add skill
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <form className={styles.manualForm} onSubmit={handleAddManualSkill}>
+                    <div className={styles.editorShell}>
+                      <div className={styles.editorHeader}>
+                        <span className={styles.editorTitle}>skill.md</span>
+                        <div className={styles.editorModeToggle} role="group" aria-label="Manual skill view mode">
+                          <button
+                            type="button"
+                            className={`${styles.editorModeToggleButton} ${manualViewMode === 'edit' ? styles.editorModeToggleButtonActive : ''}`}
+                            aria-pressed={manualViewMode === 'edit'}
+                            onClick={() => setManualViewMode('edit')}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className={`${styles.editorModeToggleButton} ${manualViewMode === 'rich' ? styles.editorModeToggleButtonActive : ''}`}
+                            aria-pressed={manualViewMode === 'rich'}
+                            onClick={() => setManualViewMode('rich')}
+                          >
+                            Rich View
+                          </button>
+                        </div>
+                      </div>
+                      <div className={styles.editorBody}>
+                        {manualViewMode === 'rich' ? (
+                          <div className={styles.richViewSurface} data-testid="manual-skill-rich-view">
+                            {manualDraft.trim() ? (
+                              <SharedMarkdownRenderer content={manualDraft} variant="document" />
+                            ) : (
+                              <p className={styles.richViewEmpty}>No content yet.</p>
+                            )}
+                          </div>
+                        ) : (
+                          <CodeMirror
+                            className={styles.markdownEditor}
+                            value={manualDraft}
+                            height="100%"
+                            theme="none"
+                            extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
+                            basicSetup={{
+                              foldGutter: false,
+                              lineNumbers: true,
+                            }}
+                            onChange={setManualDraft}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    <div className={styles.formActions}>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => {
+                          setManualDraft(MANUAL_SKILL_TEMPLATE)
+                          setManualViewMode('edit')
+                        }}
+                      >
+                        Reset template
+                      </button>
+                      <button type="submit" className={styles.primaryButton}>
+                        Add manual skill
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </section>
@@ -362,10 +368,6 @@ function SkillRegistryCard({ skill }: { skill: SkillBlock }) {
         <span className={styles.badge}>{skill.source}</span>
       </div>
       <code className={styles.skillPath}>{skill.skillPath}</code>
-      <div className={styles.skillMeta}>
-        <span>Repo path</span>
-        <code>{skill.repoPath}</code>
-      </div>
     </article>
   )
 }

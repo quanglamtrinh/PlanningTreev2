@@ -3,6 +3,7 @@ import { DocumentRichViewContent } from '../../markdown/DocumentRichView'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import { isItemKind } from '../contracts'
 import type { ItemKind, SessionItem, SessionTurn, VisibleTranscriptRow } from '../contracts'
+import { formatNodeTitleWithIndex } from '../../../utils/nodeDisplayIndex'
 
 type TranscriptPanelProps = {
   threadId: string | null
@@ -670,12 +671,13 @@ function nodeTitle(node: unknown): string {
   if (!isRecord(node)) {
     return 'Untitled node'
   }
-  const number = normalizeText(node.hierarchical_number)
-  const title = normalizeText(node.title)
-  if (number && title) {
-    return `${number} ${title}`
-  }
-  return title || number || normalizeText(node.node_id) || 'Untitled node'
+  return formatNodeTitleWithIndex({
+    hierarchical_number: normalizeText(node.hierarchical_number),
+    is_init_node: node.is_init_node === true,
+    node_kind: normalizeText(node.node_kind),
+    title: normalizeText(node.title),
+    node_id: normalizeText(node.node_id),
+  })
 }
 
 function documentContent(document: unknown): string {
@@ -1689,7 +1691,9 @@ export function TranscriptPanel({
                             className={`sessionV2TurnFileSummaryChevron ${isExpanded ? 'sessionV2TurnFileSummaryChevronOpen' : ''}`}
                             aria-hidden
                           >
-                            v
+                            <svg viewBox="0 0 20 20" focusable="false" aria-hidden>
+                              <path d="M5.5 7.5L10 12l4.5-4.5" />
+                            </svg>
                           </span>
                         </div>
                       </button>

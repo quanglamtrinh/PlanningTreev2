@@ -183,7 +183,7 @@
 
 .threadTabBody {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -193,6 +193,7 @@
 
 .threadBodyNoticeRow {
   display: flex;
+  grid-row: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
@@ -211,6 +212,7 @@
 
 .threadBodyMain {
   display: flex;
+  grid-row: 2;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -228,6 +230,7 @@
 
 .threadBodyComposer {
   display: flex;
+  grid-row: 4;
   flex-direction: column;
   flex-shrink: 0;
   border-top: 1px solid color-mix(in srgb, var(--thread-pane-border-subtle) 72%, var(--thread-chat-canvas));
@@ -771,15 +774,22 @@
   width: 26px;
   height: 26px;
   border-radius: 999px;
-  font-size: 18px;
-  line-height: 1;
-  font-weight: 600;
   color: var(--session-v2-fg-muted);
   background: transparent;
   transition:
-    transform 120ms ease-in-out,
+    transform 140ms ease,
     color 120ms ease-in-out,
     background-color 120ms ease-in-out;
+}
+
+:global(.sessionV2TurnFileSummaryChevron svg) {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 :global(.sessionV2TurnFileSummaryChevronOpen) {
@@ -942,6 +952,10 @@
 }
 
 :global(.sessionV2WorkflowContextCardSticky) {
+  position: relative;
+}
+
+:global(.sessionV2WorkflowContextCardSticky .sessionV2WorkflowContextToggle) {
   position: sticky;
   top: 0;
   z-index: 3;

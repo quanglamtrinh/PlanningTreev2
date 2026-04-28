@@ -10,6 +10,7 @@ import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './FrameContextFeedBlock.module.css'
 
 type PanelId = 'frame' | 'clarify' | 'split' | 'spec'
@@ -58,23 +59,7 @@ function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[
 }
 
 function isInitNode(node: NodeRecord): boolean {
-  return node.is_init_node === true
-}
-
-function normalizeShellNodeNumber(rawNumber: string | null | undefined, stripInitPrefix: boolean): string | null {
-  const value = String(rawNumber ?? '').trim()
-  if (!value) {
-    return null
-  }
-  if (!stripInitPrefix) {
-    return value
-  }
-  const dotIndex = value.indexOf('.')
-  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
-    return value
-  }
-  const normalized = value.slice(dotIndex + 1).trim()
-  return normalized || null
+  return node.is_init_node === true || node.node_kind === 'root'
 }
 
 function panelKey(nodeId: string, panelId: PanelId): string {
@@ -110,14 +95,13 @@ function buildSplitMarkdown(
   node: NodeRecord,
   nodeRegistry: NodeRecord[],
   currentNodeId: string,
-  stripInitPrefix: boolean,
 ): string {
   const byId = new Map(nodeRegistry.map((item) => [item.node_id, item]))
   const rows = node.child_ids
     .map((id) => byId.get(id))
     .filter((child): child is NodeRecord => child !== undefined)
     .map((child) => {
-      const displayNumber = normalizeShellNodeNumber(child.hierarchical_number, stripInitPrefix)
+      const displayNumber = formatNodeDisplayIndex(child)
       const label = displayNumber ? `${displayNumber} ${child.title}` : child.title
       return child.node_id === currentNodeId
         ? `## ${label}\n\n_Current path_`
@@ -202,13 +186,11 @@ function ContextSplitView({
   node,
   nodeRegistry,
   currentNodeId,
-  stripInitPrefix,
   projectRootPath,
 }: {
   node: NodeRecord
   nodeRegistry: NodeRecord[]
   currentNodeId: string
-  stripInitPrefix: boolean
   projectRootPath?: string
 }) {
   const byId = useMemo(() => new Map(nodeRegistry.map((item) => [item.node_id, item])), [nodeRegistry])
@@ -221,7 +203,7 @@ function ContextSplitView({
     return <div className={styles.stateEmpty}>No subtasks.</div>
   }
 
-  const markdown = buildSplitMarkdown(node, nodeRegistry, currentNodeId, stripInitPrefix)
+  const markdown = buildSplitMarkdown(node, nodeRegistry, currentNodeId)
   if (!markdown) {
     return <div className={styles.stateEmpty}>No subtasks.</div>
   }
@@ -271,7 +253,6 @@ export function FrameContextFeedBlock({
       : undefined,
   )
   const rawChain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
-  const stripInitPrefix = rawChain.length > 0 && isInitNode(rawChain[0])
   const chain = useMemo(() => rawChain.filter((node) => !isInitNode(node)), [rawChain])
   const actionState = useAskShellActionStore(
     (state) => state.entries[askShellNodeActionStateKey(projectId, nodeId)],
@@ -336,7 +317,7 @@ export function FrameContextFeedBlock({
       <div className={styles.nodeList}>
         {chain.map((node) => {
           const isCurrent = node.node_id === nodeId
-          const displayNumber = normalizeShellNodeNumber(node.hierarchical_number, stripInitPrefix)
+          const displayNumber = formatNodeDisplayIndex(node)
           const frameEntry = frameEntries[`${projectId}::${node.node_id}::frame`]
           const specEntry = frameEntries[`${projectId}::${node.node_id}::spec`]
           const clarifyEntry = clarifyEntries[`${projectId}::${node.node_id}`]
@@ -433,7 +414,6 @@ export function FrameContextFeedBlock({
                             node={node}
                             nodeRegistry={nodeRegistry}
                             currentNodeId={nodeId}
-                            stripInitPrefix={stripInitPrefix}
                             projectRootPath={projectRootPath}
                           />
                         </div>

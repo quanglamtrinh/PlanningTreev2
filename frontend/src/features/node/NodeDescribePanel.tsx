@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
-import type { ChangedFileRecord, DetailState, McpEffectiveConfigResponse, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord } from '../../api/types'
+import type { ChangedFileRecord, DetailState, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord } from '../../api/types'
 import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './NodeDetailCard.module.css'
 
 const INFO_TAB_SKILLS_PATHS = [
@@ -134,14 +135,13 @@ type InfoTabMcpRoleBlock = {
 
 type McpRolePanelState = {
   profile: McpThreadProfile | null
-  effective: McpEffectiveConfigResponse | null
   error: string | null
 }
 
 const INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
   {
     role: 'ask_planning',
-    title: 'Ask planning',
+    title: 'Ask',
     description: 'Planning and clarification thread for this node.',
   },
   {
@@ -167,7 +167,7 @@ export const ROOT_INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
 function createEmptyMcpRoleStates(roleBlocks: readonly InfoTabMcpRoleBlock[]): Record<InfoTabMcpRole, McpRolePanelState> {
   return roleBlocks.reduce(
     (states, { role }) => {
-      states[role] = { profile: null, effective: null, error: null }
+      states[role] = { profile: null, error: null }
       return states
     },
     {} as Record<InfoTabMcpRole, McpRolePanelState>,
@@ -176,16 +176,6 @@ function createEmptyMcpRoleStates(roleBlocks: readonly InfoTabMcpRoleBlock[]): R
 
 function mcpErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
-}
-
-function mcpRuntimeLabel(effective: McpEffectiveConfigResponse | null): string {
-  if (effective?.runtime.conflict) {
-    return 'Conflict'
-  }
-  if (effective?.runtime.activeRuntimeMcpConfigHash) {
-    return 'Active'
-  }
-  return 'Idle'
 }
 
 function ThreadMcpExtensionsPanel({
@@ -217,15 +207,11 @@ function ThreadMcpExtensionsPanel({
           Promise.all(
             roleBlocks.map(async ({ role }) => {
               try {
-                const [profileResponse, effectiveResponse] = await Promise.all([
-                  api.readMcpThreadProfile(projectId, nodeId, role),
-                  api.previewMcpEffectiveConfig(projectId, nodeId, role),
-                ])
+                const profileResponse = await api.readMcpThreadProfile(projectId, nodeId, role)
                 return {
                   role,
                   state: {
                     profile: profileResponse.profile,
-                    effective: effectiveResponse,
                     error: null,
                   },
                 }
@@ -234,7 +220,6 @@ function ThreadMcpExtensionsPanel({
                   role,
                   state: {
                     profile: null,
-                    effective: null,
                     error: mcpErrorMessage(loadError, 'Failed to load MCP profile'),
                   },
                 }
@@ -270,12 +255,10 @@ function ThreadMcpExtensionsPanel({
   async function patchProfile(role: InfoTabMcpRole, patch: Partial<McpThreadProfile>) {
     try {
       const response = await api.updateMcpThreadProfile(projectId, nodeId, role, patch)
-      const effectiveResponse = await api.previewMcpEffectiveConfig(projectId, nodeId, role)
       setRoleStates((current) => ({
         ...current,
         [role]: {
           profile: response.profile,
-          effective: effectiveResponse,
           error: null,
         },
       }))
@@ -321,7 +304,6 @@ function ThreadMcpExtensionsPanel({
         {roleBlocks.map(({ role, title, description }) => {
           const state = roleStates[role]
           const profile = state.profile
-          const effective = state.effective
           return (
             <section key={role} className={styles.infoMcpRoleBlock} data-testid={`info-tab-mcp-role-${role}`}>
               <div className={styles.infoMcpRoleHeader}>
@@ -384,14 +366,6 @@ function ThreadMcpExtensionsPanel({
                 )}
               </ul>
 
-              <div className={styles.infoMcpHashBox}>
-                <span>mcpConfigHash</span>
-                <code>{effective?.mcpConfigHash ?? 'unresolved'}</code>
-              </div>
-              <div className={styles.infoMcpRuntimeBox}>
-                <span>Runtime</span>
-                <span>{mcpRuntimeLabel(effective)}</span>
-              </div>
             </section>
           )
         })}
@@ -470,6 +444,7 @@ export function NodeDescribePanel({
 
   const present = detailState?.task_present_in_current_workspace
   const taskMissing = present === false
+  const displayIndex = formatNodeDisplayIndex(node)
 
   if (openInfoPath) {
     const workspacePath = infoTabListPathToWorkspaceRelative(openInfoPath.variant, openInfoPath.path)
@@ -493,7 +468,7 @@ export function NodeDescribePanel({
         <div className={styles.describePanel}>
           <div className={styles.describeDocHero}>
             <p className={styles.eyebrow}>
-              {node.hierarchical_number ? `${node.hierarchical_number} - Node` : 'Node'}
+              {displayIndex ? `${displayIndex} - Node` : 'Node'}
             </p>
             <h1 className={styles.describeDocH1}>{node.title}</h1>
             <p className={styles.body}>{node.description.trim() || 'No description yet.'}</p>

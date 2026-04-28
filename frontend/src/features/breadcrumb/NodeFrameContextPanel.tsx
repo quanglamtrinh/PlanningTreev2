@@ -4,6 +4,7 @@ import type { NodeRecord } from '../../api/types'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './NodeFrameContextPanel.module.css'
 
 type Props = {
@@ -39,6 +40,7 @@ function NodeFrameSection({ projectId, node, isCurrent, projectRootPath, section
   const entry = useNodeDocumentStore(
     useShallow((s) => s.entries[`${projectId}::${node.node_id}::frame`]),
   )
+  const displayIndex = formatNodeDisplayIndex(node)
 
   return (
     <div
@@ -48,11 +50,11 @@ function NodeFrameSection({ projectId, node, isCurrent, projectRootPath, section
       <div
         className={`${styles.nodeSectionHeader} ${isCurrent ? styles.nodeSectionHeaderCurrent : ''}`}
       >
-        {node.hierarchical_number && (
+        {displayIndex ? (
           <span className={`${styles.nodeNumber} ${isCurrent ? styles.nodeNumberCurrent : ''}`}>
-            {node.hierarchical_number}
+            {displayIndex}
           </span>
-        )}
+        ) : null}
         <span className={`${styles.nodeTitle} ${isCurrent ? styles.nodeTitleCurrent : ''}`}>
           {node.title}
         </span>

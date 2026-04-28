@@ -947,27 +947,35 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
 }
 
 .infoExtensionItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
+  width: 100%;
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 85%, var(--color-text-primary) 15%);
-  border-radius: 0;
-  background: color-mix(in srgb, var(--color-text-primary) 3.5%, var(--color-bg-panel));
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-panel);
   box-sizing: border-box;
+}
+
+.infoExtensionItem:last-child {
+  border-bottom: none;
 }
 
 .infoExtensionCopy {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -979,28 +987,29 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 }
 
 .infoExtensionName {
-  font-size: var(--font-size-sm);
+  font-size: 12px;
   font-weight: 700;
-  line-height: var(--line-height-ui);
+  line-height: 1.45;
   color: var(--color-text-primary);
 }
 
 .infoExtensionBadge {
   padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, var(--color-border-subtle));
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
+  border-radius: 999px;
+  background: transparent;
   font-size: 10px;
   font-weight: 700;
   line-height: 1.35;
-  color: color-mix(in srgb, var(--color-accent) 82%, var(--color-text-secondary));
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
 }
 
 .infoExtensionDescription {
   margin: 0;
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-relaxed);
-  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
 }
 
 .infoExtensionToggle,
@@ -2381,23 +2390,28 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-co
 .infoMcpPanel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  background: var(--surface-container-low);
+  background: var(--color-bg-panel);
+  box-shadow: 0 12px 36px color-mix(in srgb, #000000 8%, transparent);
 }
 
 .infoMcpHeaderRow {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .infoMcpRoleGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 18px 18px;
 }
 
 .infoMcpRoleBlock {
@@ -2405,18 +2419,21 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-co
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 86%, var(--color-text-primary) 14%);
+  padding: 0;
+  border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-lg);
-  background: var(--surface-container-lowest);
+  background: var(--color-bg-panel);
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .infoMcpRoleHeader {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .infoMcpMasterRow {
@@ -2429,17 +2446,21 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-co
 
 .infoMcpListHeading {
   margin: 0;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--on-surface);
-  letter-spacing: 0.02em;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
 }
 
 .infoMcpTitle {
   margin: 0;
-  font-size: var(--font-size-sm);
+  font-size: 12px;
   font-weight: 700;
-  color: var(--on-surface);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
 }
 
 .infoMcpSelect {
@@ -2485,22 +2506,4 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-co
 
 .infoMcpServerEnabled {
   background: color-mix(in srgb, var(--primary) 10%, var(--surface-container-lowest));
-}
-
-.infoMcpHashBox,
-.infoMcpRuntimeBox {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.infoMcpHashBox code {
-  max-width: 18rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
 }

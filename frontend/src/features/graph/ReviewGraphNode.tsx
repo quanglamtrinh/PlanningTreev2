@@ -2,12 +2,12 @@ import { memo } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { RollupStatus } from '../../api/types'
 import { useGraphNodeActions } from './graphNodeActionsContext'
+import { formatReviewChainLabel } from '../../utils/reviewSiblingLabels'
 import styles from './ReviewGraphNode.module.css'
 
 export type ReviewSiblingDisplay = {
   index: number
   title: string
-  letter: string
   status: 'completed' | 'active' | 'pending'
 }
 
@@ -86,7 +86,7 @@ function ReviewGraphNodeComponent({ data }: NodeProps) {
                   {s.status === 'completed' ? '\u2713' : s.status === 'active' ? '\u25CF' : '\u25CB'}
                 </span>
                 <span className={styles.siblingLabel}>
-                  {d.parentHierarchicalNumber}.{s.letter}
+                  {formatReviewChainLabel(d.parentHierarchicalNumber, s.index)}
                 </span>
                 <span className={styles.siblingTitle}>{s.title}</span>
               </div>

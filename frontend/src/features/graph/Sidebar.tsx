@@ -9,6 +9,7 @@ import { useCodexStore } from '../../stores/codex-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
 import { getCodexUsageLabels } from './usageLabels'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './Sidebar.module.css'
 
 function formatRelTime(isoString: string | null | undefined): string {
@@ -621,6 +622,7 @@ function NodeTreeItem({
   if (!node) return null
 
   const indentLeft = 10 + depth * 18
+  const displayIndex = formatNodeDisplayIndex(node)
 
   return (
     <div className={styles.treeItem}>
@@ -654,12 +656,17 @@ function NodeTreeItem({
           type="button"
           className={styles.nodeRowInner}
           onClick={() => onClickNode(node.node_id)}
-          title={`${node.hierarchical_number} - ${node.title}\nDouble-click to open breadcrumb`}
+          title={`${displayIndex ? `${displayIndex} - ` : ''}${node.title}\nDouble-click to open breadcrumb`}
         >
           <StatusDot status={node.status} />
           <span className={styles.nodeTitle}>
-            <span className={styles.nodeHNum}>{node.hierarchical_number}</span>
-            {' '}{node.title}
+            {displayIndex ? (
+              <>
+                <span className={styles.nodeHNum}>{displayIndex}</span>
+                {' '}
+              </>
+            ) : null}
+            {node.title}
           </span>
           {node.created_at && (
             <span className={styles.nodeTime}>{formatRelTime(node.created_at)}</span>

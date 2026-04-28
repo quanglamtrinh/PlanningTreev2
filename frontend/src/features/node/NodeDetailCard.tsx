@@ -10,6 +10,7 @@ import { ReviewDetailPanel } from './ReviewDetailPanel'
 import { BreadcrumbDetailTabs, breadcrumbActiveTabLabelId } from './BreadcrumbDetailTabs'
 import { WorkflowStepper } from './WorkflowStepper'
 import type { WorkflowTab } from './WorkflowStepper'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './NodeDetailCard.module.css'
 
 type DetailTab = WorkflowTab
@@ -47,22 +48,6 @@ function resolveRequestedDetailTab(
     return 'frame_updated'
   }
   return detailState?.active_step ?? 'frame'
-}
-
-function normalizeDetailNodeNumber(rawNumber: string | null | undefined, isInitNode: boolean): string | null {
-  const value = String(rawNumber ?? '').trim()
-  if (!value) {
-    return null
-  }
-  if (isInitNode) {
-    return value
-  }
-  const dotIndex = value.indexOf('.')
-  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
-    return value
-  }
-  const normalized = value.slice(dotIndex + 1).trim()
-  return normalized || null
 }
 
 const FRAME_POST_UPDATE_STORAGE = 'planningtree:framePostUpdate:'
@@ -227,8 +212,8 @@ export function NodeDetailCard({
   )
 
   const displayNodeNumber = useMemo(
-    () => (node ? normalizeDetailNodeNumber(node.hierarchical_number, node.is_init_node === true) : null),
-    [node?.hierarchical_number, node?.is_init_node],
+    () => formatNodeDisplayIndex(node),
+    [node?.hierarchical_number, node?.is_init_node, node?.node_kind],
   )
 
   if (state !== 'ready' || !node || !projectId) {
