@@ -54,6 +54,7 @@ export function WorkflowStepper({
   const frameConfirmed = detailState?.frame_confirmed ?? false
   const clarifyConfirmed = detailState?.clarify_confirmed ?? false
   const specConfirmed = detailState?.spec_confirmed ?? false
+  const splitConfirmed = detailState?.split_confirmed ?? false
   const frameBranchReady = detailState?.frame_branch_ready ?? false
   const frameUpdatedDone = frameBranchReady || detailState?.active_step === 'spec'
 
@@ -71,7 +72,7 @@ export function WorkflowStepper({
           : id === 'frame_updated'
             ? frameUpdatedDone
             : id === 'split'
-              ? false
+              ? splitConfirmed
             : id === 'spec'
               ? specConfirmed
               : false)
@@ -209,6 +210,7 @@ export function WorkflowStepper({
         title={splitDisabled ? 'Unavailable after choosing Create Spec from Frame updated' : undefined}
       >
         <span>Split</span>
+        {splitConfirmed ? <TickIcon /> : null}
       </button>
     </nav>
   )

@@ -672,7 +672,7 @@ describe('TranscriptPanel', () => {
     expect(screen.queryByText('commandExecution')).not.toBeInTheDocument()
   })
 
-  it('keeps final summaries out of reasoning summary and expands work timeline in original order', () => {
+  it('hides tool summary lines inside reasoning summary and expands timeline in original order', () => {
     const messageA: SessionItem = {
       id: 'item-msg-a',
       threadId: 'thread-1',
@@ -779,80 +779,22 @@ describe('TranscriptPanel', () => {
     expect(posFileSummary).toBeGreaterThan(posMessageC)
 
     fireEvent.click(reasoningSummaryToggle)
-    expect(screen.queryByText('Step A')).not.toBeInTheDocument()
-    expect(screen.queryByText('Step B')).not.toBeInTheDocument()
+    expect(screen.getByText('Step A')).toBeInTheDocument()
+    expect(screen.getByText('Step B')).toBeInTheDocument()
     expect(screen.getByText('Ran 2 commands')).toBeInTheDocument()
     expect(screen.getByText('Edited 1 file')).toBeInTheDocument()
 
     const expandedText = container.textContent ?? ''
+    const posExpandedStepA = expandedText.indexOf('Step A')
     const posExpandedRan = expandedText.indexOf('Ran 2 commands')
+    const posExpandedStepB = expandedText.indexOf('Step B')
     const posExpandedEdited = expandedText.indexOf('Edited 1 file')
     const posExpandedStepC = expandedText.indexOf('Step C')
-    expect(posExpandedRan).toBeGreaterThanOrEqual(0)
-    expect(posExpandedEdited).toBeGreaterThan(posExpandedRan)
+    expect(posExpandedStepA).toBeGreaterThanOrEqual(0)
+    expect(posExpandedRan).toBeGreaterThan(posExpandedStepA)
+    expect(posExpandedStepB).toBeGreaterThan(posExpandedRan)
+    expect(posExpandedEdited).toBeGreaterThan(posExpandedStepB)
     expect(posExpandedStepC).toBeGreaterThan(posExpandedEdited)
-  })
-
-  it('keeps duplicate terminal assistant summary outside expanded reasoning summary', () => {
-    const duplicateSummary: SessionItem = {
-      id: 'item-summary-duplicate',
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-      kind: 'agentMessage',
-      normalizedKind: 'agentMessage',
-      status: 'completed',
-      createdAtMs: 1,
-      updatedAtMs: 1,
-      payload: {
-        type: 'agentMessage',
-        text: 'Final conclusion summary',
-      },
-    }
-    const reasoning: SessionItem = {
-      id: 'item-reasoning',
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-      kind: 'reasoning',
-      normalizedKind: 'reasoning',
-      status: 'completed',
-      createdAtMs: 2,
-      updatedAtMs: 2,
-      payload: {
-        type: 'reasoning',
-        summary: ['Checked constraints'],
-        content: ['Compared options'],
-      },
-    }
-    const finalSummary: SessionItem = {
-      id: 'item-summary-final',
-      threadId: 'thread-1',
-      turnId: 'turn-1',
-      kind: 'agentMessage',
-      normalizedKind: 'agentMessage',
-      status: 'completed',
-      createdAtMs: 3,
-      updatedAtMs: 3,
-      payload: {
-        type: 'agentMessage',
-        text: 'Final conclusion summary',
-      },
-    }
-
-    const items = [duplicateSummary, reasoning, finalSummary]
-    const { container } = render(
-      <TranscriptPanel
-        threadId="thread-1"
-        turns={[baseTurn(items, 'completed')]}
-        itemsByTurn={{ 'thread-1:turn-1': items }}
-      />,
-    )
-
-    expect(screen.getByText('Final conclusion summary')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Reasoning summary/i }))
-    const expandedText = container.textContent ?? ''
-    expect(expandedText).toContain('Checked constraints')
-    expect(expandedText).toContain('Compared options')
-    expect(expandedText.match(/Final conclusion summary/g)).toHaveLength(1)
   })
 
   it('renders context compaction marker instead of raw tool payload', () => {

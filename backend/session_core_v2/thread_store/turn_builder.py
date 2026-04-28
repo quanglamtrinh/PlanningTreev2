@@ -203,7 +203,7 @@ class ThreadHistoryBuilder:
         if not isinstance(response_item, dict):
             response_item = {k: v for k, v in item.items() if k != "type"}
         turn_id = self._extract_turn_id(response_item)
-        self._append_item(turn_id=turn_id, item=response_item, thread_id=self._extract_thread_id(response_item), timestamp_ms=self._extract_timestamp_ms(response_item))
+        self._upsert_item(turn_id=turn_id, item=response_item, thread_id=self._extract_thread_id(response_item), timestamp_ms=self._extract_timestamp_ms(response_item))
 
     def _legacy_message_item(
         self,

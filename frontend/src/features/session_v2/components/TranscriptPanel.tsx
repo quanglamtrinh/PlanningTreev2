@@ -1317,10 +1317,6 @@ function buildTranscriptRows(visibleRows: VisibleTranscriptRow[]): TranscriptRow
           hiddenToolCluster.push(item)
           continue
         }
-        if (isAgentMessageItem(item)) {
-          flushHiddenToolCluster()
-          continue
-        }
         if (resolveRowVariant(item) !== 'user') {
           flushHiddenToolCluster()
           hiddenReasoningEntries.push({

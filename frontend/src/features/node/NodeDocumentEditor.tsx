@@ -54,6 +54,7 @@ type Props = {
   readOnly?: boolean
   /** Tracks spec vs split commitment after Frame updated (for mutual exclusivity). */
   framePostUpdateBranch?: FramePostUpdateBranch
+  splitConfirmed?: boolean
   onFramePostUpdateCommit?: (branch: 'spec' | 'split') => void
   /** Breadcrumb: replaces frame.md/spec.md label in the toolbar row */
   documentToolbarTabs?: ReactNode
@@ -68,6 +69,7 @@ export function NodeDocumentEditor({
   onConfirm,
   readOnly,
   framePostUpdateBranch = 'none',
+  splitConfirmed = false,
   onFramePostUpdateCommit,
   documentToolbarTabs,
 }: Props) {
@@ -134,8 +136,8 @@ export function NodeDocumentEditor({
   const isUpdatedFrameStep = kind === 'frame' && workflowTab === 'frame_updated'
   const isSpecStep = kind === 'spec'
 
-  const confirmAndSplitDisabled = framePostUpdateBranch === 'spec'
-  const confirmAndCreateSpecDisabled = framePostUpdateBranch === 'split'
+  const confirmAndSplitDisabled = framePostUpdateBranch === 'spec' || splitConfirmed
+  const confirmAndCreateSpecDisabled = framePostUpdateBranch === 'split' || splitConfirmed
 
   useEffect(() => {
     void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
@@ -842,9 +844,11 @@ export function NodeDocumentEditor({
                 data-testid="confirm-and-split-button"
                 onClick={handleConfirmAndSplit}
                 title={
-                  confirmAndSplitDisabled
-                    ? 'You already committed to Create Spec from Frame updated'
-                    : undefined
+                  splitConfirmed
+                    ? 'This node has already been split'
+                    : confirmAndSplitDisabled
+                      ? 'You already committed to Create Spec from Frame updated'
+                      : undefined
                 }
               >
                 Confirm and Split
@@ -856,9 +860,11 @@ export function NodeDocumentEditor({
                 data-testid="confirm-and-create-spec-button"
                 onClick={handleConfirmAndCreateSpec}
                 title={
-                  confirmAndCreateSpecDisabled
-                    ? 'You already committed to Split from Frame updated'
-                    : undefined
+                  splitConfirmed
+                    ? 'This node has already been split'
+                    : confirmAndCreateSpecDisabled
+                      ? 'You already committed to Split from Frame updated'
+                      : undefined
                 }
               >
                 Confirm and Create Spec

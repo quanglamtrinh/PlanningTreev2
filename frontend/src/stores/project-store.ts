@@ -544,15 +544,18 @@ export const useProjectStore = create<ProjectStoreState>((set, get) => {
           return
         }
 
+        if (previousStatus === 'active') {
+          await refreshSnapshot(targetProjectId)
+          if (get().activeProjectId !== targetProjectId) {
+            return
+          }
+        }
         set({
           splitStatus: 'idle',
           splitJobId: null,
           splitNodeId: null,
           splitMode: null,
         })
-        if (previousStatus === 'active') {
-          await refreshSnapshot(targetProjectId)
-        }
       } catch (error) {
         if (get().activeProjectId !== targetProjectId) {
           return

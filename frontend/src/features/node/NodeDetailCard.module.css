@@ -1859,6 +1859,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   margin-top: 8px;
 }
 
+.splitGeneratingBody {
+  min-height: 220px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+}
+
 .splitPanelIntro {
   display: flex;
   flex-direction: column;

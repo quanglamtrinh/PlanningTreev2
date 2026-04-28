@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
 import { buildChatV2Url } from '../conversation/surfaceRouting'
@@ -9,11 +9,18 @@ import { Sidebar } from './Sidebar'
 import { TreeGraph } from './TreeGraph'
 import styles from './GraphWorkspace.module.css'
 
+function revealSplitNodeIdFromLocationState(state: unknown): string | null {
+  if (!state || typeof state !== 'object' || !('revealSplitNodeId' in state)) {
+    return null
+  }
+  const value = state.revealSplitNodeId
+  return typeof value === 'string' ? value : null
+}
+
 export function GraphWorkspace() {
   const navigate = useNavigate()
-  const previousSplitStatusRef = useRef<'idle' | 'active' | 'failed'>('idle')
-  const lastSplitNodeIdRef = useRef<string | null>(null)
-
+  const location = useLocation()
+  const revealSplitNodeId = revealSplitNodeIdFromLocationState(location.state)
   const {
     initialize,
     resetProjectToRoot,
@@ -129,29 +136,6 @@ export function GraphWorkspace() {
     [navigate, selectNode],
   )
 
-  useEffect(() => {
-    if (splitStatus === 'active' && splitNodeId) {
-      lastSplitNodeIdRef.current = splitNodeId
-    }
-  }, [splitNodeId, splitStatus])
-
-  useEffect(() => {
-    const previousStatus = previousSplitStatusRef.current
-    previousSplitStatusRef.current = splitStatus
-
-    if (previousStatus !== 'active' || splitStatus !== 'idle') {
-      return
-    }
-
-    const completedSplitNodeId = lastSplitNodeIdRef.current
-    if (!completedSplitNodeId) {
-      return
-    }
-
-    lastSplitNodeIdRef.current = null
-    void openBreadcrumbForNode(completedSplitNodeId)
-  }, [openBreadcrumbForNode, splitStatus])
-
   async function handleOpenBreadcrumb(nodeId: string) {
     await openBreadcrumbForNode(nodeId)
   }
@@ -211,6 +195,7 @@ export function GraphWorkspace() {
               selectedNodeId={selectedNodeId}
               splitStatus={splitStatus}
               splittingNodeId={splitNodeId}
+              revealSplitNodeId={revealSplitNodeId}
               isCreatingNode={isCreatingNode}
               isResettingProject={isResettingProject}
               isResetDisabled={

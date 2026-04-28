@@ -424,6 +424,58 @@ def test_build_turns_from_rollout_items_dedupes_terminal_message_items_by_conten
     assert [item["type"] for item in turns[0]["items"]] == ["userMessage", "agentMessage"]
     assert [item["id"] for item in turns[0]["items"]] == ["terminal-user", "terminal-agent"]
 
+
+def test_build_turns_from_rollout_items_dedupes_response_item_against_semantic_message() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:1",
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"turnId": "turn-1"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "assistant/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"text": "Final summary"},
+                },
+            },
+            {
+                "type": "response_item",
+                "item": {
+                    "id": "response-final",
+                    "type": "agentMessage",
+                    "turnId": "turn-1",
+                    "threadId": "thread-1",
+                    "text": "Final summary",
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:3",
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                },
+            },
+        ]
+    )
+
+    assert [item["type"] for item in turns[0]["items"]] == ["agentMessage"]
+    assert turns[0]["items"][0]["id"] == "response-final"
+    assert turns[0]["items"][0]["text"] == "Final summary"
+
+
 def test_build_turns_from_rollout_items_terminal_before_started() -> None:
     turns = build_turns_from_rollout_items(
         [

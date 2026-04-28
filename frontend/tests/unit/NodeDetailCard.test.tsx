@@ -1615,6 +1615,62 @@ describe('NodeDetailCard', () => {
     })
   })
 
+  it('disables frame and split actions when the parent node has already been split', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 3,
+      frame_revision: 3,
+      active_step: 'frame',
+      workflow_notice: null,
+      generation_error: null,
+      frame_branch_ready: true,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+      split_confirmed: true,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Updated frame content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          review_node_id: 'review-1',
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: false,
+            split_confirmed: true,
+          },
+        })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Updated frame content')
+
+    expect(screen.getByTestId('confirm-and-split-button')).toBeDisabled()
+    expect(screen.getByTestId('confirm-and-create-spec-button')).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Spec' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Split' }))
+    expect(await screen.findByTestId('split-readiness-hint')).toHaveTextContent(
+      'This node has already been split.',
+    )
+    expect(screen.getByTestId('confirm-split-button')).toBeDisabled()
+  })
+
   it('shows both updated-frame actions when the frame-updated branch is ready', async () => {
     apiMock.getDetailState.mockResolvedValue({
       node_id: 'root',

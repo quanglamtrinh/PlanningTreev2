@@ -300,6 +300,21 @@ function isHydratedFallbackItemId(turnId: string, itemId: string): boolean {
   return itemId.startsWith(`${turnId}:item-`) || /^item-\d+$/.test(itemId)
 }
 
+function isSemanticMessageItem(item: SessionItem): boolean {
+  return item.normalizedKind === 'userMessage' || item.normalizedKind === 'agentMessage'
+}
+
+function findSemanticMessageMatchIndex(list: SessionItem[], item: SessionItem): number {
+  if (!isSemanticMessageItem(item)) {
+    return -1
+  }
+  const incomingSignature = payloadSignature(item)
+  if (!incomingSignature) {
+    return -1
+  }
+  return list.findIndex((entry) => isSemanticMessageItem(entry) && payloadSignature(entry) === incomingSignature)
+}
+
 function findHydratedFallbackMatchIndex(
   list: SessionItem[],
   turnId: string,
@@ -422,11 +437,13 @@ function upsertItem(
       status: method === 'item/completed' ? 'completed' : item.status,
     }
   } else {
-    const fallbackIndex = isDelta ? -1 : findHydratedFallbackMatchIndex(list, turnId, item)
-    if (fallbackIndex >= 0) {
-      const existing = list[fallbackIndex]
+    const semanticIndex = isDelta ? -1 : findSemanticMessageMatchIndex(list, item)
+    const fallbackIndex = semanticIndex >= 0 || isDelta ? -1 : findHydratedFallbackMatchIndex(list, turnId, item)
+    const mergeIndex = semanticIndex >= 0 ? semanticIndex : fallbackIndex
+    if (mergeIndex >= 0) {
+      const existing = list[mergeIndex]
       nextList = [...list]
-      nextList[fallbackIndex] = {
+      nextList[mergeIndex] = {
         ...existing,
         ...item,
         createdAtMs: existing.createdAtMs,

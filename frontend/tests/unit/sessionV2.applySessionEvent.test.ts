@@ -262,6 +262,85 @@ describe('applySessionEvent', () => {
     expect(list[0].payload.text).toBe('final')
   })
 
+  it('deduplicates final assistant summary materialized by multiple event sources', () => {
+    const semanticMessage = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:12',
+        eventSeq: 12,
+        method: 'assistant/message',
+        turnId: 'turn-1',
+        params: { text: 'Final summary' },
+      }),
+    )
+
+    const completedItem = applySessionEvent(
+      semanticMessage,
+      event({
+        eventId: 'thread-1:13',
+        eventSeq: 13,
+        method: 'item/completed',
+        turnId: 'turn-1',
+        params: {
+          item: {
+            id: 'response-output-1',
+            kind: 'agentMessage',
+            status: 'completed',
+            text: 'Final summary',
+          },
+        },
+      }),
+    )
+
+    const list = completedItem.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('response-output-1')
+    expect(list[0].normalizedKind).toBe('agentMessage')
+    expect(list[0].payload.text).toBe('Final summary')
+  })
+
+  it('deduplicates turn completion assistant items against existing semantic messages', () => {
+    const semanticMessage = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:14',
+        eventSeq: 14,
+        method: 'agent/message',
+        turnId: 'turn-1',
+        params: { text: 'Done from turn completion' },
+      }),
+    )
+
+    const completedTurn = applySessionEvent(
+      semanticMessage,
+      event({
+        eventId: 'thread-1:15',
+        eventSeq: 15,
+        method: 'turn/completed',
+        turnId: 'turn-1',
+        params: {
+          turn: {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              {
+                id: 'turn-final-message',
+                kind: 'agentMessage',
+                status: 'completed',
+                text: 'Done from turn completion',
+              },
+            ],
+          },
+        },
+      }),
+    )
+
+    const list = completedTurn.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('turn-final-message')
+    expect(list[0].payload.text).toBe('Done from turn completion')
+  })
+
   it('preserves unknown native item kind without coercing to agent message', () => {
     const next = applySessionEvent(
       baseState(),

@@ -165,6 +165,7 @@ def build_detail_state(
     clarify = _load_clarify_from_node_dir(node_dir)
     spec_meta = _load_spec_meta_from_node_dir(node_dir)
     workflow = derive_workflow_summary_from_artifacts(frame_meta, clarify, spec_meta)
+    split_confirmed = bool(str((node or {}).get("review_node_id") or "").strip())
 
     frame_conf_rev = frame_meta.get("confirmed_revision", 0)
     frame_rev = frame_meta.get("revision", 0)
@@ -230,6 +231,7 @@ def build_detail_state(
     shaping_frozen = bool(execution_fields["shaping_frozen"])
     workflow_summary = {
         **workflow,
+        "split_confirmed": split_confirmed,
         "execution_started": execution_fields["execution_started"],
         "execution_completed": execution_fields["execution_completed"],
         "shaping_frozen": shaping_frozen,
@@ -254,6 +256,7 @@ def build_detail_state(
         "spec_read_only": shaping_frozen or active_step != "spec" or frame_branch_ready,
         "spec_stale": spec_stale,
         "spec_confirmed": workflow["spec_confirmed"],
+        "split_confirmed": split_confirmed,
         "initial_sha": effective_initial_sha,
         "head_sha": effective_head_sha,
         "commit_message": effective_commit_message,
@@ -308,6 +311,7 @@ def build_review_detail_state(
         "spec_read_only": True,
         "spec_stale": False,
         "spec_confirmed": False,
+        "split_confirmed": False,
         "initial_sha": None,
         "head_sha": None,
         "commit_message": None,

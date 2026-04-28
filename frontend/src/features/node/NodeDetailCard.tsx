@@ -156,8 +156,23 @@ export function NodeDetailCard({
     }
   }, [detailState?.active_step, detailState?.frame_branch_ready, framePostUpdateBranch])
 
+  const splitConfirmed =
+    detailState?.split_confirmed === true ||
+    node?.workflow?.split_confirmed === true ||
+    Boolean(node?.review_node_id)
+  const effectiveDetailState = useMemo(() => {
+    if (!detailState || !splitConfirmed || detailState.split_confirmed === true) {
+      return detailState
+    }
+    return {
+      ...detailState,
+      split_confirmed: true,
+      workflow: detailState.workflow ? { ...detailState.workflow, split_confirmed: true } : null,
+    }
+  }, [detailState, splitConfirmed])
+
   const splitTabBlocked = framePostUpdateBranch === 'spec'
-  const specTabBlocked = framePostUpdateBranch === 'split'
+  const specTabBlocked = framePostUpdateBranch === 'split' || splitConfirmed
 
   const commitFramePostUpdate = useCallback(
     (branch: 'spec' | 'split') => {
@@ -246,7 +261,7 @@ export function NodeDetailCard({
       <BreadcrumbDetailTabs
         embedded
         detailTab={detailTab}
-        detailState={detailState}
+        detailState={effectiveDetailState}
         onTabChange={handleTabChange}
         tabDisabled={workflowTabDisabled}
         panelId={breadcrumbPanelId}
@@ -262,7 +277,7 @@ export function NodeDetailCard({
               <NodeDescribePanel
                 node={node}
                 projectId={projectId}
-                detailState={detailState}
+                detailState={effectiveDetailState}
                 isResetting={isResettingWorkspace}
                 onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
                 onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
@@ -274,7 +289,7 @@ export function NodeDetailCard({
             <NodeDescribePanel
               node={node}
               projectId={projectId}
-              detailState={detailState}
+              detailState={effectiveDetailState}
               isResetting={isResettingWorkspace}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
@@ -292,8 +307,9 @@ export function NodeDetailCard({
             workflowTab={detailTab}
             onWorkflowTabChange={handleTabChange}
             onConfirm="workflow"
-            readOnly={detailState?.frame_read_only}
+            readOnly={effectiveDetailState?.frame_read_only}
             framePostUpdateBranch={framePostUpdateBranch}
+            splitConfirmed={splitConfirmed}
             onFramePostUpdateCommit={commitFramePostUpdate}
             documentToolbarTabs={breadcrumbTabsEmbedded ?? undefined}
           />
@@ -306,14 +322,14 @@ export function NodeDetailCard({
             <ClarifyPanel
               projectId={projectId}
               node={node}
-              readOnly={detailState?.clarify_read_only}
+              readOnly={effectiveDetailState?.clarify_read_only}
             />
           </BreadcrumbNonDocToolbar>
         ) : (
           <ClarifyPanel
             projectId={projectId}
             node={node}
-            readOnly={detailState?.clarify_read_only}
+            readOnly={effectiveDetailState?.clarify_read_only}
           />
         )
       ) : null}
@@ -322,19 +338,19 @@ export function NodeDetailCard({
         breadcrumbTabsEmbedded ? (
           <BreadcrumbNonDocToolbar tabs={breadcrumbTabsEmbedded}>
             <div className={styles.cardBodyAux}>
-              <SplitPanel projectId={projectId} node={node} detailState={detailState} />
+              <SplitPanel projectId={projectId} node={node} detailState={effectiveDetailState} />
             </div>
           </BreadcrumbNonDocToolbar>
         ) : (
           <div className={styles.cardBodyAux}>
-            <SplitPanel projectId={projectId} node={node} detailState={detailState} />
+            <SplitPanel projectId={projectId} node={node} detailState={effectiveDetailState} />
           </div>
         )
       ) : null}
 
       {detailTab === 'spec' ? (
         <div className={styles.documentTabStack}>
-          {detailState?.spec_stale ? (
+          {effectiveDetailState?.spec_stale ? (
             <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
               Frame was updated since spec was last reviewed.
             </div>
@@ -345,7 +361,7 @@ export function NodeDetailCard({
             kind="spec"
             workflowTab="spec"
             onConfirm="workflow"
-            readOnly={detailState?.spec_read_only}
+            readOnly={effectiveDetailState?.spec_read_only}
             documentToolbarTabs={breadcrumbTabsEmbedded ?? undefined}
           />
         </div>
@@ -386,7 +402,7 @@ export function NodeDetailCard({
           <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
             <WorkflowStepper
               detailTab={detailTab}
-              detailState={detailState}
+              detailState={effectiveDetailState}
               onTabChange={handleTabChange}
               tabDisabled={workflowTabDisabled}
               readOnly={variant === 'breadcrumb'}
@@ -441,7 +457,7 @@ export function NodeDetailCard({
             <NodeDescribePanel
               node={node}
               projectId={projectId}
-              detailState={detailState}
+              detailState={effectiveDetailState}
               isResetting={isResettingWorkspace}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}

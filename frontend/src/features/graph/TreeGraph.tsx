@@ -151,6 +151,7 @@ type Props = {
   selectedNodeId: string | null
   splitStatus: SplitJobStatus
   splittingNodeId: string | null
+  revealSplitNodeId?: string | null
   isCreatingNode: boolean
   isResettingProject: boolean
   isResetDisabled: boolean
@@ -228,6 +229,7 @@ export function TreeGraph({
   selectedNodeId,
   splitStatus,
   splittingNodeId,
+  revealSplitNodeId = null,
   isCreatingNode: _isCreatingNode,
   isResettingProject,
   isResetDisabled,
@@ -258,6 +260,9 @@ export function TreeGraph({
   const graphViewRootUnsetFitPendingRef = useRef(false)
   /** While `performance.now()` is below this, skip full-graph fitView (after closing details). */
   const suppressFullGraphFitUntilRef = useRef(0)
+  const previousSplitStatusRef = useRef<SplitJobStatus>(splitStatus)
+  const lastSplitNodeIdRef = useRef<string | null>(splittingNodeId)
+  const lastRevealedSplitNodeIdRef = useRef<string | null>(null)
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -571,6 +576,62 @@ export function TreeGraph({
       setFocusedNodeId(null)
     }
   }, [focusedNodeId, nodeById])
+
+  useEffect(() => {
+    if (splitStatus === 'active' && splittingNodeId) {
+      lastSplitNodeIdRef.current = splittingNodeId
+    }
+  }, [splittingNodeId, splitStatus])
+
+  useEffect(() => {
+    if (!revealSplitNodeId || lastRevealedSplitNodeIdRef.current === revealSplitNodeId) {
+      return
+    }
+    lastRevealedSplitNodeIdRef.current = revealSplitNodeId
+    setGraphViewRootId(null)
+    graphViewRootUnsetFitPendingRef.current = true
+    setFocusedNodeId(null)
+    setCreateTaskParentId(null)
+    setCreateTaskError(null)
+    setCollapseOverrides((current) =>
+      current[revealSplitNodeId] === false ? current : { ...current, [revealSplitNodeId]: false },
+    )
+    suppressFullGraphFitUntilRef.current = 0
+  }, [revealSplitNodeId])
+
+  useEffect(() => {
+    const previousStatus = previousSplitStatusRef.current
+    previousSplitStatusRef.current = splitStatus
+
+    if (previousStatus !== 'active') {
+      return
+    }
+
+    if (splitStatus === 'idle') {
+      const completedSplitNodeId = lastSplitNodeIdRef.current
+      lastSplitNodeIdRef.current = null
+      if (!completedSplitNodeId) {
+        return
+      }
+
+      setCreateTaskParentId(null)
+      setCreateTaskError(null)
+      setGraphViewRootId(null)
+      graphViewRootUnsetFitPendingRef.current = true
+      setFocusedNodeId(null)
+      setCollapseOverrides((current) =>
+        current[completedSplitNodeId] === false
+          ? current
+          : { ...current, [completedSplitNodeId]: false },
+      )
+      suppressFullGraphFitUntilRef.current = 0
+      return
+    }
+
+    if (splitStatus === 'failed') {
+      lastSplitNodeIdRef.current = null
+    }
+  }, [splitStatus])
 
   useEffect(() => {
     if (!isFullscreen) {

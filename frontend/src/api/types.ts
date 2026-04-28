@@ -161,6 +161,7 @@ export interface NodeWorkflowSummary {
   frame_confirmed: boolean
   active_step: WorkflowStep
   spec_confirmed: boolean
+  split_confirmed?: boolean
   execution_started?: boolean
   execution_completed?: boolean
   shaping_frozen?: boolean
@@ -235,6 +236,7 @@ export interface DetailState {
   spec_read_only: boolean
   spec_stale: boolean
   spec_confirmed: boolean
+  split_confirmed?: boolean
   execution_started?: boolean
   execution_completed?: boolean
   shaping_frozen?: boolean
