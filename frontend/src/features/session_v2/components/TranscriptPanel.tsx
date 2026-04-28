@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { DocumentRichViewPanel } from '../../markdown/DocumentRichView'
+import { DocumentRichViewContent } from '../../markdown/DocumentRichView'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import { isItemKind } from '../contracts'
 import type { ItemKind, SessionItem, SessionTurn, VisibleTranscriptRow } from '../contracts'
@@ -746,10 +746,11 @@ function ArtifactDocumentSection({ title, content }: { title: string; content: s
   }
   return (
     <section className="sessionV2WorkflowContextDocument">
-      <DocumentRichViewPanel
+      <h5 className="sessionV2WorkflowContextDocumentTitle">{title}</h5>
+      <DocumentRichViewContent
         content={content}
-        fileLabel={title}
         testId={`workflow-context-document-${title}`}
+        className="sessionV2WorkflowContextRichView"
       />
     </section>
   )
@@ -811,17 +812,6 @@ function WorkflowContextNodeSection({
   )
 }
 
-function workflowContextCardSummary(ancestorCount: number, currentContext: Record<string, unknown> | null): string {
-  const parts: string[] = []
-  if (ancestorCount > 0) {
-    parts.push(`${ancestorCount} parent${ancestorCount === 1 ? '' : 's'}`)
-  }
-  if (currentContext) {
-    parts.push(nodeTitle(currentContext.node))
-  }
-  return parts.join(' · ') || 'workflow'
-}
-
 export function WorkflowContextCard({ item, sticky = false }: { item: SessionItem; sticky?: boolean }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const contextPayload = workflowContextPayload(item)
@@ -832,9 +822,6 @@ export function WorkflowContextCard({ item, sticky = false }: { item: SessionIte
   const currentContext = isRecord(artifactContext.currentContext)
     ? artifactContext.currentContext
     : null
-  const metadata = workflowContextMetadata(item)
-  const packetKind = normalizeText(metadata.packetKind)
-
   if (!contextPayload) {
     return null
   }
@@ -857,14 +844,6 @@ export function WorkflowContextCard({ item, sticky = false }: { item: SessionIte
         onClick={() => setIsExpanded((value) => !value)}
       >
         <span className="sessionV2WorkflowContextTitle">Context</span>
-        <span className="sessionV2WorkflowContextSummary">{workflowContextCardSummary(ancestorContext.length, currentContext)}</span>
-        <small>{packetKind || 'workflow'}</small>
-        <span
-          className={`sessionV2WorkflowContextChevron ${isExpanded ? 'sessionV2WorkflowContextChevronOpen' : ''}`}
-          aria-hidden
-        >
-          &gt;
-        </span>
       </button>
       {isExpanded ? (
         <div className="sessionV2WorkflowContextBody">
@@ -1553,16 +1532,11 @@ export function TranscriptPanel({
     return (
       <section className="sessionV2Transcript" ref={transcriptRef}>
         {contextItem ? <WorkflowContextCard item={contextItem} sticky /> : null}
-        <div className="sessionV2Empty">No active thread</div>
       </section>
     )
   }
   if (rows.length === 0 && !contextItem) {
-    return (
-      <section className="sessionV2Transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
-        <div className="sessionV2Empty">No messages yet.</div>
-      </section>
-    )
+    return <section className="sessionV2Transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} />
   }
 
   return (

@@ -166,7 +166,7 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getAllByTestId('workflow-context-document-frame.md').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByTestId('workflow-context-document-spec.md').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Rich View').length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByText('Rich View')).not.toBeInTheDocument()
     expect(screen.getByText('Current spec content')).toBeInTheDocument()
     expect(container.textContent).not.toContain('<planning_tree_context>')
     expect(screen.queryByText('Unknown Codex item')).not.toBeInTheDocument()

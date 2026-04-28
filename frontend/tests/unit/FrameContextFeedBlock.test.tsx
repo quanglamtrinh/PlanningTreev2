@@ -138,11 +138,7 @@ describe('FrameContextFeedBlock', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clarify' }))
     await waitFor(() => {
-      expect(
-        screen.getByText(/^1\.\s*What auth provider\?$/i, {
-          selector: 'span',
-        }),
-      ).toBeInTheDocument()
+      expect(screen.getByText(/^1\.\s*What auth provider\?$/i)).toBeInTheDocument()
     })
 
     await waitFor(() => {

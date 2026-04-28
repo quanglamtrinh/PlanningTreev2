@@ -952,10 +952,8 @@
   width: 100%;
   border: none;
   background: transparent;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  display: flex;
   align-items: center;
-  gap: 8px;
   padding: 9px 12px;
   color: var(--session-v2-fg-muted);
   cursor: pointer;
@@ -966,22 +964,6 @@
   font-size: 12px;
   font-weight: 700;
   color: var(--session-v2-fg);
-}
-
-:global(.sessionV2WorkflowContextSummary) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-:global(.sessionV2WorkflowContextChevron) {
-  transition: transform 120ms ease;
-}
-
-:global(.sessionV2WorkflowContextChevronOpen) {
-  transform: rotate(90deg);
 }
 
 :global(.sessionV2WorkflowContextBody) {
@@ -1006,23 +988,37 @@
 }
 
 :global(.sessionV2WorkflowContextNode h4 span) {
-  border: 1px solid var(--session-v2-border);
-  border-radius: 999px;
-  padding: 1px 6px;
+  padding: 0;
   font-size: 10px;
   font-weight: 600;
   color: var(--session-v2-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 :global(.sessionV2WorkflowContextDocument) {
+  display: grid;
+  gap: 6px;
   min-width: 0;
 }
 
+:global(.sessionV2WorkflowContextDocumentTitle) {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--session-v2-fg-muted);
+}
+
+:global(.sessionV2WorkflowContextRichView) {
+  padding-right: 0;
+}
+
 :global(.sessionV2WorkflowContextSection) {
-  border: 1px solid var(--session-v2-border);
-  border-radius: 10px;
-  padding: 9px 10px;
-  background: var(--session-v2-surface-subtle);
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
 }
 
 :global(.sessionV2WorkflowContextSection h5) {
@@ -1047,14 +1043,6 @@
 
 :global(.sessionV2WorkflowContextSection li span) {
   display: block;
-  color: var(--session-v2-fg-muted);
-}
-
-:global(.sessionV2Empty) {
-  padding: 20px;
-  border: 1px dashed color-mix(in srgb, var(--session-v2-fg) 18%, transparent);
-  border-radius: 10px;
-  font-size: 13px;
   color: var(--session-v2-fg-muted);
 }
 

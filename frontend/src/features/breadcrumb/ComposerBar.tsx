@@ -167,7 +167,7 @@ export function ComposerBar({ onSend, disabled, earlyResponsePhase = 'idle' }: C
           <textarea
             ref={textareaRef}
             className={styles.input}
-            placeholder="Send a message..."
+            placeholder="Send a message"
             value={text}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
