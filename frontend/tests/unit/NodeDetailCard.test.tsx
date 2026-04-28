@@ -1757,6 +1757,14 @@ describe('NodeDetailCard', () => {
       'This node has already been split.',
     )
     expect(screen.getByTestId('confirm-split-button')).toBeDisabled()
+    expect(screen.getByTestId('split-option-agent_breakdown')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('split-option-info-agent_breakdown'))
+
+    expect(await screen.findByRole('dialog', { name: 'Agent Breakdown' })).toBeInTheDocument()
+    expect(screen.getByText('Original task')).toBeInTheDocument()
+    expect(screen.getByText(/Prepare the avatar storage foundation/i)).toBeInTheDocument()
+    expect(screen.getByText(/multiple technical parts and dependencies/i)).toBeInTheDocument()
   })
 
   it('shows both updated-frame actions when the frame-updated branch is ready', async () => {
