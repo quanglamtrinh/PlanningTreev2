@@ -66,6 +66,47 @@ function SidebarCollapsibleTab({
   )
 }
 
+function SidebarNavItem({
+  label,
+  active,
+  onClick,
+  title,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+  title: string
+}) {
+  return (
+    <div className={`${styles.extensionsNavGroup} ${active ? styles.extensionsNavGroupActive : ''}`}>
+      <button
+        type="button"
+        className={styles.extensionsNavButton}
+        onClick={onClick}
+        aria-current={active ? 'page' : undefined}
+        aria-label={title}
+        title={title}
+      >
+        <span className={styles.extensionsNavLabel}>{label}</span>
+        <svg
+          className={styles.extensionsNavChevron}
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 function StatusDot({ status }: { status: string }) {
   const cls = status.replace(/[^a-z]/g, '')
   return <span className={`${styles.dot} ${styles[`dot_${cls}` as keyof typeof styles]}`} />
@@ -76,10 +117,12 @@ export function Sidebar() {
   const location = useLocation()
   const usageSnapshotRoute = '/usage-snapshot'
   const extensionsRoute = '/extensions'
+  const skillsRoute = '/skills'
   const usageSnapshotLabel = 'Usage Snapshot'
   const usageSnapshotTitle = 'Open Usage Snapshot'
   const isUsageSnapshotRoute = location.pathname === usageSnapshotRoute
   const isExtensionsRoute = location.pathname === extensionsRoute
+  const isSkillsRoute = location.pathname === skillsRoute
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isProjectsPanelExpanded, setIsProjectsPanelExpanded] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -350,31 +393,18 @@ export function Sidebar() {
         </div>
 
         <div className={styles.extensionsSection}>
-          <div className={`${styles.extensionsNavGroup} ${isExtensionsRoute ? styles.extensionsNavGroupActive : ''}`}>
-            <button
-              type="button"
-              className={styles.extensionsNavButton}
-              onClick={() => navigate(extensionsRoute)}
-              aria-current={isExtensionsRoute ? 'page' : undefined}
-              title="Open extensions page"
-            >
-              <span className={styles.extensionsNavLabel}>Extensions</span>
-              <svg
-                className={styles.extensionsNavChevron}
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            </button>
-          </div>
+          <SidebarNavItem
+            label="Extensions"
+            active={isExtensionsRoute}
+            onClick={() => navigate(extensionsRoute)}
+            title="Open extensions page"
+          />
+          <SidebarNavItem
+            label="Skills"
+            active={isSkillsRoute}
+            onClick={() => navigate(skillsRoute)}
+            title="Open skills page"
+          />
         </div>
       </div>
 

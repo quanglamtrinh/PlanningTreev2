@@ -1376,9 +1376,8 @@ describe('NodeDetailCard', () => {
       expect(finishButton).toBeDisabled()
     })
     expect(finishButton).toHaveTextContent('Confirm and Finish Task')
-    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
-      'Finish Task was already confirmed for this run.',
-    )
+    expect(screen.queryByTestId('finish-task-disabled-hint')).not.toBeInTheDocument()
+    expect(finishButton).toHaveAttribute('title', 'Finish Task was already confirmed for this run.')
   })
 
   it('does not refetch spec generation status on a stable rerender', async () => {
@@ -1520,7 +1519,9 @@ describe('NodeDetailCard', () => {
     await screen.findByDisplayValue('# Spec content')
     expect(screen.getByText('Workspace has uncommitted changes.')).toBeInTheDocument()
     expect(screen.getByTestId('confirm-and-finish-task-button')).toBeDisabled()
-    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
+    expect(screen.queryByTestId('finish-task-disabled-hint')).not.toBeInTheDocument()
+    expect(screen.getByTestId('confirm-and-finish-task-button')).toHaveAttribute(
+      'title',
       'Finish Task is disabled. Resolve Git blocker to continue.',
     )
   })

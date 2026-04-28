@@ -17,7 +17,7 @@ import {
   primeAndSelectWorkflowTurn,
 } from '../session_v2/facade/workflowLiveTurnBridge'
 import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
-import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
+import { DocumentRichViewContent } from '../markdown/DocumentRichView'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import styles from './NodeDetailCard.module.css'
@@ -774,17 +774,11 @@ export function NodeDocumentEditor({
           ) : (
             <>
               {isRichView ? (
-                <div className={styles.richViewSurface} data-testid={`document-rich-view-${kind}`}>
-                  {entry.content.trim() ? (
-                    <SharedMarkdownRenderer
-                      content={entry.content}
-                      projectRootPath={projectRootPath}
-                      variant="document"
-                    />
-                  ) : (
-                    <p className={styles.richViewEmpty}>No content yet.</p>
-                  )}
-                </div>
+                <DocumentRichViewContent
+                  content={entry.content}
+                  projectRootPath={projectRootPath}
+                  testId={`document-rich-view-${kind}`}
+                />
               ) : (
                 <CodeMirror
                   className={styles.codemirrorHost}
@@ -897,11 +891,6 @@ export function NodeDocumentEditor({
                 >
                   {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
                 </button>
-                {isFinishTaskDisabled && finishTaskDisabledHint ? (
-                  <p className={styles.finishTaskDisabledHint} role="status" data-testid="finish-task-disabled-hint">
-                    {finishTaskDisabledHint}
-                  </p>
-                ) : null}
               </div>
             </>
           ) : null}

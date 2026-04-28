@@ -11,7 +11,7 @@ import {
   primeAndSelectWorkflowTurn,
 } from '../session_v2/facade/workflowLiveTurnBridge'
 import { useThreadSessionStore } from '../session_v2/store/threadSessionStore'
-import type { SessionItem } from '../session_v2/contracts'
+import type { SessionItem, SessionTurn } from '../session_v2/contracts'
 import { getWorkflowContextV2, type WorkflowContextPacketV2 } from '../workflow_v2/api/client'
 import { useWorkflowEventBridgeV2 } from '../workflow_v2/hooks/useWorkflowEventBridgeV2'
 import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
@@ -117,6 +117,60 @@ function emitSessionCorrelation(payload: Record<string, unknown>): void {
   }
   console.info('[session-v2-path] correlation', payload)
   window.dispatchEvent(new CustomEvent('session-v2-correlation', { detail: payload }))
+}
+
+const WORKFLOW_GENERATED_TURN_TOKENS = new Set([
+  'frame',
+  'generate_frame',
+  'regenerate_frame',
+  'spec',
+  'generate_spec',
+  'regenerate_spec',
+  'clarify',
+  'generate_clarify',
+  'regenerate_clarify',
+  'split',
+  'generate_split',
+  'regenerate_split',
+  'execute',
+  'execution',
+  'start_execution',
+  'improve_execution',
+  'review',
+  'audit',
+  'start_audit',
+  'review_in_audit',
+])
+
+function normalizeWorkflowTurnToken(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase().replace(/[\s-]+/g, '_') : ''
+}
+
+function workflowTurnMetadataToken(metadata: Record<string, unknown>, key: string): string {
+  return normalizeWorkflowTurnToken(metadata[key])
+}
+
+function isWorkflowGeneratedTurn(turn: SessionTurn | null): boolean {
+  if (!turn?.metadata || typeof turn.metadata !== 'object') {
+    return false
+  }
+  const metadata = turn.metadata
+  if (metadata.primedByWorkflowAction === true || metadata.workflowInternal === true) {
+    return true
+  }
+  const tokens = [
+    workflowTurnMetadataToken(metadata, 'workflowKind'),
+    workflowTurnMetadataToken(metadata, 'workflowInternalKind'),
+    workflowTurnMetadataToken(metadata, 'workflowAction'),
+    workflowTurnMetadataToken(metadata, 'action'),
+    workflowTurnMetadataToken(metadata, 'operation'),
+    workflowTurnMetadataToken(metadata, 'artifactKind'),
+    workflowTurnMetadataToken(metadata, 'phase'),
+    workflowTurnMetadataToken(metadata, 'step'),
+    workflowTurnMetadataToken(metadata, 'lane'),
+    workflowTurnMetadataToken(metadata, 'targetLane'),
+  ]
+  return tokens.some((token) => WORKFLOW_GENERATED_TURN_TOKENS.has(token))
 }
 
 export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationControllerV2 {
@@ -831,8 +885,19 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     return Boolean(activeThreadId) && sessionState.activeThreadId === activeThreadId
   }, [activeThreadId, sessionState.activeThreadId])
 
+  const activeWorkflowGeneratedTurn = useMemo(
+    () => isWorkflowGeneratedTurn(sessionState.activeRunningTurn),
+    [sessionState.activeRunningTurn],
+  )
+
   const composerDisabled = useMemo(() => {
+    if (activeWorkflowGeneratedTurn || activeMutation !== null) {
+      return true
+    }
     if (!workflowLane.policy.canSubmit) {
+      return true
+    }
+    if (activeThreadId && (sessionState.isSelectingThread || !sessionState.isActiveThreadReady)) {
       return true
     }
     if (workflowLane.lane === 'ask') {
@@ -852,7 +917,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     }
     return sessionState.connection.phase === 'error'
   }, [
+    activeMutation,
     activeThreadId,
+    activeWorkflowGeneratedTurn,
     isLaneThreadSelected,
     sessionState.connection.phase,
     sessionState.isActiveThreadReady,

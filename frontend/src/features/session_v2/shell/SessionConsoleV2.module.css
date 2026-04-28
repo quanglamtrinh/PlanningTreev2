@@ -1014,6 +1014,10 @@
   color: var(--session-v2-fg-muted);
 }
 
+:global(.sessionV2WorkflowContextDocument) {
+  min-width: 0;
+}
+
 :global(.sessionV2WorkflowContextSection) {
   border: 1px solid var(--session-v2-border);
   border-radius: 10px;

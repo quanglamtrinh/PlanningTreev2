@@ -1837,16 +1837,6 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
-.finishTaskDisabledHint {
-  margin: 0;
-  max-width: 360px;
-  text-align: right;
-  font-size: 11px;
-  line-height: 1.4;
-  font-weight: 500;
-  color: color-mix(in srgb, var(--warning) 66%, var(--color-text-secondary));
-}
-
 .splitPanel {
   display: flex;
   flex-direction: column;

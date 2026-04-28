@@ -11,8 +11,8 @@ class FakeMcpManager:
         self.calls.append({"method": "refresh", "threadId": thread_id, "payload": dict(payload)})
         return {"refreshed": True}
 
-    def mcp_server_status_list(self, payload: dict) -> dict:
-        self.calls.append({"method": "status", "payload": dict(payload)})
+    def mcp_server_status_list(self, *, thread_id: str, payload: dict) -> dict:
+        self.calls.append({"method": "status", "threadId": thread_id, "payload": dict(payload)})
         return {"servers": []}
 
     def mcp_resource_read(self, *, thread_id: str, payload: dict) -> dict:
@@ -86,7 +86,7 @@ def test_mcp_runtime_routes_proxy_payloads(client: TestClient) -> None:
             "threadId": "thread-1",
             "payload": {"mcpContext": {"projectId": "project-1", "nodeId": "node-1", "role": "execution"}},
         },
-        {"method": "status", "payload": {"cursor": "abc", "limit": 10, "detail": "full"}},
+        {"method": "status", "threadId": "thread-1", "payload": {"cursor": "abc", "limit": 10, "detail": "full"}},
         {"method": "resource", "threadId": "thread-1", "payload": {"server": "fs", "uri": "file:///tmp/a.txt"}},
         {"method": "oauth", "payload": {"name": "remote", "scopes": ["read"], "timeoutSecs": 5}},
     ]

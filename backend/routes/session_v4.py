@@ -718,7 +718,6 @@ def session_mcp_status_v4(
     detail: str | None = Query(default=None),
 ) -> JSONResponse:
     try:
-        del threadId
         payload: dict[str, Any] = {}
         if cursor is not None:
             payload["cursor"] = cursor
@@ -726,7 +725,7 @@ def session_mcp_status_v4(
             payload["limit"] = limit
         if detail is not None:
             payload["detail"] = detail
-        response = _manager(request).mcp_server_status_list(payload)
+        response = _manager(request).mcp_server_status_list(thread_id=threadId, payload=payload)
         return JSONResponse(status_code=200, content=_ok(response))
     except SessionCoreError as exc:
         return _error_response(exc)

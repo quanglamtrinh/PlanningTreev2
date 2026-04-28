@@ -669,7 +669,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
   })
 
-  it('selectThread skips re-read from server when transcript is still present in store', async () => {
+  it('selectThread always re-reads from server so selected thread transcript stays current', async () => {
     const turn = makeTurn({
       id: 'turn-from-read',
       threadId: 'thread-1',
@@ -687,7 +687,7 @@ describe('sessionRuntimeController', () => {
     harness.api.readThread.mockClear()
 
     await harness.controller.selectThread('thread-1')
-    expect(harness.api.readThread).not.toHaveBeenCalled()
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
   })
 
   it('selectThread(null) clears active selection without clearing metadata', async () => {

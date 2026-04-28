@@ -6,10 +6,12 @@ const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
 
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
+    isTurnRunning,
     disabled,
     onSubmit,
     onInterrupt,
   }: {
+    isTurnRunning?: boolean
     disabled?: boolean
     onSubmit: (payload: {
       input: Array<Record<string, unknown>>
@@ -23,7 +25,11 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
     }) => Promise<void>
     onInterrupt: () => Promise<void>
   }) => (
-    <div data-testid="composer-pane" data-disabled={String(Boolean(disabled))}>
+    <div
+      data-testid="composer-pane"
+      data-disabled={String(Boolean(disabled))}
+      data-running={String(Boolean(isTurnRunning))}
+    >
       <button
         type="button"
         data-testid="composer-submit-mock"
@@ -262,6 +268,20 @@ function makeThread(id: string): SessionThread {
     updatedAt: 1,
     turns: [],
     model: 'gpt-5',
+  }
+}
+
+function makeRunningTurn(metadata: Record<string, unknown> = {}): SessionTurn {
+  return {
+    id: 'turn-running',
+    threadId: 'ask-thread-1',
+    status: 'inProgress',
+    lastCodexStatus: 'inProgress',
+    startedAtMs: 1,
+    completedAtMs: null,
+    items: [],
+    error: null,
+    metadata,
   }
 }
 
@@ -670,6 +690,40 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
   })
 
+  it.each([
+    ['frame', { workflowInternal: true, artifactKind: 'frame' }],
+    ['spec', { workflowKind: 'generate_spec' }],
+    ['clarify', { workflowAction: 'generate_clarify' }],
+    ['split', { step: 'split' }],
+    ['execute', { primedByWorkflowAction: true, targetLane: 'execution' }],
+    ['review', { action: 'review_in_audit' }],
+  ])('disables composer instead of exposing steer while %s workflow turn is running', (_label, metadata) => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        threads: { askPlanning: 'ask-thread-1' },
+      }),
+    })
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'ask-thread-1',
+        activeThread: makeThread('ask-thread-1'),
+        activeRunningTurn: makeRunningTurn(metadata),
+        isActiveThreadReady: true,
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-running', 'true')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+  })
+
   it('submits ask lane via facade command and refreshes workflow state', async () => {
     const facade = makeFacade({
       activeThreadId: 'ask-thread-1',
@@ -706,6 +760,7 @@ describe('BreadcrumbViewV2', () => {
           effort: 'xhigh',
           summary: null,
         }),
+        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'ask_planning' } },
       )
     })
     await waitFor(() => {

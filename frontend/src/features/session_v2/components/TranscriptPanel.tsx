@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { DocumentRichViewPanel } from '../../markdown/DocumentRichView'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import { isItemKind } from '../contracts'
 import type { ItemKind, SessionItem, SessionTurn, VisibleTranscriptRow } from '../contracts'
@@ -744,9 +745,12 @@ function ArtifactDocumentSection({ title, content }: { title: string; content: s
     return null
   }
   return (
-    <section className="sessionV2WorkflowContextSection">
-      <h5>{title}</h5>
-      <SharedMarkdownRenderer content={content} variant="document" />
+    <section className="sessionV2WorkflowContextDocument">
+      <DocumentRichViewPanel
+        content={content}
+        fileLabel={title}
+        testId={`workflow-context-document-${title}`}
+      />
     </section>
   )
 }

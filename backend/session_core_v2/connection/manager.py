@@ -809,9 +809,13 @@ class SessionManagerV2:
 
 
 
-    def mcp_server_status_list(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def mcp_server_status_list(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
-        return self._protocol_client.mcp_server_status_list(payload)
+        response = self._protocol_client.mcp_server_status_list(payload)
+        normalized_response = dict(response) if isinstance(response, dict) else {"data": response}
+        normalized_response["threadId"] = str(thread_id or "").strip()
+        normalized_response["runtime"] = self._mcp_runtime_state_for_thread(thread_id=thread_id)
+        return normalized_response
 
     def mcp_resource_read(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         self._ensure_initialized()
@@ -1171,6 +1175,41 @@ class SessionManagerV2:
         if self._mcp_service is None:
             return
         self._mcp_service.release_runtime_turn(thread_id=thread_id, turn_id=turn_id)
+
+    def _mcp_runtime_state_for_thread(self, *, thread_id: str) -> dict[str, Any]:
+        normalized_thread_id = str(thread_id or "").strip()
+        default_state = {
+            "activeRuntimeMcpConfigHash": None,
+            "activeTurns": [],
+            "threadHasActiveTurn": False,
+            "conflict": False,
+        }
+        if self._mcp_service is None:
+            return default_state
+        getter = getattr(self._mcp_service, "runtime_state_for_hash", None)
+        if not callable(getter):
+            return default_state
+        try:
+            runtime_state = getter(None)
+        except Exception:
+            return default_state
+        if not isinstance(runtime_state, dict):
+            return default_state
+        active_turns_raw = runtime_state.get("activeTurns")
+        active_turns: list[dict[str, Any]] = []
+        if isinstance(active_turns_raw, list):
+            for turn in active_turns_raw:
+                if not isinstance(turn, dict):
+                    continue
+                if str(turn.get("threadId") or "").strip() != normalized_thread_id:
+                    continue
+                active_turns.append(dict(turn))
+        return {
+            "activeRuntimeMcpConfigHash": runtime_state.get("activeRuntimeMcpConfigHash"),
+            "activeTurns": active_turns,
+            "threadHasActiveTurn": bool(active_turns),
+            "conflict": bool(runtime_state.get("conflict", False)),
+        }
 
     def _ensure_initialized(self) -> None:
         if self._connection_state_machine.phase != "initialized":

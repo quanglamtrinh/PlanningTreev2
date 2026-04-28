@@ -9,6 +9,7 @@ import styles from './SessionConsoleV2.module.css'
 
 export function SessionConsoleV2() {
   const { state, commands } = useSessionFacadeV2()
+  const showBootstrapBanner = state.isBootstrapping && !state.activeThreadId && state.threads.length === 0
 
   return (
     <section className={styles.console}>
@@ -46,13 +47,14 @@ export function SessionConsoleV2() {
           </div>
         </header>
 
-        {state.isBootstrapping ? <div className={styles.banner}>Bootstrapping Session V2...</div> : null}
+        {showBootstrapBanner ? <div className={styles.banner}>Bootstrapping Session V2...</div> : null}
         {state.runtimeError ? <div className={styles.errorBanner}>{state.runtimeError}</div> : null}
 
         <TranscriptPanel
           threadId={state.activeThreadId}
           turns={state.activeTurns}
           itemsByTurn={state.activeItemsByTurn}
+          visibleRows={state.activeVisibleTranscriptRows}
         />
 
         <ComposerPane

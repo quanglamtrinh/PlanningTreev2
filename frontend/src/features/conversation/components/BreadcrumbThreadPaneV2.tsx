@@ -4,7 +4,7 @@ import type { PendingServerRequest, SessionItem, SessionTurn, VisibleTranscriptR
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
 import { McpElicitationOverlay } from '../../session_v2/components/McpElicitationOverlay'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
-import { TranscriptPanel, WorkflowContextCard } from '../../session_v2/components/TranscriptPanel'
+import { TranscriptPanel } from '../../session_v2/components/TranscriptPanel'
 import sessionShellStyles from '../../session_v2/shell/SessionConsoleV2.module.css'
 import type { NodeRecord } from '../../../api/types'
 import type { ComposerSubmitPayload } from '../../session_v2/components/ComposerPane'
@@ -155,17 +155,12 @@ export function BreadcrumbThreadPaneV2({
                 isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
             >
-              {transcriptProps.workflowContextItem ? (
-                <div className={sessionShellStyles.threadWorkflowContextSlot}>
-                  <WorkflowContextCard item={transcriptProps.workflowContextItem} />
-                </div>
-              ) : null}
               <TranscriptPanel
                 threadId={transcriptProps.threadId}
                 turns={transcriptProps.turns}
                 itemsByTurn={transcriptProps.itemsByTurn}
                 visibleRows={transcriptProps.visibleRows}
-                showWorkflowContext={false}
+                workflowContextItem={transcriptProps.workflowContextItem ?? null}
               />
             </div>
 

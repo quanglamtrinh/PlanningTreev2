@@ -18,6 +18,7 @@ from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now
 VALID_ROLES = {"ask_planning", "execution", "audit", "package_review"}
 VALID_APPROVAL_MODES = {"never", "onRequest", "onFailure", "untrusted"}
 logger = logging.getLogger(__name__)
+_FILESYSTEM_PACKAGE_TOKEN = "@modelcontextprotocol/server-filesystem"
 
 
 def canonical_effective_config_hash(config: dict[str, Any]) -> str:
@@ -368,25 +369,25 @@ class McpIntegrationService:
     @staticmethod
     def _is_filesystem_server(server: dict[str, Any], effective: dict[str, Any]) -> bool:
         transport = server.get("transport") if isinstance(server.get("transport"), dict) else {}
-        tokens = [
-            str(server.get("serverId") or ""),
-            str(server.get("name") or ""),
-            str(transport.get("command") or effective.get("command") or ""),
-            *[str(arg) for arg in effective.get("args", []) if arg is not None],
-        ]
-        haystack = " ".join(tokens).lower()
-        return "server-filesystem" in haystack or "filesystem" in haystack
+        if transport.get("type") != "stdio":
+            return False
+        return McpIntegrationService._filesystem_package_index(effective.get("args")) is not None
 
     @staticmethod
     def _filesystem_args_for_project(raw_args: Any, project_cwd: str) -> list[str]:
         args = [str(arg) for arg in raw_args] if isinstance(raw_args, list) else []
-        package_index = next(
-            (idx for idx, arg in enumerate(args) if "server-filesystem" in arg.lower()),
-            None,
-        )
+        package_index = McpIntegrationService._filesystem_package_index(args)
         if package_index is not None:
             return args[: package_index + 1] + [project_cwd]
-        return [project_cwd]
+        return args
+
+    @staticmethod
+    def _filesystem_package_index(raw_args: Any) -> int | None:
+        args = [str(arg).strip() for arg in raw_args] if isinstance(raw_args, list) else []
+        for idx, arg in enumerate(args):
+            if arg.lower() == _FILESYSTEM_PACKAGE_TOKEN:
+                return idx
+        return None
 
     def _registry_server_to_codex_config(self, server: dict[str, Any]) -> dict[str, Any]:
         transport = server.get("transport") if isinstance(server.get("transport"), dict) else {}

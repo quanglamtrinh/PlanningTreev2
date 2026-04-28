@@ -30,22 +30,6 @@ import type {
 } from '../contracts'
 import type { SetThreadTurnsOptions, ThreadSessionStoreState } from '../store/threadSessionStore'
 
-function threadStoreHasTranscriptData(state: ThreadSessionStoreState, threadId: string): boolean {
-  if ((state.turnsByThread[threadId] ?? []).length > 0) {
-    return true
-  }
-  const prefix = `${threadId}:`
-  for (const key of Object.keys(state.itemsByTurn)) {
-    if (key.startsWith(prefix)) {
-      const items = state.itemsByTurn[key]
-      if (Array.isArray(items) && items.length > 0) {
-        return true
-      }
-    }
-  }
-  return false
-}
-
 type AsyncScope = 'bootstrap' | 'selectThread' | 'hydrateThread' | 'loadModels' | 'pollPending'
 
 type AsyncScopeTokens = Record<AsyncScope, number>
@@ -534,26 +518,13 @@ export function createSessionRuntimeController(
     }
 
     const afterActive = dependencies.getThreadState()
-    const cachedThread = afterActive.threadsById[threadId]
-    const canSkipHydrateFromCache =
-      hydratedThreadIds.has(threadId) &&
-      Boolean(cachedThread) &&
-      cachedThread?.status?.type !== 'notLoaded' &&
-      threadStoreHasTranscriptData(afterActive, threadId)
-
-    if (canSkipHydrateFromCache) {
-      dependencies.setRuntimeError(null)
-      traceSessionRuntime('select thread ready from cache', {
-        threadId,
-        status: cachedThread?.status?.type ?? null,
-      })
-      return
-    }
 
     try {
       await ensureThreadReady(threadId, {
         isCurrent,
-        forceHydrate: !threadStoreHasTranscriptData(afterActive, threadId),
+        // Always rehydrate on explicit selection so the transcript shown on screen
+        // is guaranteed to come from the selected thread's latest server snapshot.
+        forceHydrate: true,
       })
       if (!isCurrent()) {
         traceSessionRuntime('select thread aborted after ensure: stale scope', {

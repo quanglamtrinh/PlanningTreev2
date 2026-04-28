@@ -100,6 +100,25 @@ describe('Sidebar', () => {
     })
   })
 
+  it('navigates to skills from the sidebar nav item', async () => {
+    vi.useRealTimers()
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<SidebarHarness />} />
+          <Route path="/skills" element={<SidebarHarness />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /open skills page/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-path')).toHaveTextContent('/skills')
+    })
+  })
+
+
   it('marks usage snapshot button active on the usage route with route semantics', () => {
     vi.useRealTimers()
     render(
