@@ -137,6 +137,56 @@ def test_v3_projection_maps_upsert_and_patch_events() -> None:
     assert patch_events[0]["type"] == event_types.CONVERSATION_ITEM_PATCH_V3
 
 
+def test_v3_projection_drops_unknown_items_from_snapshot_and_upserts() -> None:
+    snapshot_v2 = default_thread_snapshot("project-1", "node-1", "execution")
+    snapshot_v2["threadId"] = "exec-thread-1"
+    snapshot_v2["items"] = [
+        {
+            "id": "unknown-1",
+            "kind": "browserScreenshot",
+            "threadId": "exec-thread-1",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-04-01T00:00:00Z",
+            "updatedAt": "2026-04-01T00:00:00Z",
+            "status": "completed",
+            "source": "upstream",
+            "tone": "neutral",
+            "metadata": {},
+            "imageUrl": "https://example.test/screenshot.png",
+        }
+    ]
+
+    projected = project_v2_snapshot_to_v3(snapshot_v2)
+    assert projected["items"] == []
+
+    projected, mapped_events = project_v2_envelope_to_v3(
+        projected,
+        {
+            "type": event_types.CONVERSATION_ITEM_UPSERT,
+            "payload": {
+                "item": {
+                    "id": "unknown-2",
+                    "kind": "browserScreenshot",
+                    "threadId": "exec-thread-1",
+                    "turnId": "turn-1",
+                    "sequence": 2,
+                    "createdAt": "2026-04-01T00:00:01Z",
+                    "updatedAt": "2026-04-01T00:00:01Z",
+                    "status": "completed",
+                    "source": "upstream",
+                    "tone": "neutral",
+                    "metadata": {},
+                    "imageUrl": "https://example.test/screenshot-2.png",
+                }
+            },
+        },
+    )
+
+    assert projected["items"] == []
+    assert mapped_events == []
+
+
 def test_v3_snapshot_projection_hides_legacy_audit_seed_items() -> None:
     snapshot_v2 = default_thread_snapshot("project-1", "node-1", "audit")
     snapshot_v2["threadId"] = "audit-thread-1"

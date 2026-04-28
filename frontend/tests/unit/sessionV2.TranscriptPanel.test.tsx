@@ -126,7 +126,18 @@ describe('TranscriptPanel', () => {
                   node: { node_id: 'root', hierarchical_number: '1', title: 'Parent Task' },
                   frame: { content: 'Parent frame content' },
                   clarify: {
-                    questions: [{ question: 'Which path?', custom_answer: 'Use the selected child.' }],
+                    questions: [
+                      { question: 'Which path?', custom_answer: 'Use the selected child.' },
+                      {
+                        question: 'Which auth provider?',
+                        selected_option_id: 'auth0',
+                        options: [
+                          { id: 'auth0', label: 'Use Auth0', value: 'auth0' },
+                          { id: 'clerk', label: 'Use Clerk', value: 'clerk' },
+                        ],
+                        custom_answer: '',
+                      },
+                    ],
                   },
                   split: {
                     children: [
@@ -162,6 +173,8 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
     expect(screen.getByText('Parent frame content')).toBeInTheDocument()
     expect(screen.getByText('Use the selected child.')).toBeInTheDocument()
+    expect(screen.getByText('Use Auth0')).toBeInTheDocument()
+    expect(screen.queryByText('Not answered')).not.toBeInTheDocument()
     expect(screen.getByText('1.1 Current Child')).toBeInTheDocument()
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getAllByTestId('workflow-context-document-frame.md').length).toBeGreaterThanOrEqual(1)
@@ -589,7 +602,7 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('Visible Ask reply')).toBeInTheDocument()
   })
 
-  it('renders unknown native item as an explicit fallback card', () => {
+  it('does not render unknown native item payloads', () => {
     const item: SessionItem = {
       id: 'item-unknown',
       threadId: 'thread-1',
@@ -605,7 +618,7 @@ describe('TranscriptPanel', () => {
       },
     }
 
-    const { container } = render(
+    render(
       <TranscriptPanel
         threadId="thread-1"
         turns={[baseTurn([item])]}
@@ -613,11 +626,8 @@ describe('TranscriptPanel', () => {
       />,
     )
 
-    expect(screen.getByText('Unknown Codex item')).toBeInTheDocument()
-    const text = container.textContent ?? ''
-    expect(text).toContain('kind: browserScreenshot')
-    expect(text).toContain('payload:')
-    expect(text).toContain('https://example.test/screenshot.png')
+    expect(screen.queryByText('Unknown Codex item')).not.toBeInTheDocument()
+    expect(screen.queryByText('https://example.test/screenshot.png')).not.toBeInTheDocument()
   })
 
   it('summarizes tool items when turn is terminal', () => {

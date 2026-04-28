@@ -101,7 +101,7 @@ function buildClarifyMarkdown(questions: ClarifyQuestion[]): string {
   const blocks = questions.map((question, index) => {
     const prompt = question.question.trim() || question.field_name.trim() || `Question ${index + 1}`
     const answer = resolveAnswer(question) ?? '_Not answered_'
-    return `### ${index + 1}. ${prompt}\n\n${answer}`
+    return `## ${index + 1}. ${prompt}\n\n${answer}`
   })
   return blocks.join('\n\n')
 }
@@ -119,7 +119,9 @@ function buildSplitMarkdown(
     .map((child) => {
       const displayNumber = normalizeShellNodeNumber(child.hierarchical_number, stripInitPrefix)
       const label = displayNumber ? `${displayNumber} ${child.title}` : child.title
-      return child.node_id === currentNodeId ? `- ${label} _(current path)_` : `- ${label}`
+      return child.node_id === currentNodeId
+        ? `## ${label}\n\n_Current path_`
+        : `## ${label}`
     })
 
   if (rows.length === 0) {

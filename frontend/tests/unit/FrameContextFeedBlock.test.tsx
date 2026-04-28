@@ -138,7 +138,7 @@ describe('FrameContextFeedBlock', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clarify' }))
     await waitFor(() => {
-      expect(screen.getByText(/^1\.\s*What auth provider\?$/i)).toBeInTheDocument()
+      expect(screen.getByRole('heading', { level: 2, name: /^1\.\s*What auth provider\?$/i })).toBeInTheDocument()
     })
 
     await waitFor(() => {
@@ -411,6 +411,7 @@ describe('FrameContextFeedBlock', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Split' }))
 
     expect(await screen.findByTestId('frame-context-panel-body-split')).toHaveAttribute('data-panel-chrome', 'document')
+    expect(screen.getByRole('heading', { level: 2, name: /child task/i })).toBeInTheDocument()
     expect(screen.getByTestId('frame-context-panel-body-split')).toHaveTextContent('Child task')
   })
 })

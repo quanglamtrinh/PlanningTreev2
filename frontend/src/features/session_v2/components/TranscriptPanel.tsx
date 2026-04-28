@@ -692,6 +692,35 @@ function clarifyQuestions(clarify: unknown): Record<string, unknown>[] {
   return clarify.questions.filter((question): question is Record<string, unknown> => isRecord(question))
 }
 
+function clarifyAnswerText(question: Record<string, unknown>): string {
+  const selectedOptionId =
+    normalizeText(question.selected_option_id) ||
+    normalizeText(question.selectedOptionId) ||
+    normalizeText(question.selectedOption)
+  if (selectedOptionId && Array.isArray(question.options)) {
+    const selectedOption = question.options.find(
+      (option): option is Record<string, unknown> =>
+        isRecord(option) && normalizeText(option.id) === selectedOptionId,
+    )
+    const selectedLabel =
+      normalizeText(selectedOption?.label) ||
+      normalizeText(selectedOption?.value) ||
+      normalizeText(selectedOption?.id)
+    if (selectedLabel) {
+      return selectedLabel
+    }
+  }
+
+  return (
+    normalizeText(question.answer) ||
+    normalizeText(question.custom_answer) ||
+    normalizeText(question.customAnswer) ||
+    normalizeText(question.value) ||
+    'Not answered'
+  )
+}
+
+
 function splitChildren(split: unknown): Record<string, unknown>[] {
   if (!isRecord(split) || !Array.isArray(split.children)) {
     return []
@@ -758,11 +787,9 @@ function ArtifactDocumentSection({ title, content }: { title: string; content: s
 
 function WorkflowContextNodeSection({
   entry,
-  label,
   isCurrent,
 }: {
   entry: Record<string, unknown>
-  label?: string
   isCurrent?: boolean
 }) {
   const frameText = documentContent(entry.frame)
@@ -777,7 +804,6 @@ function WorkflowContextNodeSection({
     <section className="sessionV2WorkflowContextNode">
       <h4>
         {nodeTitle(entry.node)}
-        {label ? <span>{label}</span> : null}
         {isCurrent ? <span>current task</span> : null}
       </h4>
       <ArtifactDocumentSection title="frame.md" content={frameText} />
@@ -789,7 +815,7 @@ function WorkflowContextNodeSection({
             {questions.map((question, questionIndex) => (
               <li key={`clarify-${questionIndex}`}>
                 <strong>{normalizeText(question.question) || normalizeText(question.field_name) || 'Question'}</strong>
-                <span>{normalizeText(question.answer) || normalizeText(question.custom_answer) || 'Not answered'}</span>
+                <span>{clarifyAnswerText(question)}</span>
               </li>
             ))}
           </ol>
@@ -848,7 +874,7 @@ export function WorkflowContextCard({ item, sticky = false }: { item: SessionIte
       {isExpanded ? (
         <div className="sessionV2WorkflowContextBody">
           {ancestorContext.map((entry, index) => (
-            <WorkflowContextNodeSection key={`ancestor-${index}`} entry={entry} label="parent" />
+            <WorkflowContextNodeSection key={`ancestor-${index}`} entry={entry} />
           ))}
           {currentContext ? (
             <WorkflowContextNodeSection entry={currentContext} isCurrent />
@@ -1095,24 +1121,6 @@ function renderToolTitle(item: SessionItem): string {
     return itemKind
   }
   return item.kind
-}
-
-function formatUnknownItemDetails(item: SessionItem): string {
-  const payload = isRecord(item.payload) ? item.payload : {}
-  const payloadText = formatPayloadFallback(payload) || '{}'
-  return `kind: ${item.kind || 'unknown'}\npayload:\n${payloadText}`
-}
-
-function UnknownItemCard({ item }: { item: SessionItem }) {
-  return (
-    <article className="sessionV2ToolCard sessionV2UnknownItemCard">
-      <header className="sessionV2ToolCardHeader">
-        <span>Unknown Codex item</span>
-        <small>{item.status}</small>
-      </header>
-      <pre className="sessionV2ToolCardText">{formatUnknownItemDetails(item)}</pre>
-    </article>
-  )
 }
 
 function shouldCollapseUserMessage(text: string): boolean {
@@ -1598,7 +1606,7 @@ export function TranscriptPanel({
                     const variant = resolveRowVariant(entry.item)
                     const text = renderItemText(entry.item)
                     if (variant === 'unknown') {
-                      return <UnknownItemCard key={`${row.key}:${entry.key}`} item={entry.item} />
+                      return null
                     }
                     const rowClassName =
                       variant === 'assistant'
@@ -1737,7 +1745,7 @@ export function TranscriptPanel({
         const variant = resolveRowVariant(row.item)
         const text = renderItemText(row.item)
         if (variant === 'unknown') {
-          return <UnknownItemCard key={row.key} item={row.item} />
+          return null
         }
         if (variant === 'tool') {
           return (

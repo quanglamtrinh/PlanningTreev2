@@ -341,7 +341,7 @@ describe('applySessionEvent', () => {
     expect(list[0].payload.text).toBe('Done from turn completion')
   })
 
-  it('preserves unknown native item kind without coercing to agent message', () => {
+  it('drops unknown native item kinds from stream events', () => {
     const next = applySessionEvent(
       baseState(),
       event({
@@ -360,12 +360,8 @@ describe('applySessionEvent', () => {
       }),
     )
 
-    const list = next.itemsByTurn['thread-1:turn-1']
-    expect(list).toHaveLength(1)
-    expect(list[0].kind).toBe('browserScreenshot')
-    expect(list[0].normalizedKind).toBeNull()
-    expect(list[0].rawItem?.kind).toBe('browserScreenshot')
-    expect(list[0].payload.imageUrl).toBe('https://example.test/screenshot.png')
+    const list = next.itemsByTurn['thread-1:turn-1'] ?? []
+    expect(list).toHaveLength(0)
   })
 
   it('ignores replayed delta for already completed item', () => {

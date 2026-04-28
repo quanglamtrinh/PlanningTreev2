@@ -97,6 +97,24 @@ function normalizeRawKind(value: unknown): string | null {
   return text.length > 0 ? text : null
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object'
+}
+
+function isWorkflowContextMetadata(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false
+  }
+  return value.workflowContext === true
+}
+
+function shouldRetainUnknownItemPayload(payload: Record<string, unknown>): boolean {
+  if (isWorkflowContextMetadata(payload.metadata)) {
+    return true
+  }
+  return false
+}
+
 function normalizeItemStatus(value: unknown): ItemStatus {
   if (value === 'inProgress' || value === 'completed' || value === 'failed') {
     return value
@@ -585,6 +603,9 @@ function normalizeItemFromParams(
     if (normalizedKind === null) {
       item.rawItem = itemRecord
     }
+    if (normalizedKind === null && !shouldRetainUnknownItemPayload(item.payload)) {
+      return null
+    }
     return item
   }
 
@@ -606,6 +627,9 @@ function normalizeItemFromParams(
   }
   if (normalizedKind === null) {
     item.rawParams = { ...params }
+  }
+  if (normalizedKind === null && !shouldRetainUnknownItemPayload(item.payload)) {
+    return null
   }
   return item
 }

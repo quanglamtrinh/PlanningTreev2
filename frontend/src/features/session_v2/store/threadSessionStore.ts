@@ -276,6 +276,9 @@ function normalizeItemsForTurnByStatus(
         fallbackId: `${turnId}:item-${itemIndex}`,
         fallbackStatus,
       })
+      if (!shouldRetainItemForStore(nextItem)) {
+        return
+      }
       const existingIndex = indexById.get(nextItem.id)
       if (existingIndex === undefined) {
         indexById.set(nextItem.id, normalized.length)
@@ -772,6 +775,16 @@ function isWorkflowContextItem(item: SessionItem): boolean {
   return itemMetadata(item).workflowContext === true
 }
 
+function shouldRetainItemForStore(item: SessionItem): boolean {
+  if (normalizedKindOfItem(item) !== null) {
+    return true
+  }
+  if (isWorkflowContextItem(item)) {
+    return true
+  }
+  return false
+}
+
 function isRawChatItem(item: SessionItem): boolean {
   const normalizedKind = normalizedKindOfItem(item)
   return normalizedKind === 'userMessage' || normalizedKind === 'agentMessage'
@@ -819,6 +832,9 @@ function classifyTranscriptItem(turn: SessionTurn, item: SessionItem): VisibleTr
 }
 
 function shouldEmitVisibleTranscriptItem(item: VisibleTranscriptItem): boolean {
+  if (normalizedKindOfItem(item) === null && !isWorkflowContextItem(item)) {
+    return false
+  }
   if (item.visibility === 'internal' || item.renderAs === 'hidden') {
     return false
   }

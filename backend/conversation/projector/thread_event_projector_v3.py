@@ -102,6 +102,18 @@ def _is_hidden_audit_system_item(raw_item: dict[str, Any]) -> bool:
     return False
 
 
+def _is_unknown_fallback_item_v3(item: ConversationItemV3) -> bool:
+    if str(item.get("kind") or "").strip() != "explore":
+        return False
+    metadata = item.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    source_kind = _normalize_optional_string(metadata.get("sourceKind"))
+    if source_kind is None:
+        return False
+    return True
+
+
 def _render_plan_text(item: dict[str, Any]) -> str:
     base_text = str(item.get("text") or "").strip()
     steps = item.get("steps")
@@ -527,7 +539,10 @@ def build_snapshot_v3_from_v2(snapshot: ThreadSnapshotV2 | dict[str, Any]) -> Th
             continue
         if thread_role == "audit" and _is_hidden_audit_system_item(raw_item):
             continue
-        items.append(convert_item_v2_to_v3(raw_item))
+        normalized_item = convert_item_v2_to_v3(raw_item)
+        if _is_unknown_fallback_item_v3(normalized_item):
+            continue
+        items.append(normalized_item)
     items.sort(key=lambda current: (int(current.get("sequence") or 0), str(current.get("id") or "")))
 
     requests: list[PendingUserInputRequestV3] = []
@@ -982,13 +997,14 @@ def project_v2_envelope_to_v3(
                 updated["uiSignals"]["planReady"] = _derive_plan_ready(updated)
                 return updated, events
             item_v3 = convert_item_v2_to_v3(raw_item)
-            updated = _upsert_item(updated, item_v3)
-            events.append(
-                {
-                    "type": event_types.CONVERSATION_ITEM_UPSERT_V3,
-                    "payload": {"item": copy.deepcopy(item_v3)},
-                }
-            )
+            if not _is_unknown_fallback_item_v3(item_v3):
+                updated = _upsert_item(updated, item_v3)
+                events.append(
+                    {
+                        "type": event_types.CONVERSATION_ITEM_UPSERT_V3,
+                        "payload": {"item": copy.deepcopy(item_v3)},
+                    }
+                )
     elif event_type == event_types.CONVERSATION_ITEM_PATCH:
         item_id = str(payload_dict.get("itemId") or "").strip()
         raw_patch = payload_dict.get("patch")

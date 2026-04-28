@@ -419,7 +419,7 @@ describe('threadSessionStore', () => {
     expect(items[0].payload.text).toBe('Hello from Codex')
   })
 
-  it('keeps unknown hydrated item kind as raw protocol data', () => {
+  it('drops unknown hydrated item kind', () => {
     const store = useThreadSessionStore.getState()
     const turns = [
       {
@@ -445,11 +445,41 @@ describe('threadSessionStore', () => {
 
     const snapshot = useThreadSessionStore.getState()
     const items = snapshot.itemsByTurn['thread-1:turn-native']
+    expect(items).toHaveLength(0)
+  })
+
+  it('retains unknown hydrated workflow context items', () => {
+    const store = useThreadSessionStore.getState()
+    const turns = [
+      {
+        id: 'turn-workflow-context',
+        threadId: 'thread-1',
+        status: 'completed',
+        lastCodexStatus: 'completed',
+        startedAtMs: 10,
+        completedAtMs: 20,
+        error: null,
+        items: [
+          {
+            id: 'item-context-native',
+            kind: 'systemMessage',
+            status: 'completed',
+            metadata: {
+              workflowContext: true,
+            },
+          },
+        ],
+      },
+    ] as unknown as SessionTurn[]
+
+    store.setThreadTurns('thread-1', turns)
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-workflow-context']
     expect(items).toHaveLength(1)
-    expect(items[0].kind).toBe('browserScreenshot')
+    expect(items[0].kind).toBe('systemMessage')
     expect(items[0].normalizedKind).toBeNull()
-    expect(items[0].rawItem?.kind).toBe('browserScreenshot')
-    expect(items[0].payload.imageUrl).toBe('https://example.test/screenshot.png')
+    expect((items[0].payload.metadata as Record<string, unknown>).workflowContext).toBe(true)
   })
 
   it('infers failed item status from terminal turn when hydrate payload omits status', () => {
@@ -1098,6 +1128,35 @@ describe('threadSessionStore', () => {
     expect(items[0].payload.text).toBe('Hello there!')
     expect(snapshot.lastEventSeqByThread['thread-1']).toBe(3)
     expect(snapshot.lastEventIdByThread['thread-1']).toBe('thread-1:3')
+  })
+
+  it('drops unknown stream items from item events', () => {
+    const store = useThreadSessionStore.getState()
+    store.applyEvent({
+      schemaVersion: 1,
+      eventId: 'thread-1:unknown',
+      eventSeq: 1,
+      tier: 'tier0',
+      method: 'item/started',
+      threadId: 'thread-1',
+      turnId: 'turn-unknown',
+      occurredAtMs: 1,
+      replayable: true,
+      snapshotVersion: null,
+      source: 'journal',
+      params: {
+        item: {
+          id: 'item-unknown',
+          kind: 'mcpToolCall',
+          status: 'inProgress',
+          arguments: {},
+        },
+      },
+    })
+
+    const snapshot = useThreadSessionStore.getState()
+    const items = snapshot.itemsByTurn['thread-1:turn-unknown'] ?? []
+    expect(items).toHaveLength(0)
   })
 
   it('exposes shared selectors for active thread transcript state', () => {
