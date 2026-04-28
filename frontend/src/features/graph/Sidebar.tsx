@@ -187,7 +187,9 @@ export function Sidebar() {
 
       const targetNode = latestSnapshot?.tree_state.node_registry.find((node) => node.node_id === nodeId)
       navigate(
-        targetNode?.node_kind === 'review'
+        targetNode?.node_kind === 'root' || targetNode?.is_init_node === true
+          ? buildChatV2Url(projectId, nodeId, 'root')
+          : targetNode?.node_kind === 'review'
           ? buildChatV2Url(projectId, nodeId, 'audit')
           : buildChatV2Url(projectId, nodeId, 'ask'),
       )

@@ -282,6 +282,21 @@ async function jsonFetchV2<T>(path: string, init?: RequestInit, body?: JsonBody)
 
 export const api = {
 
+  ensureRootThread(
+    projectId: string,
+    nodeId: string,
+    payload?: { model?: string | null; modelProvider?: string | null },
+  ): Promise<{ threadId: string; role: 'root' }> {
+    return jsonFetchV2<{ threadId: string; role: 'root' }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/root-thread/ensure`,
+      { method: 'POST' },
+      {
+        model: payload?.model ?? null,
+        modelProvider: payload?.modelProvider ?? null,
+      },
+    )
+  },
+
   listMcpRegistry(): Promise<McpRegistryResponse> {
     return jsonFetchV2<McpRegistryResponse>('/v4/extensions/mcp/registry')
   },

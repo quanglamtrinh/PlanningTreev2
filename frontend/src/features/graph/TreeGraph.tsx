@@ -724,7 +724,7 @@ export function TreeGraph({
             (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
             (node.workflow?.frame_confirmed ?? false) &&
             node.workflow?.active_step === 'spec',
-          canOpenBreadcrumb: !node.is_init_node,
+          canOpenBreadcrumb: true,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
           executionStatus: node.workflow?.execution_status ?? null,

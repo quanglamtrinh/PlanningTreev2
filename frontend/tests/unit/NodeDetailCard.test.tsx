@@ -99,6 +99,10 @@ const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(()
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
     }),
+    listMcpRegistry: vi.fn(),
+    readMcpThreadProfile: vi.fn(),
+    previewMcpEffectiveConfig: vi.fn(),
+    updateMcpThreadProfile: vi.fn(),
   },
   workflowV2ApiMock: {
     getWorkflowStateV2: vi.fn(),
@@ -175,7 +179,7 @@ function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
     title: 'Root',
     description: 'Root node',
     status: 'draft',
-    node_kind: 'root',
+    node_kind: 'original',
     depth: 0,
     display_order: 0,
     hierarchical_number: '1',
@@ -333,6 +337,60 @@ describe('NodeDetailCard', () => {
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
     })
+    apiMock.listMcpRegistry.mockResolvedValue({ servers: [] })
+    apiMock.readMcpThreadProfile.mockImplementation((projectId: string, nodeId: string, role: string) =>
+      Promise.resolve({
+        profile: {
+          projectId,
+          nodeId,
+          role,
+          threadId: null,
+          mcpEnabled: false,
+          approvalMode: 'never',
+          servers: {},
+          updatedAt: '2026-03-21T00:00:00Z',
+        },
+      }),
+    )
+    apiMock.previewMcpEffectiveConfig.mockImplementation((projectId: string, nodeId: string, role: string) =>
+      Promise.resolve({
+        projectId,
+        nodeId,
+        role,
+        threadId: null,
+        profile: {
+          projectId,
+          nodeId,
+          role,
+          threadId: null,
+          mcpEnabled: false,
+          approvalMode: 'never',
+          servers: {},
+          updatedAt: '2026-03-21T00:00:00Z',
+        },
+        effectiveConfig: {},
+        mcpConfigHash: 'sha256:empty',
+        runtime: {
+          activeRuntimeMcpConfigHash: null,
+          conflict: false,
+          status: null,
+          lastStartedAt: null,
+          lastStoppedAt: null,
+        },
+      }),
+    )
+    apiMock.updateMcpThreadProfile.mockResolvedValue({
+      profile: {
+        projectId: 'project-1',
+        nodeId: 'root',
+        role: 'root',
+        threadId: null,
+        mcpEnabled: true,
+        approvalMode: 'never',
+        servers: {},
+        updatedAt: '2026-03-21T00:00:00Z',
+      },
+    })
     workflowV2ApiMock.startExecutionV2.mockResolvedValue({
       accepted: true,
       threadId: 'thread-execution-1',
@@ -369,6 +427,35 @@ describe('NodeDetailCard', () => {
     expect(screen.getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByTestId('confirm-document-frame')).not.toBeInTheDocument()
     expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
+  })
+
+  it('breadcrumb root node renders Info only and loads only the root MCP profile', async () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ node_kind: 'root', is_init_node: true })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
+      expect(apiMock.readMcpThreadProfile).toHaveBeenCalledWith('project-1', 'root', 'root')
+    })
+
+    expect(screen.queryByTestId('workflow-stepper')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tablist', { name: 'Task document sections' })).not.toBeInTheDocument()
+    expect(screen.getByText('Root node')).toBeInTheDocument()
+    expect(screen.getByTestId('info-tab-mcp-role-root')).toBeInTheDocument()
+    expect(screen.queryByTestId('info-tab-mcp-role-ask_planning')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Frame' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Clarify' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Spec' })).not.toBeInTheDocument()
+    expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
+    expect(apiMock.readMcpThreadProfile.mock.calls.map((call) => call[2])).toEqual(['root'])
   })
 
   it('normalizes nodeMetaRow index by stripping init prefix for task nodes', () => {

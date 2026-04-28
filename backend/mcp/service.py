@@ -15,7 +15,7 @@ from backend.config.app_config import AppPaths
 from backend.session_core_v2.errors import SessionCoreError
 from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now
 
-VALID_ROLES = {"ask_planning", "execution", "audit", "package_review"}
+VALID_ROLES = {"ask_planning", "execution", "audit", "package_review", "root"}
 VALID_APPROVAL_MODES = {"never", "onRequest", "onFailure", "untrusted"}
 logger = logging.getLogger(__name__)
 _FILESYSTEM_PACKAGE_TOKEN = "@modelcontextprotocol/server-filesystem"

@@ -20,6 +20,7 @@ export type BreadcrumbThreadFrameContextProps = {
   nodeId: string | undefined
   nodeRegistry: NodeRecord[] | null
   specConfirmed: boolean
+  showThreadTabs?: boolean
 }
 
 export type BreadcrumbThreadTranscriptProps = {
@@ -76,7 +77,7 @@ export function BreadcrumbThreadPaneV2({
   composerProps,
   debugPanelProps,
 }: BreadcrumbThreadPaneV2Props) {
-  const { threadTab, onThreadTabChange, combinedError } = frameContextProps
+  const { threadTab, onThreadTabChange, combinedError, showThreadTabs = true } = frameContextProps
   const isExecutionTab = threadTab === 'execution'
   const debugPayloadText = debugPanelProps?.payload
     ? JSON.stringify(debugPanelProps.payload, null, 2)
@@ -89,10 +90,12 @@ export function BreadcrumbThreadPaneV2({
         data-testid="breadcrumb-thread-pane"
       >
         <div className={sessionShellStyles.threadSurface}>
-          <BreadcrumbThreadTabsV2
-            threadTab={threadTab}
-            onThreadTabChange={onThreadTabChange}
-          />
+          {showThreadTabs ? (
+            <BreadcrumbThreadTabsV2
+              threadTab={threadTab}
+              onThreadTabChange={onThreadTabChange}
+            />
+          ) : null}
 
           <div className={sessionShellStyles.threadTabBody} data-testid="breadcrumb-thread-body">
             <div className={sessionShellStyles.threadBodyNoticeRow}>

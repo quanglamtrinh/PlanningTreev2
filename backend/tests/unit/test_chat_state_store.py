@@ -53,6 +53,18 @@ def test_write_and_read_round_trip(chat_store, project_id):
     assert loaded["messages"][0]["role"] == "user"
 
 
+def test_root_thread_role_writes_root_session_file(chat_store, project_id):
+    session = chat_store.read_session(project_id, "root-node", thread_role="root")
+    session["thread_id"] = "root-thread-1"
+
+    saved = chat_store.write_session(project_id, "root-node", session, thread_role="root")
+    loaded = chat_store.read_session(project_id, "root-node", thread_role="root")
+
+    assert saved["thread_role"] == "root"
+    assert loaded["thread_id"] == "root-thread-1"
+    assert chat_store.path(project_id, "root-node", thread_role="root").name == "root.json"
+
+
 def test_clear_session_restores_default(chat_store, project_id):
     session = chat_store.read_session(project_id, "node1")
     session["thread_id"] = "thread-abc"

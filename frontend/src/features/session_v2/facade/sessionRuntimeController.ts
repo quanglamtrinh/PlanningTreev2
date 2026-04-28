@@ -517,8 +517,6 @@ export function createSessionRuntimeController(
       })
     }
 
-    const afterActive = dependencies.getThreadState()
-
     try {
       await ensureThreadReady(threadId, {
         isCurrent,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { useDetailStateStore } from '../../stores/detail-state-store'
+import { api } from '../../api/client'
 import { useProjectStore } from '../../stores/project-store'
 import { useUIStore } from '../../stores/ui-store'
 import styles from '../breadcrumb/BreadcrumbChatView.module.css'
@@ -36,8 +37,13 @@ export type BreadcrumbConversationControllerV2 = {
 }
 
 type WorkflowThreadKeyV2 = 'askPlanning' | 'execution' | 'audit'
+type WorkflowThreadTabV2 = Exclude<ThreadTab, 'root'>
 
-function workflowRoleForThreadTab(threadTab: ThreadTab): WorkflowThreadRoleV2 {
+function isWorkflowThreadTab(threadTab: ThreadTab): threadTab is WorkflowThreadTabV2 {
+  return threadTab !== 'root'
+}
+
+function workflowRoleForThreadTab(threadTab: WorkflowThreadTabV2): WorkflowThreadRoleV2 {
   if (threadTab === 'ask') {
     return 'ask_planning'
   }
@@ -179,6 +185,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const [searchParams] = useSearchParams()
   const [showWorkflowContextItems, setShowWorkflowContextItems] = useState(false)
   const [workflowContextItem, setWorkflowContextItem] = useState<SessionItem | null>(null)
+  const [rootThreadId, setRootThreadId] = useState<string | null>(null)
   const [sessionCorrelationHistory, setSessionCorrelationHistory] = useState<Record<string, unknown>[]>([])
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
   const lastRouteSelectionSyncRef = useRef<string | null>(null)
@@ -254,17 +261,27 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     return node?.node_kind === 'review'
   }, [nodeId, projectId, snapshot])
 
+  const isRootNode = useMemo(() => {
+    if (!projectId || !nodeId || !snapshot || snapshot.project.id !== projectId) {
+      return false
+    }
+    const node = snapshot.tree_state.node_registry.find((candidate) => candidate.node_id === nodeId)
+    return node?.node_kind === 'root' || node?.is_init_node === true
+  }, [nodeId, projectId, snapshot])
+
   const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
   const isSessionDebugMode = searchParams.get('debugSession') === '1'
   const routeTarget = resolveV2RouteTarget({
     requestedThreadTab,
     isReviewNode,
+    isRootNode,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
+  const isRootThreadTab = threadTab === 'root'
   const shouldCanonicalizeV2 =
     routeTarget.surface !== 'v2' || requestedThreadTab !== routeTarget.threadTab
 
-  useWorkflowEventBridgeV2(projectId, nodeId, Boolean(projectId && nodeId && !shouldCanonicalizeV2))
+  useWorkflowEventBridgeV2(projectId, nodeId, Boolean(projectId && nodeId && !isRootThreadTab && !shouldCanonicalizeV2))
 
   useEffect(() => {
     if (!isSessionDebugMode || typeof window === 'undefined') {
@@ -369,18 +386,19 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       !detailNode ||
       !snapshot ||
       snapshot.project.id !== projectId ||
+      isRootThreadTab ||
       shouldCanonicalizeV2
     ) {
       return
     }
     void loadWorkflowState(projectId, nodeId).catch(() => undefined)
-  }, [detailNode, loadWorkflowState, nodeId, projectId, shouldCanonicalizeV2, snapshot])
+  }, [detailNode, isRootThreadTab, loadWorkflowState, nodeId, projectId, shouldCanonicalizeV2, snapshot])
 
   const workflowProjection = useMemo(
     () =>
       buildWorkflowProjectionV2({
         workflowState,
-        activeLane: threadTab,
+        activeLane: isWorkflowThreadTab(threadTab) ? threadTab : 'execution',
         selectedModel: sessionState.selectedModel,
         selectedModelProvider: sessionState.activeThread?.modelProvider ?? null,
         projectPath: snapshot?.project.project_path ?? sessionState.activeThread?.cwd ?? null,
@@ -396,8 +414,8 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       workflowState,
     ],
   )
-  const workflowLane = workflowProjection.lanes[threadTab]
-  const activeThreadId = workflowLane.threadId
+  const workflowLane = isWorkflowThreadTab(threadTab) ? workflowProjection.lanes[threadTab] : null
+  const activeThreadId = isRootThreadTab ? rootThreadId : workflowLane?.threadId ?? null
   latestLaneThreadIdForResyncRef.current = activeThreadId
   isSelectingForResyncRef.current = sessionState.isSelectingThread
   const workflowDebugStateRecord =
@@ -460,6 +478,10 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       setWorkflowContextItem(null)
       return
     }
+    if (!workflowLane || isRootThreadTab) {
+      setWorkflowContextItem(null)
+      return
+    }
     const role = workflowRoleForThreadTab(threadTab)
     let cancelled = false
     void getWorkflowContextV2(projectId, nodeId, role)
@@ -478,7 +500,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   }, [
     nodeId,
     projectId,
+    isRootThreadTab,
     threadTab,
+    workflowLane,
     workflowState?.context.frameVersion,
     workflowState?.context.specVersion,
     workflowState?.context.splitManifestVersion,
@@ -551,7 +575,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     ],
   )
   const autoEnsureRole =
-    threadTab === 'ask'
+    isRootThreadTab
+      ? null
+      : threadTab === 'ask'
       ? workflowProjection.lanes.ask.threadId
         ? null
         : ('ask_planning' as const)
@@ -578,6 +604,8 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       !detailNode ||
       !snapshot ||
       snapshot.project.id !== projectId ||
+      isRootThreadTab ||
+      !workflowLane ||
       shouldCanonicalizeV2 ||
       !workflowProjection.isLoaded
     ) {
@@ -625,6 +653,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   }, [
     activeMutation,
     detailNode,
+    isRootThreadTab,
     isWorkflowLoading,
     nodeId,
     projectId,
@@ -633,8 +662,51 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     shouldCanonicalizeV2,
     snapshot,
     threadTab,
-    workflowLane.threadId,
+    workflowLane?.threadId,
     workflowProjection.isLoaded,
+  ])
+
+  useEffect(() => {
+    if (
+      !isRootThreadTab ||
+      !projectId ||
+      !nodeId ||
+      !detailNode ||
+      !snapshot ||
+      snapshot.project.id !== projectId ||
+      shouldCanonicalizeV2 ||
+      sessionState.connection.phase !== 'initialized'
+    ) {
+      return
+    }
+    let cancelled = false
+    void api.ensureRootThread(projectId, nodeId, workflowModelPolicy)
+      .then((response) => {
+        if (cancelled) {
+          return
+        }
+        setRootThreadId(response.threadId)
+        if (sessionState.activeThreadId !== response.threadId) {
+          void sessionCommands.selectThread(response.threadId).catch(() => undefined)
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to ensure root project-prep thread', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    detailNode,
+    isRootThreadTab,
+    nodeId,
+    projectId,
+    sessionCommands.selectThread,
+    sessionState.activeThreadId,
+    sessionState.connection.phase,
+    shouldCanonicalizeV2,
+    snapshot,
+    workflowModelPolicy,
   ])
 
   // After switching thread tabs, session selection can settle after this lane effect; mark pending so
@@ -673,7 +745,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   }, [
     sessionState.isSelectingThread,
     sessionState.activeThreadId,
-    workflowLane.threadId,
+    workflowLane?.threadId,
     workflowProjection.isLoaded,
     sessionState.connection.phase,
     sessionCommands.resyncThreadTranscript,
@@ -747,7 +819,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   ])
 
   useEffect(() => {
-    if (!isSessionDebugMode || !projectId || !nodeId || !workflowProjection.isLoaded) {
+    if (!isSessionDebugMode || !projectId || !nodeId || !workflowProjection.isLoaded || !workflowLane) {
       return
     }
 
@@ -808,7 +880,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     projectId,
     sessionState.activeThreadId,
     threadTab,
-    workflowLane.threadId,
+    workflowLane?.threadId,
     workflowProjection.isLoaded,
     sessionProjectionState.turnsByThread,
     sessionProjectionState.lastEventSeqByThread,
@@ -876,7 +948,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   }, [activeProjectId, detailCardState, detailNode, nodeId, projectError, projectId, snapshot])
 
   const combinedError =
-    workflowError ??
+    (isRootThreadTab ? null : workflowError) ??
     sessionState.runtimeError ??
     sessionState.connection.error?.message ??
     null
@@ -892,6 +964,18 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
 
   const composerDisabled = useMemo(() => {
     if (activeWorkflowGeneratedTurn || activeMutation !== null) {
+      return true
+    }
+    if (isRootThreadTab) {
+      if (!activeThreadId || !isLaneThreadSelected) {
+        return true
+      }
+      if (sessionState.isSelectingThread || !sessionState.isActiveThreadReady) {
+        return true
+      }
+      return sessionState.connection.phase === 'error'
+    }
+    if (!workflowLane) {
       return true
     }
     if (!workflowLane.policy.canSubmit) {
@@ -920,16 +1004,40 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     activeMutation,
     activeThreadId,
     activeWorkflowGeneratedTurn,
+    isRootThreadTab,
     isLaneThreadSelected,
     sessionState.connection.phase,
     sessionState.isActiveThreadReady,
     sessionState.isSelectingThread,
-    workflowLane.lane,
-    workflowLane.policy.canSubmit,
+    workflowLane?.lane,
+    workflowLane?.policy.canSubmit,
   ])
 
   const handleSubmit = useCallback(
     async (payload: Parameters<typeof sessionCommands.submit>[0]) => {
+      if (isRootThreadTab) {
+        if (!projectId || !nodeId) {
+          return
+        }
+        let targetThreadId = rootThreadId
+        if (!targetThreadId) {
+          const ensured = await api.ensureRootThread(projectId, nodeId, workflowModelPolicy)
+          targetThreadId = ensured.threadId
+          setRootThreadId(targetThreadId)
+        }
+        if (targetThreadId && sessionState.activeThreadId !== targetThreadId) {
+          await sessionCommands.selectThread(targetThreadId)
+        }
+        await sessionCommands.submit(
+          payload,
+          undefined,
+          { mcpContext: { projectId, nodeId, role: 'root' } },
+        )
+        return
+      }
+      if (!workflowLane) {
+        return
+      }
       if (!workflowLane.policy.canSubmit) {
         return
       }
@@ -964,9 +1072,11 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     },
     [
       ensureThread,
+      isRootThreadTab,
       loadWorkflowState,
       nodeId,
       projectId,
+      rootThreadId,
       sessionCommands.selectThread,
       sessionCommands.submit,
       sessionState.activeThreadId,
@@ -1130,6 +1240,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
 
   const composerWorkflowActions = useMemo(() => {
+    if (!workflowLane) {
+      return null
+    }
     if (workflowLane.actions.length === 0) {
       return null
     }
@@ -1151,7 +1264,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         ))}
       </>
     )
-  }, [activeMutation, handleWorkflowLaneAction, workflowLane.actions])
+  }, [activeMutation, handleWorkflowLaneAction, workflowLane])
 
   const handleThreadTabChange = useCallback(
     (nextThreadTab: ThreadTab) => {
@@ -1252,10 +1365,12 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       nodeId,
       nodeRegistry: snapshot?.tree_state.node_registry ?? null,
       specConfirmed: nodeDetailState?.spec_confirmed === true,
+      showThreadTabs: !isRootThreadTab,
     }),
     [
       combinedError,
       handleThreadTabChange,
+      isRootThreadTab,
       nodeDetailState?.spec_confirmed,
       nodeId,
       projectId,

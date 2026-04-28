@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useShallow } from 'zustand/react/shallow'
 import type { SplitMode } from '../../api/types'
@@ -65,6 +65,8 @@ export function GraphWorkspace() {
     })),
   )
   const setActiveSurface = useUIStore((state) => state.setActiveSurface)
+  const lastActiveSplitNodeIdRef = useRef<string | null>(null)
+  const previousSplitStatusRef = useRef(splitStatus)
 
   useEffect(() => {
     setActiveSurface('graph')
@@ -127,7 +129,9 @@ export function GraphWorkspace() {
 
       const targetNode = latestSnapshot?.tree_state.node_registry.find((item) => item.node_id === nodeId)
       const destination =
-        targetNode?.node_kind === 'review'
+        targetNode?.node_kind === 'root' || targetNode?.is_init_node === true
+          ? buildChatV2Url(projectId, nodeId, 'root')
+          : targetNode?.node_kind === 'review'
           ? buildChatV2Url(projectId, nodeId, 'audit')
           : buildChatV2Url(projectId, nodeId, 'ask')
       navigate(destination)
@@ -135,6 +139,22 @@ export function GraphWorkspace() {
     },
     [navigate, selectNode],
   )
+
+  useEffect(() => {
+    const previousStatus = previousSplitStatusRef.current
+    previousSplitStatusRef.current = splitStatus
+    if (splitStatus === 'active') {
+      lastActiveSplitNodeIdRef.current = splitNodeId
+      return
+    }
+    if (previousStatus === 'active' && splitStatus === 'idle') {
+      const completedNodeId = splitNodeId ?? lastActiveSplitNodeIdRef.current
+      lastActiveSplitNodeIdRef.current = null
+      if (completedNodeId) {
+        void openBreadcrumbForNode(completedNodeId)
+      }
+    }
+  }, [openBreadcrumbForNode, splitNodeId, splitStatus])
 
   async function handleOpenBreadcrumb(nodeId: string) {
     await openBreadcrumbForNode(nodeId)

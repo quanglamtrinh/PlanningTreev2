@@ -1,7 +1,7 @@
 export type NodeStatus = 'locked' | 'draft' | 'ready' | 'in_progress' | 'done'
 export type NodeKind = 'root' | 'original' | 'superseded' | 'review'
 export type WorkflowStep = 'frame' | 'clarify' | 'spec'
-export type ThreadRole = 'audit' | 'ask_planning' | 'execution'
+export type ThreadRole = 'audit' | 'ask_planning' | 'execution' | 'root'
 export type WorkflowPhase =
   | 'idle'
   | 'execution_running'
@@ -1337,7 +1337,7 @@ export interface WorkflowActionAcceptedResponse {
 
 
 // MCP registry/profile types
-export type McpThreadRole = 'ask_planning' | 'execution' | 'audit' | 'package_review'
+export type McpThreadRole = 'ask_planning' | 'execution' | 'audit' | 'package_review' | 'root'
 export type McpTransportType = 'stdio' | 'streamable_http'
 
 export interface McpRegistryServer {

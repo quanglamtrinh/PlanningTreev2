@@ -2,7 +2,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
+const { mockUseSessionFacadeV2, apiMock } = vi.hoisted(() => ({
+  mockUseSessionFacadeV2: vi.fn(),
+  apiMock: {
+    ensureRootThread: vi.fn(),
+  },
+}))
+
+vi.mock('../../src/api/client', () => ({
+  api: apiMock,
+  appendAuthToken: (url: string) => url,
+  initAuthToken: vi.fn().mockResolvedValue(undefined),
+}))
 
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
@@ -166,7 +177,7 @@ import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 import { useUIStore } from '../../src/stores/ui-store'
 
-function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snapshot {
+function makeProjectSnapshot(nodeKind: 'root' | 'original' | 'review' = 'original'): Snapshot {
   return {
     schema_version: 6,
     project: {
@@ -362,7 +373,7 @@ function LocationProbe() {
 }
 
 function seedStores(options: {
-  nodeKind?: 'original' | 'review'
+  nodeKind?: 'root' | 'original' | 'review'
   workflowState?: WorkflowStateV2
   workflowError?: string | null
 }) {
@@ -485,6 +496,7 @@ function seedStores(options: {
 describe('BreadcrumbViewV2', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    apiMock.ensureRootThread.mockResolvedValue({ threadId: 'root-thread-1', role: 'root' })
     useThreadSessionStore.getState().clear()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
@@ -766,6 +778,58 @@ describe('BreadcrumbViewV2', () => {
     await waitFor(() => {
       expect(useWorkflowStateStoreV2.getState().loadWorkflowState).toHaveBeenCalledWith('project-1', 'root')
     })
+  })
+
+  it('ensures root thread, hides workflow tabs, and submits with root MCP context', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'root-thread-1',
+      activeThread: makeThread('root-thread-1'),
+      isActiveThreadReady: true,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    const workflowState = makeWorkflowState()
+    seedStores({ nodeKind: 'root', workflowState })
+    const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
+    useWorkflowStateStoreV2.setState({
+      loadWorkflowState,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+          modelProvider: 'openai',
+        }),
+      )
+    })
+    expect(screen.queryByRole('tab', { name: 'Ask' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Review' })).not.toBeInTheDocument()
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('composer-submit-mock'))
+
+    await waitFor(() => {
+      expect(facade.commands.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'queued from composer mock',
+        }),
+        undefined,
+        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' } },
+      )
+    })
+    expect(loadWorkflowState).not.toHaveBeenCalled()
   })
 
   it('shows overlay only when pending request belongs to active lane thread', async () => {

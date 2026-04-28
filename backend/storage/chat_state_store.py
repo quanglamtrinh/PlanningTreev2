@@ -11,7 +11,7 @@ from backend.storage.file_utils import atomic_write_json, ensure_dir, iso_now, l
 from backend.storage.project_locks import ProjectLockRegistry
 from backend.storage.workspace_store import WorkspaceStore
 
-_VALID_THREAD_ROLES = {"audit", "ask_planning", "execution"}
+_VALID_THREAD_ROLES = {"audit", "ask_planning", "execution", "root"}
 _DEFAULT_THREAD_ROLE = "ask_planning"
 
 

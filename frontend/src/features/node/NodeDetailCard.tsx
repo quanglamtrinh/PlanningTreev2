@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
-import { NodeDescribePanel } from './NodeDescribePanel'
+import { NodeDescribePanel, ROOT_INFO_TAB_MCP_ROLE_BLOCKS } from './NodeDescribePanel'
 import { NodeDocumentEditor, type FramePostUpdateBranch } from './NodeDocumentEditor'
 import { SplitPanel } from './SplitPanel'
 import { NodeStatusBadge } from './NodeStatusBadge'
@@ -93,6 +93,7 @@ export function NodeDetailCard({
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
   const [framePostUpdateBranch, setFramePostUpdateBranch] = useState<FramePostUpdateBranch>('none')
   const isReviewNode = node?.node_kind === 'review'
+  const isRootNode = variant === 'breadcrumb' && (node?.node_kind === 'root' || node?.is_init_node === true)
 
   const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
   const detailState = useDetailStateStore((s) => (detailStateKey ? s.entries[detailStateKey] : undefined))
@@ -217,6 +218,7 @@ export function NodeDetailCard({
 
   /** Graph side panel: task summary only (breadcrumb/chat carries frame/spec/clarify workflow). */
   const graphInfoOnly = variant === 'graph' && !isReviewNode
+  const infoOnly = graphInfoOnly || isRootNode
 
   const rootClassName = useMemo(
     () =>
@@ -398,7 +400,7 @@ export function NodeDetailCard({
           </div>
         </div>
 
-        {!isReviewNode && !graphInfoOnly ? (
+        {!isReviewNode && !infoOnly ? (
           <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
             <WorkflowStepper
               detailTab={detailTab}
@@ -427,13 +429,13 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {!graphInfoOnly && detailState?.workflow_notice ? (
+        {!infoOnly && detailState?.workflow_notice ? (
           <div className={styles.workflowNoticeBanner} data-testid="workflow-notice" role="status">
             {detailState.workflow_notice}
           </div>
         ) : null}
 
-        {!graphInfoOnly && !isReviewNode && detailState?.package_audit_ready ? (
+        {!infoOnly && !isReviewNode && detailState?.package_audit_ready ? (
           <div
             className={styles.packageAuditReadyBanner}
             data-testid="package-audit-ready-banner"
@@ -452,20 +454,21 @@ export function NodeDetailCard({
 
         {isReviewNode ? <ReviewDetailPanel projectId={projectId} node={node} /> : null}
 
-        {graphInfoOnly ? (
+        {infoOnly ? (
           <div className={`${styles.cardBodyAux} ${styles.cardBodyAuxDescribe}`}>
             <NodeDescribePanel
               node={node}
               projectId={projectId}
               detailState={effectiveDetailState}
               isResetting={isResettingWorkspace}
+              mcpRoleBlocks={isRootNode ? ROOT_INFO_TAB_MCP_ROLE_BLOCKS : undefined}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
             />
           </div>
         ) : null}
 
-        {!isReviewNode && variant === 'breadcrumb' ? (
+        {!isReviewNode && variant === 'breadcrumb' && !isRootNode ? (
           <div
             id={breadcrumbPanelId}
             role="tabpanel"

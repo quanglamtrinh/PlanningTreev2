@@ -89,6 +89,35 @@ def test_registry_profile_effective_config_hash_and_secret_rejection(tmp_path) -
     assert preview["mcpConfigHash"].startswith("sha256:")
 
 
+def test_root_profile_effective_config_uses_root_role(tmp_path) -> None:
+    service = McpIntegrationService(build_app_paths(tmp_path))
+    service.upsert_registry_server(
+        {
+            "serverId": "docs",
+            "name": "Docs",
+            "transport": {"type": "stdio", "command": "python", "args": ["docs_mcp.py"]},
+        }
+    )
+    service.write_profile(
+        "project-1",
+        "root-node",
+        "root",
+        {"mcpEnabled": True, "servers": {"docs": {"enabled": True}}},
+    )
+
+    preview = service.preview_effective_config("project-1", "root-node", "root")
+
+    assert preview["role"] == "root"
+    assert preview["profile"]["role"] == "root"
+    assert preview["effectiveConfig"]["mcp_servers"] == {
+        "docs": {
+            "command": "python",
+            "args": ["docs_mcp.py"],
+            "default_tools_approval_mode": "auto",
+        }
+    }
+
+
 def test_project_scoped_filesystem_server_uses_project_cwd(tmp_path) -> None:
     project_root = tmp_path / "project-worktree"
     project_root.mkdir()

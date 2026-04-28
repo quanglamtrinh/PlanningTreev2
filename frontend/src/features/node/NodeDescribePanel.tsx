@@ -124,7 +124,7 @@ function InfoPathList({
   )
 }
 
-type InfoTabMcpRole = Extract<McpThreadRole, 'ask_planning' | 'execution' | 'audit'>
+type InfoTabMcpRole = Extract<McpThreadRole, 'ask_planning' | 'execution' | 'audit' | 'root'>
 
 type InfoTabMcpRoleBlock = {
   role: InfoTabMcpRole
@@ -156,8 +156,16 @@ const INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
   },
 ]
 
-function createEmptyMcpRoleStates(): Record<InfoTabMcpRole, McpRolePanelState> {
-  return INFO_TAB_MCP_ROLE_BLOCKS.reduce(
+export const ROOT_INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
+  {
+    role: 'root',
+    title: 'Root',
+    description: 'Project preparation thread for codebase scans, docs, and knowledge artifacts.',
+  },
+]
+
+function createEmptyMcpRoleStates(roleBlocks: readonly InfoTabMcpRoleBlock[]): Record<InfoTabMcpRole, McpRolePanelState> {
+  return roleBlocks.reduce(
     (states, { role }) => {
       states[role] = { profile: null, effective: null, error: null }
       return states
@@ -180,11 +188,19 @@ function mcpRuntimeLabel(effective: McpEffectiveConfigResponse | null): string {
   return 'Idle'
 }
 
-function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; nodeId: string }) {
+function ThreadMcpExtensionsPanel({
+  projectId,
+  nodeId,
+  roleBlocks = INFO_TAB_MCP_ROLE_BLOCKS,
+}: {
+  projectId: string
+  nodeId: string
+  roleBlocks?: readonly InfoTabMcpRoleBlock[]
+}) {
   const [registry, setRegistry] = useState<McpRegistryServer[]>([])
   const [registryError, setRegistryError] = useState<string | null>(null)
   const [roleStates, setRoleStates] = useState<Record<InfoTabMcpRole, McpRolePanelState>>(() =>
-    createEmptyMcpRoleStates(),
+    createEmptyMcpRoleStates(roleBlocks),
   )
 
   useEffect(() => {
@@ -193,13 +209,13 @@ function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; no
     async function load() {
       setRegistryError(null)
       setRegistry([])
-      setRoleStates(createEmptyMcpRoleStates())
+      setRoleStates(createEmptyMcpRoleStates(roleBlocks))
 
       try {
         const [registryResponse, roleResponses] = await Promise.all([
           api.listMcpRegistry(),
           Promise.all(
-            INFO_TAB_MCP_ROLE_BLOCKS.map(async ({ role }) => {
+            roleBlocks.map(async ({ role }) => {
               try {
                 const [profileResponse, effectiveResponse] = await Promise.all([
                   api.readMcpThreadProfile(projectId, nodeId, role),
@@ -230,7 +246,7 @@ function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; no
           return
         }
 
-        const nextRoleStates = createEmptyMcpRoleStates()
+        const nextRoleStates = createEmptyMcpRoleStates(roleBlocks)
         roleResponses.forEach(({ role, state }) => {
           nextRoleStates[role] = state
         })
@@ -249,7 +265,7 @@ function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; no
     return () => {
       cancelled = true
     }
-  }, [projectId, nodeId])
+  }, [projectId, nodeId, roleBlocks])
 
   async function patchProfile(role: InfoTabMcpRole, patch: Partial<McpThreadProfile>) {
     try {
@@ -302,7 +318,7 @@ function ThreadMcpExtensionsPanel({ projectId, nodeId }: { projectId: string; no
       {registryError ? <p className={styles.infoMcpError}>{registryError}</p> : null}
 
       <div className={styles.infoMcpRoleGrid}>
-        {INFO_TAB_MCP_ROLE_BLOCKS.map(({ role, title, description }) => {
+        {roleBlocks.map(({ role, title, description }) => {
           const state = roleStates[role]
           const profile = state.profile
           const effective = state.effective
@@ -391,6 +407,7 @@ type Props = {
   onResetToBefore?: () => void | Promise<void>
   onResetToResult?: () => void | Promise<void>
   isResetting?: boolean
+  mcpRoleBlocks?: readonly InfoTabMcpRoleBlock[]
 }
 
 function displaySha(value: string | null | undefined): string {
@@ -436,6 +453,7 @@ export function NodeDescribePanel({
   onResetToBefore,
   onResetToResult,
   isResetting = false,
+  mcpRoleBlocks = INFO_TAB_MCP_ROLE_BLOCKS,
 }: Props) {
   const [openInfoPath, setOpenInfoPath] = useState<{
     variant: 'docs' | 'skills'
@@ -518,7 +536,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeExtensionsSection}>
               <h2 className={styles.describeSectionTitle}>Extensions</h2>
-              <ThreadMcpExtensionsPanel projectId={projectId} nodeId={node.node_id} />
+              <ThreadMcpExtensionsPanel projectId={projectId} nodeId={node.node_id} roleBlocks={mcpRoleBlocks} />
             </div>
           </div>
 

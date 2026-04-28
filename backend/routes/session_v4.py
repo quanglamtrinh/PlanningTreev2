@@ -272,6 +272,94 @@ class McpOauthLoginRequest(BaseModel):
     timeoutSecs: int | None = None
 
 
+class RootThreadEnsureRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str | None = None
+    modelProvider: str | None = None
+
+
+def _thread_id_from_start_response(response: dict[str, Any]) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    thread = response.get("thread")
+    if isinstance(thread, dict):
+        thread_id = str(thread.get("id") or thread.get("threadId") or "").strip()
+        if thread_id:
+            return thread_id
+    for key in ("threadId", "id"):
+        thread_id = str(response.get(key) or "").strip()
+        if thread_id:
+            return thread_id
+    return None
+
+
+def _native_thread_exists(manager: Any, thread_id: str) -> bool:
+    check = getattr(manager, "native_rollout_metadata_exists", None)
+    if not callable(check):
+        return True
+    try:
+        return bool(check(thread_id))
+    except Exception:
+        return False
+
+
+def _ensure_root_node_or_raise(storage: Any, project_id: str, node_id: str) -> dict[str, Any]:
+    snapshot = storage.project_store.load_snapshot(project_id)
+    tree_state = snapshot.get("tree_state") if isinstance(snapshot.get("tree_state"), dict) else {}
+    root_node_id = str(tree_state.get("root_node_id") or "").strip()
+    node_index = tree_state.get("node_index") if isinstance(tree_state.get("node_index"), dict) else {}
+    if node_id != root_node_id or node_id not in node_index:
+        raise SessionCoreError(
+            code="ERR_ROOT_THREAD_NON_ROOT_NODE",
+            message="Root project-prep thread can only be ensured for the project root node.",
+            status_code=400,
+            details={"projectId": project_id, "nodeId": node_id, "rootNodeId": root_node_id or None},
+        )
+    return snapshot
+
+
+def _ensure_root_thread(
+    *,
+    request: Request,
+    project_id: str,
+    node_id: str,
+    payload: RootThreadEnsureRequest,
+) -> dict[str, Any]:
+    storage = request.app.state.storage
+    manager = _manager(request)
+    with storage.project_lock(project_id):
+        snapshot = _ensure_root_node_or_raise(storage, project_id, node_id)
+        session = storage.chat_state_store.read_session(project_id, node_id, thread_role="root")
+        existing_thread_id = str(session.get("thread_id") or "").strip()
+        if existing_thread_id and _native_thread_exists(manager, existing_thread_id):
+            return {"threadId": existing_thread_id, "role": "root"}
+
+        project = snapshot.get("project") if isinstance(snapshot.get("project"), dict) else {}
+        cwd = str(project.get("project_path") or "").strip()
+        start_payload: dict[str, Any] = {}
+        if cwd:
+            start_payload["cwd"] = cwd
+        if payload.model:
+            start_payload["model"] = payload.model
+        if payload.modelProvider:
+            start_payload["modelProvider"] = payload.modelProvider
+
+        response = manager.thread_start(start_payload)
+        thread_id = _thread_id_from_start_response(response)
+        if not thread_id:
+            raise SessionCoreError(
+                code="ERR_ROOT_THREAD_START_FAILED",
+                message="Session Core did not return a root thread id.",
+                status_code=502,
+                details={"response": response if isinstance(response, dict) else None},
+            )
+
+        session["thread_id"] = thread_id
+        session["thread_role"] = "root"
+        storage.chat_state_store.write_session(project_id, node_id, session, thread_role="root")
+        return {"threadId": thread_id, "role": "root"}
+
+
 
 
 @router.get("/v4/extensions/mcp/registry")
@@ -369,6 +457,32 @@ def mcp_effective_config_v4(
         return _error_response(exc)
     except Exception:
         logger.exception("mcp_effective_config_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/root-thread/ensure")
+def root_thread_ensure_v4(
+    projectId: str,
+    nodeId: str,
+    request: Request,
+    payload: RootThreadEnsureRequest | None = Body(default=None),
+) -> JSONResponse:
+    try:
+        return JSONResponse(
+            status_code=200,
+            content=_ok(
+                _ensure_root_thread(
+                    request=request,
+                    project_id=projectId,
+                    node_id=nodeId,
+                    payload=payload or RootThreadEnsureRequest(),
+                )
+            ),
+        )
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("root_thread_ensure_v4 failed")
         return _unexpected_error_response()
 
 
