@@ -163,7 +163,7 @@ export function BreadcrumbThreadPaneV2({
                 turns={transcriptProps.turns}
                 itemsByTurn={transcriptProps.itemsByTurn}
                 visibleRows={transcriptProps.visibleRows}
-                workflowContextItem={transcriptProps.workflowContextItem ?? null}
+                showWorkflowContext={false}
               />
             </div>
 

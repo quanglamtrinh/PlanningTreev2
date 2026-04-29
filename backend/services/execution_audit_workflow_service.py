@@ -26,6 +26,7 @@ from backend.services.execution_file_change_hydrator import (
     ExecutionFileChangeDiffSource,
     ExecutionFileChangeHydrator,
 )
+from backend.services import planningtree_workspace
 from backend.services.finish_task_service import FinishTaskService
 from backend.services.git_checkpoint_service import GitCheckpointService
 from backend.services.review_service import ReviewService
@@ -36,7 +37,6 @@ from backend.storage.storage import Storage
 logger = logging.getLogger(__name__)
 
 _HANDOFF_SUMMARY_PLACEHOLDER = "No execution summary."
-_HANDOFF_DOCS_DIR = "docs"
 _HANDOFF_FILE_NAME = "handoff.md"
 _HANDOFF_FILE_HEADER = "# PlanningTree Handoff\n\n"
 _LIVE_FILE_CHANGE_HYDRATE_DEBOUNCE_SEC = 0.35
@@ -1821,7 +1821,11 @@ class ExecutionAuditWorkflowService:
         root = str(workspace_root or "").strip()
         if not root:
             raise FinishTaskNotAllowed("Project snapshot is missing project_path.")
-        target = Path(root).expanduser().resolve() / _HANDOFF_DOCS_DIR / _HANDOFF_FILE_NAME
+        workspace_root = Path(root).expanduser().resolve()
+        node_dir = planningtree_workspace.resolve_node_dir(workspace_root, snapshot, node_id)
+        if node_dir is None:
+            raise NodeNotFound(node_id)
+        target = node_dir / _HANDOFF_FILE_NAME
         if target.exists():
             content = load_text(target)
             if not content.strip():

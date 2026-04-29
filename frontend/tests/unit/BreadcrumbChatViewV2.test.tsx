@@ -363,6 +363,7 @@ function makeFacade(
       interrupt: vi.fn().mockResolvedValue(undefined),
       resolveRequest: vi.fn().mockResolvedValue(undefined),
       rejectRequest: vi.fn().mockResolvedValue(undefined),
+      resyncThreadTranscript: vi.fn().mockResolvedValue(undefined),
     },
   }
 }
@@ -817,6 +818,7 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Review' })).not.toBeInTheDocument()
     expect(facade.commands.selectThread).not.toHaveBeenCalled()
+    expect(facade.commands.resyncThreadTranscript).toHaveBeenCalledWith('root-thread-1')
 
     fireEvent.click(screen.getByTestId('composer-submit-mock'))
 
@@ -830,6 +832,232 @@ describe('BreadcrumbViewV2', () => {
       )
     })
     expect(loadWorkflowState).not.toHaveBeenCalled()
+  })
+
+  it('keeps root composer enabled once the root thread is selected while metadata hydrates', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'root-thread-1',
+      activeThread: null,
+      isActiveThreadReady: false,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({ nodeKind: 'root' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+        }),
+      )
+    })
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('enables root composer after ensure even before the facade selection catches up', async () => {
+    const facade = makeFacade({
+      activeThreadId: null,
+      activeThread: null,
+      isActiveThreadReady: false,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({ nodeKind: 'root' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+        }),
+      )
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+    })
+
+    fireEvent.click(screen.getByTestId('composer-submit-mock'))
+
+    await waitFor(() => {
+      expect(facade.commands.selectThread).toHaveBeenCalledWith('root-thread-1')
+    })
+    await waitFor(() => {
+      expect(facade.commands.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'queued from composer mock',
+        }),
+        undefined,
+        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' } },
+      )
+    })
+  })
+
+  it('keeps root composer editable while the root thread ensure request is still pending', () => {
+    apiMock.ensureRootThread.mockImplementation(
+      () =>
+        new Promise(() => {
+          // Keep the ensure request pending to verify the composer does not wait on it.
+        }),
+    )
+    const facade = makeFacade({
+      activeThreadId: null,
+      activeThread: null,
+      isActiveThreadReady: false,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({ nodeKind: 'root' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('preserves requested root thread while the project snapshot is loading', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'root-thread-1',
+      activeThread: makeThread('root-thread-1'),
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    const loadedSnapshot = makeProjectSnapshot('root')
+    useProjectStore.setState({
+      activeProjectId: 'project-1',
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+        ask_followup_queue_enabled: true,
+      },
+      snapshot: null,
+      selectedNodeId: null,
+      isLoadingSnapshot: false,
+      error: null,
+      loadProject: vi.fn().mockImplementation(async () => {
+        useProjectStore.setState({
+          snapshot: loadedSnapshot,
+          selectedNodeId: 'root',
+          isLoadingSnapshot: false,
+        } as Partial<ReturnType<typeof useProjectStore.getState>>)
+      }),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          workflow: null,
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: true,
+          spec_stale: false,
+          spec_confirmed: true,
+        },
+      },
+      loadDetailState: vi.fn().mockResolvedValue(undefined),
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('location-probe')).toHaveTextContent(
+      '/projects/project-1/nodes/root/chat-v2?thread=root',
+    )
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.any(Object),
+      )
+    })
+    expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
+  })
+
+  it('keeps requested root mode editable while the project snapshot request is pending', () => {
+    const facade = makeFacade({
+      activeThreadId: null,
+      activeThread: null,
+      isActiveThreadReady: false,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    useProjectStore.setState({
+      activeProjectId: 'project-1',
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+        ask_followup_queue_enabled: true,
+      },
+      snapshot: null,
+      selectedNodeId: null,
+      isLoadingSnapshot: true,
+      error: null,
+      loadProject: vi.fn().mockImplementation(
+        () =>
+          new Promise(() => {
+            // Keep snapshot hydration pending so the route itself must preserve root mode.
+          }),
+      ),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
   })
 
   it('shows overlay only when pending request belongs to active lane thread', async () => {

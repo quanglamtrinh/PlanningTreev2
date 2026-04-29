@@ -62,9 +62,15 @@ async def init_git(request: Request, project_id: str) -> dict:
 
 @router.get("/projects/{project_id}/workspace-text-file")
 async def get_workspace_text_file(
-    request: Request, project_id: str, relative_path: str
+    request: Request,
+    project_id: str,
+    relative_path: str,
+    scope: str = "workspace",
+    node_id: Optional[str] = None,
 ) -> dict:
-    return request.app.state.workspace_file_service.get_text_file(project_id, relative_path)
+    return request.app.state.workspace_file_service.get_text_file(
+        project_id, relative_path, scope=scope, node_id=node_id
+    )
 
 
 @router.put("/projects/{project_id}/workspace-text-file")
@@ -73,7 +79,9 @@ async def put_workspace_text_file(
     project_id: str,
     relative_path: str,
     body: PutWorkspaceTextFileRequest,
+    scope: str = "workspace",
+    node_id: Optional[str] = None,
 ) -> dict:
     return request.app.state.workspace_file_service.put_text_file(
-        project_id, relative_path, body.content
+        project_id, relative_path, body.content, scope=scope, node_id=node_id
     )

@@ -230,7 +230,7 @@ describe('sessionRuntimeController', () => {
 
     expect(harness.api.resumeThread).toHaveBeenCalledWith('thread-1', {})
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
-    expect(harness.api.listThreadTurns).not.toHaveBeenCalled()
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
   })
 
@@ -252,12 +252,35 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [turn], { mode: 'replace' })
   })
 
+  it('hydrates from thread/turns when thread/read includeTurns is empty', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-list',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [] }),
+    })
+    harness.api.listThreadTurns.mockResolvedValue({
+      data: [turn],
+      nextCursor: null,
+    })
+
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [turn], { mode: 'replace' })
+  })
+
   it('hydrates thread state with replace mode during full resync recovery', async () => {
     await harness.controller.hydrateThreadState('thread-1', {
       force: true,
       replaceProjection: true,
     })
 
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
   })
 
@@ -278,6 +301,7 @@ describe('sessionRuntimeController', () => {
 
     expect(harness.api.getThreadJournalHead).not.toHaveBeenCalled()
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
     expect(harness.spies.setReplayCursor).not.toHaveBeenCalled()
   })
 

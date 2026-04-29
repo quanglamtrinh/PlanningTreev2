@@ -173,6 +173,9 @@ export function ComposerBar({ onSend, disabled, earlyResponsePhase = 'idle' }: C
             onKeyDown={handleKeyDown}
             disabled={disabled}
             rows={1}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
           />
           <div className={styles.responseStatus} aria-live="polite">
             <span className={styles.responseStatusText}>{earlyResponseLabel ?? ' '}</span>

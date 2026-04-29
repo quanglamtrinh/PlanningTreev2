@@ -3,6 +3,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { EditorView } from '@codemirror/view'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../../api/client'
+import { DocumentRichViewContent } from '../markdown/DocumentRichView'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import styles from './NodeDetailCard.module.css'
 
@@ -10,8 +11,10 @@ const SAVE_DEBOUNCE_MS = 800
 
 type Props = {
   projectId: string
-  /** Path under project workspace root (API). */
+  /** Path under the selected workspace-text-file scope. */
   workspaceRelativePath: string
+  workspaceScope?: 'workspace' | 'root_node' | 'node'
+  nodeId?: string | null
   /** Label shown in toolbar (list path). */
   displayPath: string
   onClose: () => void
@@ -20,6 +23,8 @@ type Props = {
 export function InfoWorkspaceMarkdownEditor({
   projectId,
   workspaceRelativePath,
+  workspaceScope = 'workspace',
+  nodeId = null,
   displayPath,
   onClose,
 }: Props) {
@@ -29,10 +34,18 @@ export function InfoWorkspaceMarkdownEditor({
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [viewMode, setViewMode] = useState<'edit' | 'rich'>('edit')
   const editorSurfaceRef = useRef<HTMLDivElement>(null)
   const saveTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined)
   const syncRef = useRef({ content: '', savedContent: '' })
   syncRef.current = { content, savedContent }
+  const isRichView = viewMode === 'rich'
+
+  const applyMissingFileFallback = useCallback(() => {
+    setContent('')
+    setSavedContent('')
+    syncRef.current = { content: '', savedContent: '' }
+  }, [])
 
   const flushSave = useCallback(async () => {
     const { content: draft, savedContent: saved } = syncRef.current
@@ -42,7 +55,10 @@ export function InfoWorkspaceMarkdownEditor({
     setIsSaving(true)
     setSaveError(null)
     try {
-      const doc = await api.putWorkspaceTextFile(projectId, workspaceRelativePath, draft)
+      const doc = await api.putWorkspaceTextFile(projectId, workspaceRelativePath, draft, {
+        scope: workspaceScope,
+        nodeId,
+      })
       setSavedContent(doc.content)
       syncRef.current = { content: doc.content, savedContent: doc.content }
     } catch (e) {
@@ -50,7 +66,7 @@ export function InfoWorkspaceMarkdownEditor({
     } finally {
       setIsSaving(false)
     }
-  }, [projectId, workspaceRelativePath])
+  }, [nodeId, projectId, workspaceRelativePath, workspaceScope])
 
   const scheduleSave = useCallback(() => {
     if (saveTimerRef.current !== undefined) {
@@ -67,7 +83,7 @@ export function InfoWorkspaceMarkdownEditor({
     setLoading(true)
     setLoadError(null)
     void api
-      .getWorkspaceTextFile(projectId, workspaceRelativePath)
+      .getWorkspaceTextFile(projectId, workspaceRelativePath, { scope: workspaceScope, nodeId })
       .then((doc) => {
         if (cancelled) {
           return
@@ -80,6 +96,10 @@ export function InfoWorkspaceMarkdownEditor({
         if (cancelled) {
           return
         }
+        if (e instanceof ApiError && e.code === 'workspace_file_not_found') {
+          applyMissingFileFallback()
+          return
+        }
         setLoadError(e instanceof ApiError ? e.message : 'Failed to load file')
       })
       .finally(() => {
@@ -90,7 +110,7 @@ export function InfoWorkspaceMarkdownEditor({
     return () => {
       cancelled = true
     }
-  }, [projectId, workspaceRelativePath])
+  }, [applyMissingFileFallback, nodeId, projectId, workspaceRelativePath, workspaceScope])
 
   useEffect(() => {
     return () => {
@@ -121,6 +141,10 @@ export function InfoWorkspaceMarkdownEditor({
   }, [])
 
   const isReadOnly = loading || Boolean(loadError)
+
+  useEffect(() => {
+    setViewMode('edit')
+  }, [displayPath, nodeId, projectId, workspaceRelativePath, workspaceScope])
 
   return (
     <div className={`${styles.describeInfoEditorHost} ${styles.documentPanel}`}>
@@ -163,13 +187,17 @@ export function InfoWorkspaceMarkdownEditor({
               setLoadError(null)
               setLoading(true)
               void api
-                .getWorkspaceTextFile(projectId, workspaceRelativePath)
+                .getWorkspaceTextFile(projectId, workspaceRelativePath, { scope: workspaceScope, nodeId })
                 .then((doc) => {
                   setContent(doc.content)
                   setSavedContent(doc.content)
                   syncRef.current = { content: doc.content, savedContent: doc.content }
                 })
                 .catch((e) => {
+                  if (e instanceof ApiError && e.code === 'workspace_file_not_found') {
+                    applyMissingFileFallback()
+                    return
+                  }
                   setLoadError(e instanceof ApiError ? e.message : 'Failed to load file')
                 })
                 .finally(() => {
@@ -194,7 +222,37 @@ export function InfoWorkspaceMarkdownEditor({
         aria-busy={loading}
       >
         <div className={styles.editorSurfaceHeader}>
-          <span className={styles.editorSurfaceTitle}>Markdown editor</span>
+          <div className={styles.editorSurfaceHeaderMain}>
+            <span className={styles.editorSurfaceTitle}>Markdown editor</span>
+            <div
+              className={styles.editorModeToggle}
+              role="group"
+              aria-label={`${displayPath} view mode`}
+            >
+              <button
+                type="button"
+                className={`${styles.editorModeToggleButton} ${!isRichView ? styles.editorModeToggleButtonActive : ''}`}
+                data-testid="info-workspace-view-edit"
+                aria-pressed={!isRichView}
+                onClick={() => {
+                  setViewMode('edit')
+                }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                className={`${styles.editorModeToggleButton} ${isRichView ? styles.editorModeToggleButtonActive : ''}`}
+                data-testid="info-workspace-view-rich"
+                aria-pressed={isRichView}
+                onClick={() => {
+                  setViewMode('rich')
+                }}
+              >
+                Rich View
+              </button>
+            </div>
+          </div>
           <div className={styles.editorSurfaceHeaderActions}>
             <button
               type="button"
@@ -242,29 +300,36 @@ export function InfoWorkspaceMarkdownEditor({
           </div>
         </div>
         <div className={styles.editorSurfaceBody}>
-          <CodeMirror
-            className={styles.codemirrorHost}
-            value={content}
-            height="100%"
-            theme="none"
-            extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
-            basicSetup={{
-              foldGutter: false,
-              lineNumbers: true,
-            }}
-            editable={!isReadOnly}
-            onChange={(value) => {
-              setContent(value)
-              scheduleSave()
-            }}
-            onBlur={() => {
-              if (saveTimerRef.current !== undefined) {
-                globalThis.clearTimeout(saveTimerRef.current)
-                saveTimerRef.current = undefined
-              }
-              void flushSave()
-            }}
-          />
+          {isRichView ? (
+            <DocumentRichViewContent
+              content={content}
+              testId="info-workspace-rich-view"
+            />
+          ) : (
+            <CodeMirror
+              className={styles.codemirrorHost}
+              value={content}
+              height="100%"
+              theme="none"
+              extensions={[markdown(), vscodeMarkdownSyntaxHighlighting, EditorView.lineWrapping]}
+              basicSetup={{
+                foldGutter: false,
+                lineNumbers: true,
+              }}
+              editable={!isReadOnly}
+              onChange={(value) => {
+                setContent(value)
+                scheduleSave()
+              }}
+              onBlur={() => {
+                if (saveTimerRef.current !== undefined) {
+                  globalThis.clearTimeout(saveTimerRef.current)
+                  saveTimerRef.current = undefined
+                }
+                void flushSave()
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

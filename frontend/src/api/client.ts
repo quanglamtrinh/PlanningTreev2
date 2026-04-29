@@ -37,6 +37,8 @@ import type {
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
+type WorkspaceTextFileScope = 'workspace' | 'root_node' | 'node'
+type WorkspaceTextFileOptions = { scope?: WorkspaceTextFileScope; nodeId?: string | null }
 
 interface ErrorPayload {
   code?: string
@@ -426,16 +428,33 @@ export const api = {
       { content },
     )
   },
-  getWorkspaceTextFile(projectId: string, relativePath: string): Promise<WorkspaceTextFile> {
+  getWorkspaceTextFile(
+    projectId: string,
+    relativePath: string,
+    options?: WorkspaceTextFileOptions,
+  ): Promise<WorkspaceTextFile> {
     const q = new URLSearchParams({ relative_path: relativePath })
+    if (options?.scope) {
+      q.set('scope', options.scope)
+    }
+    if (options?.nodeId) {
+      q.set('node_id', options.nodeId)
+    }
     return jsonFetch<WorkspaceTextFile>(`/v3/projects/${projectId}/workspace-text-file?${q}`)
   },
   putWorkspaceTextFile(
     projectId: string,
     relativePath: string,
     content: string,
+    options?: WorkspaceTextFileOptions,
   ): Promise<WorkspaceTextFile> {
     const q = new URLSearchParams({ relative_path: relativePath })
+    if (options?.scope) {
+      q.set('scope', options.scope)
+    }
+    if (options?.nodeId) {
+      q.set('node_id', options.nodeId)
+    }
     return jsonFetch<WorkspaceTextFile>(
       `/v3/projects/${projectId}/workspace-text-file?${q}`,
       { method: 'PUT' },

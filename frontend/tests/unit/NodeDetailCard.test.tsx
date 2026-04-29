@@ -103,6 +103,8 @@ const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(()
     readMcpThreadProfile: vi.fn(),
     previewMcpEffectiveConfig: vi.fn(),
     updateMcpThreadProfile: vi.fn(),
+    getWorkspaceTextFile: vi.fn(),
+    putWorkspaceTextFile: vi.fn(),
   },
   workflowV2ApiMock: {
     getWorkflowStateV2: vi.fn(),
@@ -379,6 +381,16 @@ describe('NodeDetailCard', () => {
         },
       }),
     )
+    apiMock.getWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'docs/overview.md',
+      content: '# Overview',
+      updated_at: null,
+    })
+    apiMock.putWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'docs/overview.md',
+      content: '# Overview',
+      updated_at: null,
+    })
     apiMock.updateMcpThreadProfile.mockResolvedValue({
       profile: {
         projectId: 'project-1',
@@ -427,6 +439,150 @@ describe('NodeDetailCard', () => {
     expect(screen.getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByTestId('confirm-document-frame')).not.toBeInTheDocument()
     expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
+  })
+
+  it('renders thread skill toggles in the Info skills panel without MCP master state', async () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    const skillsPanel = screen.getByTestId('info-tab-skills-panel')
+    expect(within(skillsPanel).getByTestId('info-tab-skills-role-ask_planning')).toBeInTheDocument()
+    expect(within(skillsPanel).getByTestId('info-tab-skills-role-execution')).toBeInTheDocument()
+    expect(within(skillsPanel).getByTestId('info-tab-skills-role-audit')).toBeInTheDocument()
+    expect(within(skillsPanel).getByText('Planning brief')).toBeInTheDocument()
+    expect(within(skillsPanel).getByText('Implementation guardrails')).toBeInTheDocument()
+    expect(within(skillsPanel).getByText('Review checklist')).toBeInTheDocument()
+    expect(within(skillsPanel).queryByText('MCP off')).not.toBeInTheDocument()
+    expect(within(skillsPanel).getAllByRole('button', { name: 'Add skill' })).toHaveLength(3)
+
+    const auditRole = within(skillsPanel).getByTestId('info-tab-skills-role-audit')
+    const auditSwitch = within(auditRole).getByRole('switch')
+    expect(auditSwitch).toHaveAttribute('aria-checked', 'false')
+
+    fireEvent.click(auditSwitch)
+
+    expect(auditSwitch).toHaveAttribute('aria-checked', 'true')
+    expect(apiMock.updateMcpThreadProfile).not.toHaveBeenCalled()
+  })
+
+  it('renders task/context.md as read-only Rich View in Info tab', async () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+        workflowContextMarkdown={'# Context\n\nCurrent context from packet.'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open task/context.md in markdown editor' }))
+
+    expect(screen.getByTestId('info-context-rich-view')).toBeInTheDocument()
+    expect(screen.getByText('Current context from packet.')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-codemirror')).not.toBeInTheDocument()
+  })
+
+
+  it('opens global docs from the root node scope and task docs from the current node scope', async () => {
+    apiMock.getWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'docs/overview.md',
+      content: '# Overview',
+      updated_at: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ node_id: 'task-1' })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'task-1')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open docs/overview.md in markdown editor' }))
+    await waitFor(() => {
+      expect(apiMock.getWorkspaceTextFile).toHaveBeenCalledWith('project-1', 'docs/overview.md', {
+        scope: 'root_node',
+        nodeId: null,
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Back to info/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open task/handoff.md in markdown editor' }))
+    await waitFor(() => {
+      expect(apiMock.getWorkspaceTextFile).toHaveBeenCalledWith('project-1', 'handoff.md', {
+        scope: 'node',
+        nodeId: 'task-1',
+      })
+    })
+  })
+
+
+  it('opens missing task/handoff.md as an editable markdown document with Rich View', async () => {
+    apiMock.getWorkspaceTextFile.mockRejectedValue(
+      new MockApiError(404, { code: 'workspace_file_not_found', message: 'Not a file or missing: handoff.md' }),
+    )
+    apiMock.putWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'handoff.md',
+      content: '# Handoff\n\nReady for review.',
+      updated_at: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ node_id: 'task-1' })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'task-1')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open task/handoff.md in markdown editor' }))
+
+    const editor = await screen.findByTestId('mock-codemirror')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('info-workspace-view-edit')).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.change(editor, { target: { value: '# Handoff\n\nReady for review.' } })
+    fireEvent.click(screen.getByTestId('info-workspace-view-rich'))
+
+    expect(screen.getByTestId('info-workspace-rich-view')).toBeInTheDocument()
+    expect(screen.getByText('Ready for review.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('info-workspace-view-edit'))
+    fireEvent.blur(screen.getByTestId('mock-codemirror'))
+
+    await waitFor(() => {
+      expect(apiMock.putWorkspaceTextFile).toHaveBeenCalledWith(
+        'project-1',
+        'handoff.md',
+        '# Handoff\n\nReady for review.',
+        { scope: 'node', nodeId: 'task-1' },
+      )
+    })
   })
 
   it('breadcrumb root node renders Info only and loads only the root MCP profile', async () => {

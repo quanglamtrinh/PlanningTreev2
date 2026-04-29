@@ -610,6 +610,9 @@ export function ComposerPane({
             placeholder="Send a message"
             rows={2}
             disabled={disabled || isSubmitting}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
           />
         </div>
 

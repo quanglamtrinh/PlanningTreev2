@@ -11,7 +11,7 @@ import {
   captureWorkflowStreamCursor,
   primeAndSelectWorkflowTurn,
 } from '../session_v2/facade/workflowLiveTurnBridge'
-import { useThreadSessionStore } from '../session_v2/store/threadSessionStore'
+import { selectVisibleTranscriptRows, useThreadSessionStore } from '../session_v2/store/threadSessionStore'
 import type { SessionItem, SessionTurn } from '../session_v2/contracts'
 import { getWorkflowContextV2, type WorkflowContextPacketV2 } from '../workflow_v2/api/client'
 import { useWorkflowEventBridgeV2 } from '../workflow_v2/hooks/useWorkflowEventBridgeV2'
@@ -25,6 +25,11 @@ import {
   resolveV2RouteTarget,
   type ThreadTab,
 } from './surfaceRouting'
+import {
+  buildWorkflowContextMarkdown,
+  CONTEXT_DOC_EMPTY_MARKDOWN,
+  CONTEXT_DOC_RELATIVE_PATH,
+} from './workflowContextMarkdown'
 import {
   buildWorkflowProjectionV2,
   resolveWorkflowSubmitTurnPolicyV2,
@@ -185,6 +190,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const [searchParams] = useSearchParams()
   const [showWorkflowContextItems, setShowWorkflowContextItems] = useState(false)
   const [workflowContextItem, setWorkflowContextItem] = useState<SessionItem | null>(null)
+  const [workflowContextMarkdown, setWorkflowContextMarkdown] = useState<string>(CONTEXT_DOC_EMPTY_MARKDOWN)
   const [rootThreadId, setRootThreadId] = useState<string | null>(null)
   const [sessionCorrelationHistory, setSessionCorrelationHistory] = useState<Record<string, unknown>[]>([])
   const detailStateKey = projectId && nodeId ? `${projectId}::${nodeId}` : ''
@@ -195,6 +201,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const prevBreadcrumbThreadTabForResyncRef = useRef<ThreadTab | null>(null)
   const pendingLaneResyncAfterTabChangeRef = useRef(false)
   const lastTerminalWorkflowRefreshKeyRef = useRef<string | null>(null)
+  const lastContextDocSyncKeyRef = useRef<string | null>(null)
   const sessionFacade = useSessionFacadeV2({
     bootstrapPolicy: {
       autoBootstrapOnMount: true,
@@ -248,6 +255,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   const sessionProjectionState = useThreadSessionStore(
     useShallow((state) => ({
       turnsByThread: state.turnsByThread,
+      itemsByTurn: state.itemsByTurn,
       lastEventSeqByThread: state.lastEventSeqByThread,
       streamConnectedByThread: state.streamState.connectedByThread,
     })),
@@ -271,10 +279,12 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
 
   const requestedThreadTab = parseThreadTab(searchParams.get('thread'))
   const isSessionDebugMode = searchParams.get('debugSession') === '1'
+  const isRouteSnapshotLoaded = Boolean(snapshot && snapshot.project.id === projectId)
+  const shouldHoldRequestedRootThread = requestedThreadTab === 'root' && !isRouteSnapshotLoaded
   const routeTarget = resolveV2RouteTarget({
     requestedThreadTab,
     isReviewNode,
-    isRootNode,
+    isRootNode: isRootNode || shouldHoldRequestedRootThread,
   })
   const threadTab: ThreadTab = routeTarget.threadTab
   const isRootThreadTab = threadTab === 'root'
@@ -439,6 +449,23 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       ? (workflowDebugStateRecord.activeAuditRun as Record<string, unknown>)
       : null
   const laneTurns = activeThreadId ? sessionProjectionState.turnsByThread[activeThreadId] ?? [] : []
+  const laneItemsByTurn = useMemo(() => {
+    if (!activeThreadId) {
+      return {}
+    }
+    const itemsByTurn: Record<string, SessionItem[]> = {}
+    for (const turn of laneTurns) {
+      const key = `${activeThreadId}:${turn.id}`
+      itemsByTurn[key] = sessionProjectionState.itemsByTurn[key] ?? []
+    }
+    return itemsByTurn
+  }, [activeThreadId, laneTurns, sessionProjectionState.itemsByTurn])
+  const laneVisibleTranscriptRows = useMemo(() => {
+    if (!activeThreadId) {
+      return []
+    }
+    return selectVisibleTranscriptRows(useThreadSessionStore.getState(), activeThreadId)
+  }, [activeThreadId, sessionProjectionState.itemsByTurn, sessionProjectionState.turnsByThread])
   const laneLastEventSeq = activeThreadId
     ? (sessionProjectionState.lastEventSeqByThread[activeThreadId] ?? null)
     : null
@@ -474,12 +501,33 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   ])
 
   useEffect(() => {
+    const putWorkspaceTextFile = (
+      api as {
+        putWorkspaceTextFile?: (
+          projectId: string,
+          relativePath: string,
+          content: string,
+          options?: { scope?: 'workspace' | 'root_node' | 'node'; nodeId?: string | null },
+        ) => Promise<unknown>
+      }
+    ).putWorkspaceTextFile
     if (!projectId || !nodeId) {
       setWorkflowContextItem(null)
+      setWorkflowContextMarkdown(CONTEXT_DOC_EMPTY_MARKDOWN)
+      lastContextDocSyncKeyRef.current = null
       return
     }
     if (!workflowLane || isRootThreadTab) {
       setWorkflowContextItem(null)
+      setWorkflowContextMarkdown(CONTEXT_DOC_EMPTY_MARKDOWN)
+      const syncKey = `${projectId}:${nodeId}:none`
+      if (lastContextDocSyncKeyRef.current !== syncKey && typeof putWorkspaceTextFile === 'function') {
+        lastContextDocSyncKeyRef.current = syncKey
+        void putWorkspaceTextFile(projectId, CONTEXT_DOC_RELATIVE_PATH, CONTEXT_DOC_EMPTY_MARKDOWN, {
+          scope: 'node',
+          nodeId,
+        }).catch(() => undefined)
+      }
       return
     }
     const role = workflowRoleForThreadTab(threadTab)
@@ -490,6 +538,19 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
           return
         }
         setWorkflowContextItem(buildWorkflowContextItem(packet, role))
+        const contextMarkdown = buildWorkflowContextMarkdown(packet)
+        setWorkflowContextMarkdown(contextMarkdown)
+        const syncKey = `${projectId}:${nodeId}:${role}:${packet.contextPacketHash}`
+        if (lastContextDocSyncKeyRef.current === syncKey) {
+          return
+        }
+        lastContextDocSyncKeyRef.current = syncKey
+        if (typeof putWorkspaceTextFile === 'function') {
+          void putWorkspaceTextFile(projectId, CONTEXT_DOC_RELATIVE_PATH, contextMarkdown, {
+            scope: 'node',
+            nodeId,
+          }).catch(() => undefined)
+        }
       })
       .catch(() => {
         // Keep the last canonical context while workflow/session hydration catches up.
@@ -688,7 +749,11 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         setRootThreadId(response.threadId)
         if (sessionState.activeThreadId !== response.threadId) {
           void sessionCommands.selectThread(response.threadId).catch(() => undefined)
+          return
         }
+        // Root lane bypasses the workflow lane resync effects, so force a transcript hydrate
+        // when ensure resolves to the already-selected root thread.
+        void sessionCommands.resyncThreadTranscript(response.threadId).catch(() => undefined)
       })
       .catch((error) => {
         console.warn('Failed to ensure root project-prep thread', error)
@@ -701,6 +766,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     isRootThreadTab,
     nodeId,
     projectId,
+    sessionCommands.resyncThreadTranscript,
     sessionCommands.selectThread,
     sessionState.activeThreadId,
     sessionState.connection.phase,
@@ -967,10 +1033,10 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       return true
     }
     if (isRootThreadTab) {
-      if (!activeThreadId || !isLaneThreadSelected) {
+      if (!projectId || !nodeId) {
         return true
       }
-      if (sessionState.isSelectingThread || !sessionState.isActiveThreadReady) {
+      if (sessionState.isSelectingThread) {
         return true
       }
       return sessionState.connection.phase === 'error'
@@ -1006,8 +1072,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
     activeWorkflowGeneratedTurn,
     isRootThreadTab,
     isLaneThreadSelected,
+    nodeId,
+    projectId,
     sessionState.connection.phase,
-    sessionState.isActiveThreadReady,
     sessionState.isSelectingThread,
     workflowLane?.lane,
     workflowLane?.policy.canSubmit,
@@ -1277,7 +1344,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
   )
 
   const transcriptProps = useMemo(() => {
-    if (!activeThreadId || !isLaneThreadSelected) {
+    if (!activeThreadId) {
       return {
         threadId: null,
         turns: [],
@@ -1287,19 +1354,17 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       }
     }
     return {
-      threadId: sessionState.activeThreadId,
-      turns: sessionState.activeTurns,
-      itemsByTurn: sessionState.activeItemsByTurn,
-      visibleRows: sessionState.activeVisibleTranscriptRows,
+      threadId: activeThreadId,
+      turns: laneTurns,
+      itemsByTurn: laneItemsByTurn,
+      visibleRows: laneVisibleTranscriptRows,
       workflowContextItem,
     }
   }, [
     activeThreadId,
-    isLaneThreadSelected,
-    sessionState.activeItemsByTurn,
-    sessionState.activeThreadId,
-    sessionState.activeVisibleTranscriptRows,
-    sessionState.activeTurns,
+    laneItemsByTurn,
+    laneTurns,
+    laneVisibleTranscriptRows,
     workflowContextItem,
   ])
 
@@ -1413,8 +1478,9 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
       node: detailNode,
       state: detailCardState,
       message: detailMessage,
+      workflowContextMarkdown,
     }),
-    [detailCardState, detailMessage, detailNode, projectId],
+    [detailCardState, detailMessage, detailNode, projectId, workflowContextMarkdown],
   )
 
   return {

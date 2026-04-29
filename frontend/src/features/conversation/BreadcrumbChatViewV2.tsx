@@ -8,6 +8,7 @@ export type BreadcrumbDetailPaneProps = {
   node: NodeRecord | null
   state: 'ready' | 'loading' | 'unavailable'
   message: string | null
+  workflowContextMarkdown?: string | null
 }
 
 export type BreadcrumbChatViewV2Props = {
@@ -32,6 +33,7 @@ export function BreadcrumbChatViewV2({
             showClose={false}
             state={detailPaneProps.state}
             message={detailPaneProps.message}
+            workflowContextMarkdown={detailPaneProps.workflowContextMarkdown ?? null}
           />
         </div>
       </aside>

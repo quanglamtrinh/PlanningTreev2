@@ -342,6 +342,30 @@ export function createSessionRuntimeController(
     return true
   }
 
+  const listTurnsForHydrate = async (
+    threadId: string,
+    isCurrent: () => boolean,
+  ): Promise<SessionTurn[]> => {
+    const turns: SessionTurn[] = []
+    let cursor: string | null = null
+    for (let page = 0; page < 20; page += 1) {
+      const listed = await api.listThreadTurns(threadId, {
+        cursor,
+        limit: 100,
+      })
+      if (!isCurrent()) {
+        return turns
+      }
+      const pageTurns = Array.isArray(listed.data) ? listed.data : []
+      turns.push(...pageTurns)
+      if (!listed.nextCursor || pageTurns.length === 0) {
+        break
+      }
+      cursor = listed.nextCursor
+    }
+    return turns
+  }
+
   const hydrateThreadState = async (threadId: string, options?: HydrateOptions): Promise<void> => {
     if (!options?.force && hydratedThreadIds.has(threadId)) {
       traceSessionRuntime('hydrate skipped: already hydrated', {
@@ -367,12 +391,19 @@ export function createSessionRuntimeController(
     }
     dependencies.upsertThread(read.thread, { preserveUpdatedAt: true })
     const readTurns = Array.isArray(read.thread.turns) ? read.thread.turns : []
-    dependencies.setThreadTurns(threadId, readTurns, { mode: 'replace' })
+    const hydratedTurns = readTurns.length > 0 ? readTurns : await listTurnsForHydrate(threadId, isCurrent)
+    if (!isCurrent()) {
+      traceSessionRuntime('hydrate aborted after turns list: stale scope', {
+        threadId,
+      })
+      return
+    }
+    dependencies.setThreadTurns(threadId, hydratedTurns, { mode: 'replace' })
 
     hydratedThreadIds.add(threadId)
     traceSessionRuntime('hydrate applied', {
       threadId,
-      turns: readTurns.length,
+      turns: hydratedTurns.length,
       mode: 'replace',
     })
   }

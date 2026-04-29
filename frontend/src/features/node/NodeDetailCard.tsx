@@ -25,6 +25,7 @@ type Props = {
   onClose?: () => void
   state?: NodeDetailCardState
   message?: string | null
+  workflowContextMarkdown?: string | null
 }
 
 function deriveDetailTab(activeStep: 'frame' | 'clarify' | 'spec', frameBranchReady?: boolean): DetailTab {
@@ -74,6 +75,7 @@ export function NodeDetailCard({
   onClose,
   state = 'ready',
   message = null,
+  workflowContextMarkdown = null,
 }: Props) {
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
   const [framePostUpdateBranch, setFramePostUpdateBranch] = useState<FramePostUpdateBranch>('none')
@@ -265,6 +267,7 @@ export function NodeDetailCard({
                 node={node}
                 projectId={projectId}
                 detailState={effectiveDetailState}
+                workflowContextMarkdown={workflowContextMarkdown}
                 isResetting={isResettingWorkspace}
                 onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
                 onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
@@ -277,6 +280,7 @@ export function NodeDetailCard({
               node={node}
               projectId={projectId}
               detailState={effectiveDetailState}
+              workflowContextMarkdown={workflowContextMarkdown}
               isResetting={isResettingWorkspace}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
@@ -445,6 +449,7 @@ export function NodeDetailCard({
               node={node}
               projectId={projectId}
               detailState={effectiveDetailState}
+              workflowContextMarkdown={workflowContextMarkdown}
               isResetting={isResettingWorkspace}
               mcpRoleBlocks={isRootNode ? ROOT_INFO_TAB_MCP_ROLE_BLOCKS : undefined}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}

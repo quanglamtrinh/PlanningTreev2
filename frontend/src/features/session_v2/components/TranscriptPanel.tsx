@@ -1601,7 +1601,7 @@ export function TranscriptPanel({
                       )
                     }
 
-                    if (isWorkflowContextItem(entry.item)) {
+                    if (showWorkflowContext && isWorkflowContextItem(entry.item)) {
                       return <WorkflowContextCard key={`${row.key}:${entry.key}`} item={entry.item} />
                     }
 
@@ -1742,7 +1742,7 @@ export function TranscriptPanel({
           )
         }
 
-        if (isWorkflowContextItem(row.item)) {
+        if (showWorkflowContext && isWorkflowContextItem(row.item)) {
           return <WorkflowContextCard key={row.key} item={row.item} />
         }
 

@@ -80,6 +80,29 @@ def test_root_thread_ensure_starts_and_reuses_root_session(
     assert session["thread_id"] == "root-thread-1"
 
 
+def test_root_thread_ensure_reuses_legacy_root_thread_from_ask_session(
+    client: TestClient,
+    workspace_root,
+) -> None:
+    project_id, root_id = _attach_project(client, workspace_root)
+    manager = FakeSessionManager()
+    manager.existing_threads.add("legacy-root-thread-1")
+    client.app.state.session_manager_v2 = manager
+
+    chat_store = client.app.state.storage.chat_state_store
+    legacy = chat_store.read_session(project_id, root_id, thread_role="ask_planning")
+    legacy["thread_id"] = "legacy-root-thread-1"
+    chat_store.write_session(project_id, root_id, legacy, thread_role="ask_planning")
+
+    response = client.post(f"/v4/projects/{project_id}/nodes/{root_id}/root-thread/ensure", json={})
+
+    assert response.status_code == 200
+    assert response.json()["data"] == {"threadId": "legacy-root-thread-1", "role": "root"}
+    assert manager.thread_starts == []
+    root_session = chat_store.read_session(project_id, root_id, thread_role="root")
+    assert root_session["thread_id"] == "legacy-root-thread-1"
+
+
 def test_root_thread_ensure_rejects_non_root_node(client: TestClient, workspace_root) -> None:
     project_id, root_id = _attach_project(client, workspace_root)
     client.app.state.session_manager_v2 = FakeSessionManager()

@@ -334,6 +334,22 @@ def _ensure_root_thread(
         if existing_thread_id and _native_thread_exists(manager, existing_thread_id):
             return {"threadId": existing_thread_id, "role": "root"}
 
+        # Backward-compat: older root-node sessions could be persisted without the
+        # dedicated `root` role (flat/ask_planning storage). Reuse that thread id
+        # instead of creating a fresh root thread so transcript hydration preserves
+        # prior history when opening breadcrumb at the root node.
+        legacy_session = storage.chat_state_store.read_session(
+            project_id,
+            node_id,
+            thread_role="ask_planning",
+        )
+        legacy_thread_id = str(legacy_session.get("thread_id") or "").strip()
+        if legacy_thread_id and _native_thread_exists(manager, legacy_thread_id):
+            session["thread_id"] = legacy_thread_id
+            session["thread_role"] = "root"
+            storage.chat_state_store.write_session(project_id, node_id, session, thread_role="root")
+            return {"threadId": legacy_thread_id, "role": "root"}
+
         project = snapshot.get("project") if isinstance(snapshot.get("project"), dict) else {}
         cwd = str(project.get("project_path") or "").strip()
         start_payload: dict[str, Any] = {}

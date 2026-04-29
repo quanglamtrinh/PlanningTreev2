@@ -1,10 +1,12 @@
+import { formatHierarchicalDisplayIndex } from './nodeDisplayIndex'
+
 export function formatReviewChainLabel(
   parentHierarchicalNumber: string,
   index: number,
 ): string {
   const parentNumber = parentHierarchicalNumber.trim()
   const numericIndex = Math.max(1, Math.trunc(index))
-  return parentNumber ? `${parentNumber}.${numericIndex}` : String(numericIndex)
+  return formatHierarchicalDisplayIndex(parentNumber ? `${parentNumber}.${numericIndex}` : String(numericIndex)) ?? String(numericIndex)
 }
 
 export function parentHierarchicalNumberFromReviewNode(

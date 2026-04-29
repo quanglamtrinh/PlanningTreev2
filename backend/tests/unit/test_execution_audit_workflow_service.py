@@ -775,9 +775,10 @@ def test_finish_task_requires_workflow_core_v2() -> None:
 def test_handoff_upsert_creates_replaces_orders_and_is_idempotent(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
-    handoff_path = workspace_root / "docs" / "handoff.md"
+    handoff_path = workspace_root / ".planningtree" / "root" / "1 Root" / "1.1 A" / "handoff.md"
 
     snapshot = {
+        "project": {"project_path": str(workspace_root)},
         "tree_state": {
             "root_node_id": "root-1",
             "node_index": {
@@ -869,11 +870,11 @@ def test_handoff_upsert_creates_replaces_orders_and_is_idempotent(tmp_path: Path
         node=snapshot["tree_state"]["node_index"]["node-b"],
         summary_text="Summary B",
     )
-    ordered_content = handoff_path.read_text(encoding="utf-8")
-    index_a = ordered_content.index("<!-- PT_HANDOFF_NODE:node-a -->")
-    index_b = ordered_content.index("<!-- PT_HANDOFF_NODE:node-b -->")
-    index_c = ordered_content.index("<!-- PT_HANDOFF_NODE:node-c -->")
-    assert index_a < index_b < index_c
+    b_handoff_path = workspace_root / ".planningtree" / "root" / "1 Root" / "1.2 B" / "handoff.md"
+    c_handoff_path = workspace_root / ".planningtree" / "root" / "1 Root" / "1.3 C" / "handoff.md"
+    assert "<!-- PT_HANDOFF_NODE:node-a -->" in handoff_path.read_text(encoding="utf-8")
+    assert "<!-- PT_HANDOFF_NODE:node-b -->" in b_handoff_path.read_text(encoding="utf-8")
+    assert "<!-- PT_HANDOFF_NODE:node-c -->" in c_handoff_path.read_text(encoding="utf-8")
 
 
 def test_normalize_review_response_text_extracts_summary_from_json_object() -> None:

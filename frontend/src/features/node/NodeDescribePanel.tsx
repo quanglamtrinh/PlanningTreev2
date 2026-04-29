@@ -3,21 +3,24 @@ import { api } from '../../api/client'
 import type { ChangedFileRecord, DetailState, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord } from '../../api/types'
 import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
 import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
+import { DocumentRichViewContent } from '../markdown/DocumentRichView'
 import styles from './NodeDetailCard.module.css'
 
-const INFO_TAB_SKILLS_PATHS = [
-  'structured-output/SKILL.md',
-  'progress-updates/SKILL.md',
-  'planning/SKILL.md',
-  'tool-selection/SKILL.md',
+const INFO_TAB_DOCS_PATHS = [
+  'docs/overview.md',
+  'docs/setup.md',
+  'docs/architecture.md',
+  'docs/codebase-map.md',
+  'docs/development-notes.md',
+  'task/context.md',
+  'task/handoff.md',
 ] as const
 
-const INFO_TAB_DOCS_PATHS = [
-  'docs/codebase-summary.md',
-  'docs/project-roadmap.md',
-  'docs/handoff.md',
-  'workflows/development-rules.md',
-] as const
+const INFO_TAB_CONTEXT_PATH = 'task/context.md'
+const INFO_TAB_CONTEXT_FALLBACK = `# Context
+
+No workflow context is available for this thread yet.
+`
 
 function mcpTransportBadge(transport: McpRegistryServer['transport']): string {
   const t = transport?.type as McpTransportType | undefined
@@ -30,16 +33,24 @@ function mcpTransportBadge(transport: McpRegistryServer['transport']): string {
   return t ? String(t) : 'MCP'
 }
 
-/** Maps list row path to project-root path for workspace-text-file API. */
-export function infoTabListPathToWorkspaceRelative(
+type InfoWorkspaceFileTarget = {
+  relativePath: string
+  scope: 'workspace' | 'root_node' | 'node'
+}
+
+/** Maps list row path to workspace-text-file API target. */
+export function infoTabListPathToWorkspaceTarget(
   variant: 'docs' | 'skills',
   listPath: string,
-): string {
+): InfoWorkspaceFileTarget {
   const trimmed = listPath.replace(/^[/\\]+/, '')
   if (variant === 'skills') {
-    return `.codex/skills/${trimmed}`
+    return { relativePath: `.codex/skills/${trimmed}`, scope: 'workspace' }
   }
-  return trimmed
+  if (trimmed.startsWith('task/')) {
+    return { relativePath: trimmed.slice('task/'.length), scope: 'node' }
+  }
+  return { relativePath: trimmed, scope: 'root_node' }
 }
 
 function IconInfoDoc() {
@@ -155,6 +166,125 @@ const INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
     description: 'Review thread for checking the execution result.',
   },
 ]
+
+type InfoTabSkillRole = Extract<InfoTabMcpRole, 'ask_planning' | 'execution' | 'audit'>
+
+type InfoTabSkillBlock = {
+  role: InfoTabSkillRole
+  title: string
+  description: string
+  skillName: string
+  skillDescription: string
+  badge: string
+}
+
+const INFO_TAB_SKILL_BLOCKS: readonly InfoTabSkillBlock[] = [
+  {
+    role: 'ask_planning',
+    title: 'Ask',
+    description: 'Planning and clarification thread for this node.',
+    skillName: 'Planning brief',
+    skillDescription: 'Frames goals, constraints, and open questions before implementation work begins.',
+    badge: 'Planning',
+  },
+  {
+    role: 'execution',
+    title: 'Execution',
+    description: 'Implementation thread that applies changes.',
+    skillName: 'Implementation guardrails',
+    skillDescription: 'Keeps code edits scoped, validates risky changes, and follows local project patterns.',
+    badge: 'Build',
+  },
+  {
+    role: 'audit',
+    title: 'Audit',
+    description: 'Review thread for checking the execution result.',
+    skillName: 'Review checklist',
+    skillDescription: 'Prioritizes regressions, missing tests, and release-blocking risks in review output.',
+    badge: 'Review',
+  },
+]
+
+function createDefaultSkillStates(): Record<InfoTabSkillRole, boolean> {
+  return INFO_TAB_SKILL_BLOCKS.reduce(
+    (states, { role }) => {
+      states[role] = role !== 'audit'
+      return states
+    },
+    {} as Record<InfoTabSkillRole, boolean>,
+  )
+}
+
+function ThreadSkillsPanel() {
+  const [skillStates, setSkillStates] = useState<Record<InfoTabSkillRole, boolean>>(() =>
+    createDefaultSkillStates(),
+  )
+
+  function toggleSkill(role: InfoTabSkillRole) {
+    setSkillStates((current) => ({
+      ...current,
+      [role]: !current[role],
+    }))
+  }
+
+  return (
+    <div className={styles.infoMcpPanel} data-testid="info-tab-skills-panel">
+      <div className={styles.infoMcpHeaderRow}>
+        <p className={styles.infoExtensionDescription}>
+          Toggle dummy skills per workflow thread. Global skills are managed in <strong>Graph - Skills</strong>.
+        </p>
+      </div>
+
+      <div className={styles.infoMcpRoleGrid}>
+        {INFO_TAB_SKILL_BLOCKS.map(({ role, title, description, skillName, skillDescription, badge }) => {
+          const enabled = skillStates[role]
+          return (
+            <section key={role} className={styles.infoMcpRoleBlock} data-testid={`info-tab-skills-role-${role}`}>
+              <div className={styles.infoMcpRoleHeader}>
+                <div>
+                  <h3 className={styles.infoMcpTitle}>{title}</h3>
+                  <p className={styles.infoExtensionDescription}>{description}</p>
+                </div>
+                <button
+                  type="button"
+                  className={styles.infoSkillAddButton}
+                  onClick={() => undefined}
+                >
+                  Add skill
+                </button>
+              </div>
+
+              <p className={styles.infoMcpListHeading}>Included skill</p>
+              <ul className={styles.infoExtensionList} data-testid={`info-tab-skills-${role}`}>
+                <li className={styles.infoExtensionItem}>
+                  <div className={styles.infoExtensionCopy}>
+                    <div className={styles.infoExtensionTitleRow}>
+                      <span className={styles.infoExtensionName}>{skillName}</span>
+                      <span className={styles.infoExtensionBadge}>{badge}</span>
+                    </div>
+                    <p className={styles.infoExtensionDescription}>{skillDescription}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={enabled}
+                    className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                    onClick={() => toggleSkill(role)}
+                  >
+                    <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                      <span className={styles.infoExtensionToggleThumb} />
+                    </span>
+                    <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 export const ROOT_INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
   {
@@ -378,6 +508,7 @@ type Props = {
   node: NodeRecord
   projectId: string
   detailState?: DetailState | null
+  workflowContextMarkdown?: string | null
   onResetToBefore?: () => void | Promise<void>
   onResetToResult?: () => void | Promise<void>
   isResetting?: boolean
@@ -424,6 +555,7 @@ export function NodeDescribePanel({
   node,
   projectId,
   detailState,
+  workflowContextMarkdown = null,
   onResetToBefore,
   onResetToResult,
   isResetting = false,
@@ -447,13 +579,59 @@ export function NodeDescribePanel({
   const displayIndex = formatNodeDisplayIndex(node)
 
   if (openInfoPath) {
-    const workspacePath = infoTabListPathToWorkspaceRelative(openInfoPath.variant, openInfoPath.path)
+    if (openInfoPath.variant === 'docs' && openInfoPath.path === INFO_TAB_CONTEXT_PATH) {
+      const content = workflowContextMarkdown?.trim() ? workflowContextMarkdown : INFO_TAB_CONTEXT_FALLBACK
+      return (
+        <div className={styles.describeDocumentRoot}>
+          <div className={styles.describeDocumentSheet}>
+            <div className={`${styles.describeInfoEditorHost} ${styles.documentPanel}`}>
+              <div className={styles.infoWorkspaceEditorToolbar}>
+                <button type="button" className={styles.describeWorkspaceButtonOutline} onClick={() => setOpenInfoPath(null)}>
+                  {'<- Back to info'}
+                </button>
+                <div className={styles.documentFileLabelCell}>
+                  <span className={styles.documentFileLabelIcon} aria-hidden="true">
+                    <svg
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      width="13"
+                      height="13"
+                    >
+                      <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                      <path d="M10 2v4h3" />
+                    </svg>
+                  </span>
+                  <span className={styles.documentFileLabel}>{INFO_TAB_CONTEXT_PATH}</span>
+                </div>
+              </div>
+              <div className={styles.editorSurface}>
+                <div className={`${styles.editorSurfaceHeader} ${styles.contextEditorSurfaceHeader}`} />
+                <div className={styles.editorSurfaceBody}>
+                  <DocumentRichViewContent
+                    content={content}
+                    testId="info-context-rich-view"
+                    className={`${styles.richViewSurface} ${styles.contextRichViewSurface}`}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    const workspaceTarget = infoTabListPathToWorkspaceTarget(openInfoPath.variant, openInfoPath.path)
     return (
       <div className={styles.describeDocumentRoot}>
         <div className={styles.describeDocumentSheet}>
           <InfoWorkspaceMarkdownEditor
             projectId={projectId}
-            workspaceRelativePath={workspacePath}
+            workspaceRelativePath={workspaceTarget.relativePath}
+            workspaceScope={workspaceTarget.scope}
+            nodeId={workspaceTarget.scope === 'node' ? node.node_id : null}
             displayPath={openInfoPath.path}
             onClose={() => setOpenInfoPath(null)}
           />
@@ -499,12 +677,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <InfoPathList
-                variant="skills"
-                paths={INFO_TAB_SKILLS_PATHS}
-                data-testid="info-tab-skills-paths"
-                onSelectPath={(path) => setOpenInfoPath({ variant: 'skills', path })}
-              />
+              <ThreadSkillsPanel />
             </div>
           </div>
 
