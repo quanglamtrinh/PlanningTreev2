@@ -71,7 +71,7 @@ class ThreadHistoryBuilder:
         if method in {"user/message", "user_message"}:
             self._append_item(
                 turn_id=turn_id,
-                item=self._legacy_message_item(
+                item=self._message_item(
                     event=event,
                     params=params,
                     item_type="userMessage",
@@ -85,7 +85,7 @@ class ThreadHistoryBuilder:
         if method in {"assistant/message", "assistant_message", "agent/message"}:
             self._append_item(
                 turn_id=turn_id,
-                item=self._legacy_message_item(
+                item=self._message_item(
                     event=event,
                     params=params,
                     item_type="agentMessage",
@@ -205,7 +205,7 @@ class ThreadHistoryBuilder:
         turn_id = self._extract_turn_id(response_item)
         self._upsert_item(turn_id=turn_id, item=response_item, thread_id=self._extract_thread_id(response_item), timestamp_ms=self._extract_timestamp_ms(response_item))
 
-    def _legacy_message_item(
+    def _message_item(
         self,
         *,
         event: dict[str, Any],
@@ -218,13 +218,13 @@ class ThreadHistoryBuilder:
             "text": self._text_from_params(params),
             "occurredAtMs": timestamp_ms,
         }
-        item_id = self._legacy_message_item_id(event=event, params=params)
+        item_id = self._message_item_id(event=event, params=params)
         if item_id:
             item["id"] = item_id
         return item
 
     @staticmethod
-    def _legacy_message_item_id(*, event: dict[str, Any], params: dict[str, Any]) -> str | None:
+    def _message_item_id(*, event: dict[str, Any], params: dict[str, Any]) -> str | None:
         for payload in (params, event):
             for key in ("itemId", "item_id", "id", "eventId", "event_id"):
                 value = payload.get(key)

@@ -10,7 +10,6 @@ from backend.business.workflow_v2.context_builder import WorkflowContextBuilderV
 from backend.business.workflow_v2.errors import (
     WorkflowIdempotencyConflictError,
 )
-from backend.business.workflow_v2.models import default_workflow_state
 from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.thread_binding import ThreadBindingServiceV2
 from backend.services import planningtree_workspace
@@ -121,7 +120,7 @@ def test_new_thread_starts_injects_context_and_persists_binding(storage, workspa
     assert injected_item["workflowContext"]["contextPayload"]["artifactContext"]["currentContext"]["spec"]["content"] == "Spec v2"
     assert injected_item["content"][0]["text"].startswith('<planning_tree_context kind="execution_context"')
     state = repository.read_state(project_id, node_id)
-    assert state.execution_thread_id == "thread-1"
+    assert state.thread_id_for("execution") == "thread-1"
     assert state.thread_bindings["execution"].created_from == "new_thread"
     assert state.thread_bindings["execution"].source_versions.frame_version == 2
     raw_state = json.loads(repository.canonical_path(project_id, node_id).read_text(encoding="utf-8"))
@@ -153,31 +152,6 @@ def test_matching_existing_binding_reuses_thread_without_inject(storage, workspa
     assert fake_session.starts == []
     assert fake_session.injects == []
     assert response["binding"]["threadId"] == "thread-1"
-
-
-def test_legacy_thread_id_is_adopted_and_receives_initial_context(storage, workspace_root) -> None:
-    project_id, node_id, _ = _project_with_confirmed_docs(storage, workspace_root)
-    fake_session = FakeSessionManager()
-    repository, service = _service(storage, fake_session)
-    repository.write_state(
-        project_id,
-        node_id,
-        default_workflow_state(project_id, node_id).model_copy(update={"execution_thread_id": "legacy-exec"}),
-    )
-
-    response = service.ensure_thread(
-        project_id=project_id,
-        node_id=node_id,
-        role="execution",
-        idempotency_key="ensure-thread:legacy",
-    )
-
-    assert fake_session.starts == []
-    assert len(fake_session.injects) == 1
-    assert fake_session.injects[0]["threadId"] == "legacy-exec"
-    _assert_no_workflow_routing_fields(fake_session.injects[0]["payload"])
-    assert response["binding"]["createdFrom"] == "legacy_adopted"
-    assert repository.read_state(project_id, node_id).thread_bindings["execution"].thread_id == "legacy-exec"
 
 
 def test_changed_context_auto_updates_binding(storage, workspace_root) -> None:
@@ -279,7 +253,6 @@ def test_clears_stale_binding_when_native_rollout_is_missing_for_thread_id(
         state.model_copy(
             deep=True,
             update={
-                "execution_thread_id": ghost_uuid,
                 "thread_bindings": {**state.thread_bindings, "execution": ghost_binding},
             },
         ),

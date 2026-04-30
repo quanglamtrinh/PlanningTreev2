@@ -1,8 +1,8 @@
 # Session and Workflow V2 Contract Freeze
 
-This freezes the current migration boundary: Session V2 is the native
-conversation/runtime contract, while workflow execution/audit is still backed by
-V3 business workflow APIs until Workflow V2 replaces them.
+This records the current hard V4 boundary: Session Core V2 is the native
+conversation/runtime contract, and Workflow Core V2 owns workflow execution,
+audit, artifacts, thread binding, and workflow state.
 
 ## 1. Session V2 contract
 
@@ -26,10 +26,10 @@ Required semantics:
 - Pending request records must include enough scope to show only active-thread
   requests in the Breadcrumb surface.
 
-## 2. Workflow V2 target contract
+## 2. Workflow V2 contract
 
-Target public surface should be V2-owned and should not expose V3 workflow
-routes to UI code. Route family: `/v4/projects/{projectId}/nodes/{nodeId}/...`.
+The public surface is V2-owned and exposed under V4 route families only. Route
+family: `/v4/projects/{projectId}/nodes/{nodeId}/...`.
 
 - Get node workflow state:
   `GET /v4/projects/{projectId}/nodes/{nodeId}/workflow-state`.
@@ -65,11 +65,12 @@ Canonical V2 wire naming:
 - Public V4 workflow responses use camelCase field names.
 - The state envelope uses `phase` and `version`.
 - Internal Python models may use snake_case and `state_version`.
-- V3 compatibility views may continue exposing legacy names such as
+- Removed compatibility views may have exposed older field names such as
   `workflowPhase`, `executionThreadId`, `reviewThreadId`, and
-  `currentExecutionDecision`.
+  `currentExecutionDecision`; those names are historical and not the active
+  public contract.
 
-V3-to-V2 phase mapping:
+Historical phase-name mapping:
 
 | Legacy V3 `workflowPhase` | Canonical V2 `phase` |
 | --- | --- |
@@ -97,32 +98,30 @@ Required target semantics:
   operation with enough ids for the UI to select the right Session V2 thread.
 - Stale context should use deterministic errors, for example
   `ERR_WORKFLOW_CONTEXT_STALE`, with a rebase/reload affordance in the response.
-- Workflow V2 should provide an invalidation/event stream, for example
+- Workflow V2 provides an invalidation/event stream, for example
   `GET /v4/projects/{projectId}/events`, so the UI can remove
-  `useWorkflowEventBridgeV3`.
+  stale workflow projections.
 
 ## 3. UI rule
 
-- UI must not call V3 workflow/conversation control-plane endpoints directly.
+- UI must call V4 workflow/session endpoints only.
 - UI must not build business prompts.
 - UI must not decide fork vs. new thread vs. reuse thread.
 - UI may render server-provided state, select Session V2 threads, submit user
   text through Session V2, and dispatch Workflow V2 actions.
 
-Scope note: the broad rule "UI does not call `/v3`" is the right end state, but
-it should be applied to the session/workflow surface first. Project snapshot and
-node detail APIs may need their own migration contract if they also must leave
-`/v3`.
+Scope note: project, node-detail, artifact, workflow, and usage APIs are all
+mounted under `/v4`.
 
-## Current V3 endpoints used by the workflow UI
+## Active Workflow Endpoints
 
-- `GET /v3/projects/{projectId}/nodes/{nodeId}/workflow-state`
-- `POST /v3/projects/{projectId}/nodes/{nodeId}/workflow/finish-task`
-- `POST /v3/projects/{projectId}/nodes/{nodeId}/workflow/mark-done-from-execution`
-- `POST /v3/projects/{projectId}/nodes/{nodeId}/workflow/review-in-audit`
-- `POST /v3/projects/{projectId}/nodes/{nodeId}/workflow/improve-in-execution`
-- `POST /v3/projects/{projectId}/nodes/{nodeId}/workflow/mark-done-from-audit`
-- `GET /v3/projects/{projectId}/events`
+- `GET /v4/projects/{projectId}/nodes/{nodeId}/workflow-state`
+- `POST /v4/projects/{projectId}/nodes/{nodeId}/execution/start`
+- `POST /v4/projects/{projectId}/nodes/{nodeId}/execution/mark-done`
+- `POST /v4/projects/{projectId}/nodes/{nodeId}/audit/start`
+- `POST /v4/projects/{projectId}/nodes/{nodeId}/execution/improve`
+- `POST /v4/projects/{projectId}/nodes/{nodeId}/audit/accept`
+- `GET /v4/projects/{projectId}/events`
 
 ## Workflow state fields the UI currently needs
 
@@ -143,15 +142,15 @@ If Workflow V2 is also expected to eliminate project snapshot reads from this
 surface, include `projectPath` and `nodeKind` or `isReviewNode` in the workflow
 state envelope.
 
-## V3 actions/mutations to replace
+## Action/Mutation Mapping
 
 - `loadWorkflowState` -> Workflow V2 get node workflow state.
-- `finishTask` / `finishTaskWorkflowV3` -> Workflow V2 start execution.
+- `finishTask` -> Workflow V2 start execution.
 - `markDoneFromExecution` -> Workflow V2 mark done from execution.
 - `reviewInAudit` -> Workflow V2 review in audit.
 - `improveInExecution` -> Workflow V2 improve in execution.
 - `markDoneFromAudit` -> Workflow V2 mark done from audit.
-- `useWorkflowEventBridgeV3` -> Workflow V2 event/invalidation stream.
+- Old workflow event bridge -> Workflow V2 event/invalidation stream.
 
 ## Assessment
 

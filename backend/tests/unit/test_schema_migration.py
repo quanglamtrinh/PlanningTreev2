@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.errors.app_errors import LegacyProjectUnsupported
+from backend.errors.app_errors import UnsupportedProjectLayout
 from backend.storage.file_utils import atomic_write_json
 
 
@@ -34,5 +34,5 @@ def test_load_snapshot_rejects_legacy_thread_files(storage, workspace_root) -> N
     try:
         storage.project_store.load_snapshot(project_id)
         raise AssertionError("Expected legacy project to be rejected")
-    except LegacyProjectUnsupported as exc:
-        assert exc.code == "legacy_project_unsupported"
+    except UnsupportedProjectLayout as exc:
+        assert exc.code == "unsupported_project_layout"

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -89,7 +89,7 @@ class FastCompletingSessionManager(FakeSessionManager):
 
 def _project_with_confirmed_docs(client: TestClient, workspace_root: Path) -> tuple[str, str]:
     init_git_repo(workspace_root)
-    response = client.post("/v3/projects/attach", json={"folder_path": str(workspace_root)})
+    response = client.post("/v4/projects/attach", json={"folder_path": str(workspace_root)})
     assert response.status_code == 200
     public_snapshot = response.json()
     project_id = public_snapshot["project"]["id"]
@@ -140,13 +140,10 @@ def _install_phase5_orchestrator(
         event_publisher=event_publisher,
         storage=app.state.storage,
         tree_service=app.state.tree_service,
-        finish_task_service=app.state.finish_task_service,
-        review_service=app.state.review_service,
         git_checkpoint_service=app.state.git_checkpoint_service if use_git_checkpoint_service else None,
     )
     app.state.workflow_thread_binding_service_v2 = binding_service
     app.state.execution_audit_orchestrator_v2 = orchestrator
-    app.state.execution_audit_workflow_service._workflow_orchestrator_v2 = orchestrator
     return orchestrator
 
 

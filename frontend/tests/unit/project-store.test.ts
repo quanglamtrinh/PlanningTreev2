@@ -245,16 +245,16 @@ describe('project-store', () => {
     expect(useProjectStore.getState().nodeDrafts).toEqual({})
   })
 
-  it('maps legacy project errors to the graph-only message', async () => {
+  it('maps unsupported project layout errors to the graph-only message', async () => {
     const ApiError = (await import('../../src/api/client')).ApiError
     apiMock.getSnapshot.mockRejectedValue(
-      new ApiError(409, { code: 'legacy_project_unsupported', message: 'legacy project' }),
+      new ApiError(409, { code: 'unsupported_project_layout', message: 'unsupported project' }),
     )
 
     await expect(useProjectStore.getState().loadProject('project-legacy')).rejects.toThrow()
 
     expect(useProjectStore.getState().error).toBe(
-      'This project uses a removed legacy schema. Delete it or recreate it before continuing.',
+      'This project uses an unsupported PlanningTree layout. Delete it or recreate it before continuing.',
     )
   })
 

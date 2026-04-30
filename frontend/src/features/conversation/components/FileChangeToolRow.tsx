@@ -6,27 +6,6 @@ import {
   getToolPlaceholderText,
   hasMeaningfulToolContent,
 } from './toolPresentation'
-import {
-  buildParseCacheKey,
-  PARSE_CACHE_RENDERER_VERSION,
-} from './v3/parseCacheContract'
-import {
-  buildParseArtifactJobToken,
-  buildParseArtifactVariantKey,
-  isLatestParseArtifactRequest,
-  markLatestParseArtifactRequest,
-  readOrComputeParseArtifactAsync,
-  readOrComputeParseArtifact,
-} from './v3/parseArtifactCache'
-import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
-import {
-  resolveMessagesV3Phase11Mode,
-  resolvePhase11WorkerDiffThresholdCharsFromEnv,
-  resolvePhase11WorkerTimeoutMsFromEnv,
-  type MessagesV3Phase11Mode,
-} from './v3/phase11Config'
-import { runPhase11DiffWorkerJob } from './v3/phase11DiffWorkerRuntime'
-import type { Phase11DiffArtifacts } from './v3/phase11DiffWorkerProtocol'
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
@@ -100,40 +79,6 @@ const STRUCTURED_DIFF_MARKER_RE =
 
 function hasStructuredDiffMarkers(text: string): boolean {
   return STRUCTURED_DIFF_MARKER_RE.test(text.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
-}
-
-const DEFAULT_WORKER_DIFF_THRESHOLD_LINES = 400
-
-function lineCount(text: string): number {
-  if (!text) {
-    return 0
-  }
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').length
-}
-
-function shouldOffloadDiffWorker({
-  phase11Mode,
-  thresholdChars,
-  blobSourceText,
-  sourceText,
-}: {
-  phase11Mode: MessagesV3Phase11Mode
-  thresholdChars: number
-  blobSourceText: string
-  sourceText: string
-}): boolean {
-  if (phase11Mode === 'off') {
-    return false
-  }
-  const normalizedThreshold = Number.isFinite(thresholdChars)
-    ? Math.max(1, Math.floor(thresholdChars))
-    : 1
-  const payloadLength = Math.max(blobSourceText.length, sourceText.length)
-  if (payloadLength >= normalizedThreshold) {
-    return true
-  }
-  const payloadLines = Math.max(lineCount(blobSourceText), lineCount(sourceText))
-  return payloadLines >= DEFAULT_WORKER_DIFF_THRESHOLD_LINES
 }
 
 type DiffStats = { added: number; removed: number }
@@ -746,57 +691,9 @@ export function FileChangeToolRow({
   dataTestId?: string
 }) {
   const headline = getToolHeadline(item)
-  const parseKeyDiffUnified = buildParseCacheKey({
-    threadId: item.threadId,
-    itemId: item.id,
-    updatedAt: item.updatedAt,
-    mode: 'diff_unified',
-    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
-  })
-  const parseKeyDiffStats = buildParseCacheKey({
-    threadId: item.threadId,
-    itemId: item.id,
-    updatedAt: item.updatedAt,
-    mode: 'diff_stats',
-    rendererVersion: PARSE_CACHE_RENDERER_VERSION,
-  })
-  const fileRows = useMemo(
-    () =>
-      readOrComputeParseArtifact<FileChangeRow[]>(
-        buildParseArtifactVariantKey(parseKeyDiffUnified, 'canonical_file_rows'),
-        () => resolveCanonicalFileRows(item),
-      ).value,
-    [item, parseKeyDiffUnified],
-  )
+  const fileRows = useMemo(() => resolveCanonicalFileRows(item), [item])
   const primaryRow = fileRows[0]
   const isMultiFile = fileRows.length > 1
-
-  useEffect(() => {
-    emitParseCacheTrace({
-      source: 'file_change_tool_row.diff_unified',
-      threadId: item.threadId,
-      itemId: item.id,
-      updatedAt: item.updatedAt,
-      mode: 'diff_unified',
-      rendererVersion: PARSE_CACHE_RENDERER_VERSION,
-      key: parseKeyDiffUnified,
-    })
-    emitParseCacheTrace({
-      source: 'file_change_tool_row.diff_stats',
-      threadId: item.threadId,
-      itemId: item.id,
-      updatedAt: item.updatedAt,
-      mode: 'diff_stats',
-      rendererVersion: PARSE_CACHE_RENDERER_VERSION,
-      key: parseKeyDiffStats,
-    })
-  }, [
-    item.id,
-    item.threadId,
-    item.updatedAt,
-    parseKeyDiffStats,
-    parseKeyDiffUnified,
-  ])
 
   const blobSourceText = useMemo(() => {
     const out = item.outputText.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -821,23 +718,6 @@ export function FileChangeToolRow({
     [fileRows],
   )
   const sourceText = canonicalDiffText || blobSourceText
-  const phase11Mode = resolveMessagesV3Phase11Mode(null)
-  const phase11WorkerDiffThresholdChars = resolvePhase11WorkerDiffThresholdCharsFromEnv()
-  const phase11WorkerTimeoutMs = resolvePhase11WorkerTimeoutMsFromEnv('interactive')
-  const workerDiffTokenBase = buildParseArtifactVariantKey(
-    parseKeyDiffUnified,
-    'phase11_worker_diff_artifacts',
-  )
-  const latestWorkerRequestSeqRef = useRef(0)
-  const [workerArtifactsState, setWorkerArtifactsState] = useState<{
-    tokenBase: string
-    artifact: Phase11DiffArtifacts
-  } | null>(null)
-  const activeWorkerArtifacts =
-    phase11Mode === 'on' && workerArtifactsState?.tokenBase === workerDiffTokenBase
-      ? workerArtifactsState.artifact
-      : null
-
   const hasArguments = Boolean(item.argumentsText?.trim())
   const hasOutput = Boolean(item.outputText.trim())
   const hasFiles = fileRows.length > 0
@@ -853,133 +733,13 @@ export function FileChangeToolRow({
     }
     return sourceText
   }, [isMultiFile, primaryRow?.diff, sourceText])
-  const shouldOffloadWorker = useMemo(
-    () =>
-      shouldOffloadDiffWorker({
-        phase11Mode,
-        thresholdChars: phase11WorkerDiffThresholdChars,
-        blobSourceText,
-        sourceText,
-      }),
-    [
-      blobSourceText,
-      phase11Mode,
-      phase11WorkerDiffThresholdChars,
-      sourceText,
-    ],
-  )
-
-  useEffect(() => {
-    if (phase11Mode === 'off' || !shouldOffloadWorker) {
-      setWorkerArtifactsState(null)
-      return
+  const diffChunks = useMemo(() => parseUnifiedDiffChunks(blobSourceText), [blobSourceText])
+  const blobLines = useMemo(() => {
+    if (!blobSourceText.trim()) {
+      return []
     }
-
-    latestWorkerRequestSeqRef.current += 1
-    const requestSeq = latestWorkerRequestSeqRef.current
-    markLatestParseArtifactRequest(workerDiffTokenBase, requestSeq)
-    const jobId = buildParseArtifactJobToken(
-      parseKeyDiffUnified,
-      'phase11_worker_diff_artifacts',
-      requestSeq,
-    )
-    const requestCacheKey = buildParseArtifactVariantKey(
-      parseKeyDiffUnified,
-      `phase11_worker_response_${requestSeq}`,
-    )
-    let cancelled = false
-
-    void readOrComputeParseArtifactAsync(
-      requestCacheKey,
-      async () =>
-        await runPhase11DiffWorkerJob({
-          request: {
-            schemaVersion: 1,
-            jobId,
-            threadId: item.threadId,
-            itemId: item.id,
-            updatedAt: item.updatedAt,
-            mode: 'diff_artifacts_v1',
-            requestSeq,
-            payload: {
-              blobSourceText,
-              sourceText,
-              singleBodyText,
-            },
-          },
-          timeoutMs: phase11WorkerTimeoutMs,
-        }),
-    )
-      .then(({ value: response }) => {
-        if (cancelled) {
-          return
-        }
-        if (!isLatestParseArtifactRequest(workerDiffTokenBase, response.requestSeq)) {
-          return
-        }
-        if (response.ok && response.artifact) {
-          setWorkerArtifactsState({
-            tokenBase: workerDiffTokenBase,
-            artifact: response.artifact,
-          })
-          return
-        }
-        if (phase11Mode === 'on') {
-          setWorkerArtifactsState(null)
-        }
-      })
-      .catch(() => {
-        if (cancelled) {
-          return
-        }
-        if (
-          phase11Mode === 'on' &&
-          isLatestParseArtifactRequest(workerDiffTokenBase, requestSeq)
-        ) {
-          setWorkerArtifactsState(null)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [
-    blobSourceText,
-    item.id,
-    item.threadId,
-    item.updatedAt,
-    parseKeyDiffUnified,
-    phase11Mode,
-    phase11WorkerTimeoutMs,
-    shouldOffloadWorker,
-    singleBodyText,
-    sourceText,
-    workerDiffTokenBase,
-  ])
-
-  const syncDiffChunks = useMemo(
-    () =>
-      readOrComputeParseArtifact<UnifiedDiffChunk[]>(
-        buildParseArtifactVariantKey(parseKeyDiffUnified, 'unified_diff_chunks'),
-        () => parseUnifiedDiffChunks(blobSourceText),
-      ).value,
-    [blobSourceText, parseKeyDiffUnified],
-  )
-  const diffChunks = activeWorkerArtifacts?.unifiedDiffChunks ?? syncDiffChunks
-  const syncBlobLines = useMemo(
-    () =>
-      readOrComputeParseArtifact<string[]>(
-        buildParseArtifactVariantKey(parseKeyDiffUnified, 'unified_blob_lines'),
-        () => {
-          if (!blobSourceText.trim()) {
-            return []
-          }
-          return blobSourceText.split('\n')
-        },
-      ).value,
-    [blobSourceText, parseKeyDiffUnified],
-  )
-  const blobLines = activeWorkerArtifacts?.unifiedBlobLines ?? syncBlobLines
+    return blobSourceText.split('\n')
+  }, [blobSourceText])
   const multiFileRows = useMemo(
     () =>
       fileRows.map((row, index) => {
@@ -1022,15 +782,7 @@ export function FileChangeToolRow({
   }, [fileRows.length, headline, isMultiFile, item.title, primaryRow])
 
   const badgeLabel = primaryRow ? changeTypeLabel(primaryRow.changeType) : 'UPDATED'
-  const syncSourceStats = useMemo(
-    () =>
-      readOrComputeParseArtifact<ResolvedDiffStats>(
-        buildParseArtifactVariantKey(parseKeyDiffStats, 'source_diff_stats'),
-        () => resolvedDiffStatsFromText(sourceText),
-      ).value,
-    [parseKeyDiffStats, sourceText],
-  )
-  const sourceStats = activeWorkerArtifacts?.sourceDiffStats ?? syncSourceStats
+  const sourceStats = useMemo(() => resolvedDiffStatsFromText(sourceText), [sourceText])
   const stats = useMemo(() => {
     if (multiFileRows.length > 0) {
       const knownRows = multiFileRows.filter((row) => row.statsKnown)
@@ -1046,20 +798,12 @@ export function FileChangeToolRow({
     return { added: 0, removed: 0, known: false }
   }, [multiFileRows, sourceStats])
 
-  const syncLines = useMemo(
-    () =>
-      readOrComputeParseArtifact<string[]>(
-        buildParseArtifactVariantKey(parseKeyDiffUnified, 'single_body_lines'),
-        () => {
-          if (!singleBodyText.trim()) {
-            return []
-          }
-          return singleBodyText.split('\n')
-        },
-      ).value,
-    [parseKeyDiffUnified, singleBodyText],
-  )
-  const lines = activeWorkerArtifacts?.singleBodyLines ?? syncLines
+  const lines = useMemo<string[]>(() => {
+    if (!singleBodyText.trim()) {
+      return []
+    }
+    return singleBodyText.split('\n')
+  }, [singleBodyText])
 
   const [menuOpen, setMenuOpen] = useState(false)
   const [expandedMultiKey, setExpandedMultiKey] = useState<string | null>(null)

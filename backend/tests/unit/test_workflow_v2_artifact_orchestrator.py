@@ -194,7 +194,6 @@ def test_confirm_frame_syncs_source_versions_without_context_rebase_side_effects
     assert response["confirmed"] is True
     assert response["artifact"]["frameVersion"] == 2
     assert state.frame_version == 2
-    assert state.ask_thread_id == "thread-2"
     assert state.thread_bindings["ask_planning"].thread_id == "thread-2"
     assert "workflow/state_changed" in [event["type"] for event in broker.events]
     assert "workflow/artifact_confirmed" in [event["type"] for event in broker.events]

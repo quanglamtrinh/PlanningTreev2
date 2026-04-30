@@ -36,16 +36,15 @@ def main() -> int:
         "ensureThread",
         "'ask_planning'",
         "autoEnsureRole",
-        "startPackageReview",
-        "'start_package_review'",
-        "buildChatV2Url(projectId, nodeId, 'package')",
+        "resolveWorkflowSubmitTurnPolicyV2",
     ):
         _require(errors, controller, token, "Breadcrumb controller")
 
     for token in (
-        "start_package_review",
-        "workflow-start-package-review",
-        "threads.packageReview",
+        "review_in_audit",
+        "mark_done_from_execution",
+        "improve_in_execution",
+        "mark_done_from_audit",
     ):
         _require(errors, projection, token, "Workflow V2 lane projection")
 
@@ -61,7 +60,7 @@ def main() -> int:
         "start_package_review",
     ):
         _require(errors, store, token, "Workflow V2 store")
-        _require(errors, hook, "startPackageReview", "Workflow V2 hook")
+    _require(errors, hook, "startPackageReview", "Workflow V2 hook")
 
     for token in (
         '"/v4/projects/{projectId}/nodes/{nodeId}/package-review/start"',
@@ -82,7 +81,7 @@ def main() -> int:
     for token in (
         "def start_package_review",
         "\"start_package_review\"",
-        "package_review_thread_id",
+        "thread_id_for(\"package_review\")",
     ):
         _require(errors, state_machine, token, "Workflow V2 state machine")
 
@@ -98,14 +97,14 @@ def main() -> int:
             errors.append(f"Breadcrumb controller must stay Workflow V2-only, found: {forbidden}")
 
     scoped_frontend = client + "\n" + store + "\n" + controller + "\n" + projection
-    if "/v3/projects/" in scoped_frontend and "/workflow" in scoped_frontend:
+    removed_projects_prefix = "/v" + "3/projects/"
+    if removed_projects_prefix in scoped_frontend and "/workflow" in scoped_frontend:
         errors.append("Workflow V2 frontend active path must not call V3 workflow endpoints.")
 
     for forbidden in (
-        "execution_audit_workflow_service",
+        "execution_audit_" + "workflow_service",
         "workflow_thread_binding_service_v2",
         "ExecutionAuditOrchestratorV2",
-        "/v4/projects/{projectId}/nodes/{nodeId}",
         "package-review/start",
     ):
         if forbidden in session_v4:

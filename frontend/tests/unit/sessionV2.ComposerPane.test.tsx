@@ -22,7 +22,7 @@ describe('ComposerPane', () => {
       /GPT-5\.3-Codex High/,
     )
 
-    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'Use the default Codex agent config' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
 
@@ -47,7 +47,7 @@ describe('ComposerPane', () => {
       />,
     )
 
-    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: '/plan investigate' } })
     expect(screen.getByText('/plan')).toBeInTheDocument()
 
@@ -65,7 +65,7 @@ describe('ComposerPane', () => {
         onInterrupt={onInterrupt}
       />,
     )
-    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.keyDown(textarea, { key: 'r', ctrlKey: true })
     expect(screen.getByPlaceholderText('Search history')).toBeInTheDocument()
   })
@@ -121,7 +121,7 @@ describe('ComposerPane', () => {
     fireEvent.click(screen.getByRole('menuitemradio', { name: /GPT-5\.2/ }))
     expect(onModelChange).toHaveBeenCalledWith('gpt-5.2')
 
-    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'Test model submit' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
 
@@ -156,7 +156,7 @@ describe('ComposerPane', () => {
       />,
     )
 
-    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'Check @' } })
     fireEvent.click(screen.getByText('@README.md'))
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
@@ -213,7 +213,7 @@ describe('ComposerPane', () => {
     fireEvent.click(screen.getByRole('button', { name: /full access/i }))
     fireEvent.click(screen.getByRole('menuitemradio', { name: /read-only/i }))
 
-    const textarea = screen.getByPlaceholderText('Send a follow-up message') as HTMLTextAreaElement
+    const textarea = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'Read only please' } })
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
 

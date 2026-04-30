@@ -5,10 +5,8 @@ import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
 import {
   buildChatV2Url,
 } from '../conversation/surfaceRouting'
-import { useCodexStore } from '../../stores/codex-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
-import { getCodexUsageLabels } from './usageLabels'
 import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './Sidebar.module.css'
 
@@ -156,7 +154,6 @@ export function Sidebar() {
       deleteProject: s.deleteProject,
     })),
   )
-  const codexRateLimits = useCodexStore((s) => s.snapshot?.rate_limits ?? null)
   const initGit = useDetailStateStore((s) => s.initGit)
 
   const handleProjectClick = useCallback(
@@ -250,15 +247,6 @@ export function Sidebar() {
   const toggleSidebar = useCallback(() => {
     setIsCollapsed((prev) => !prev)
   }, [])
-
-  const {
-    sessionPercent,
-    weeklyPercent,
-    sessionResetLabel,
-    weeklyResetLabel,
-    creditsLabel,
-    showWeekly,
-  } = useMemo(() => getCodexUsageLabels(codexRateLimits), [codexRateLimits])
 
   void expandedProjects
   void toggleExpand
@@ -413,40 +401,6 @@ export function Sidebar() {
 
       <div className={styles.footer}>
         <div className={styles.footerUsageStack}>
-          <div className={styles.usageBlock}>
-            <div className={styles.usageRow}>
-              <span className={styles.usageLabel}>Session</span>
-              <span className={styles.usageHint}>
-                {sessionResetLabel ? `· ${sessionResetLabel}` : ''}
-              </span>
-              <span className={styles.usagePct}>
-                {sessionPercent === null ? '--' : `${sessionPercent}%`}
-              </span>
-            </div>
-            <div className={styles.usageBar}>
-              <div className={styles.usageBarFill} style={{ width: `${sessionPercent ?? 0}%` }} />
-            </div>
-            {showWeekly ? (
-              <>
-                <div className={styles.usageRow} style={{ marginTop: 8 }}>
-                  <span className={styles.usageLabel}>Weekly</span>
-                  <span className={styles.usageHint}>
-                    {weeklyResetLabel ? `· ${weeklyResetLabel}` : ''}
-                  </span>
-                  <span className={styles.usagePct}>
-                    {weeklyPercent === null ? '--' : `${weeklyPercent}%`}
-                  </span>
-                </div>
-                <div className={styles.usageBar}>
-                  <div
-                    className={styles.usageBarFillWeekly}
-                    style={{ width: `${weeklyPercent ?? 0}%` }}
-                  />
-                </div>
-              </>
-            ) : null}
-            {creditsLabel ? <div className={styles.usageMeta}>{creditsLabel}</div> : null}
-          </div>
           <button
             type="button"
             className={`${styles.usageSnapshotBtn} ${isUsageSnapshotRoute ? styles.usageSnapshotBtnActive : ''}`}

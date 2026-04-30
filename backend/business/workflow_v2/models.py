@@ -141,11 +141,6 @@ class NodeWorkflowStateV2(BaseModel):
     node_id: str
     phase: WorkflowPhase = "ready_for_execution"
 
-    ask_thread_id: str | None = None
-    execution_thread_id: str | None = None
-    audit_thread_id: str | None = None
-    package_review_thread_id: str | None = None
-
     active_execution_run_id: str | None = None
     latest_execution_run_id: str | None = None
     active_audit_run_id: str | None = None
@@ -169,9 +164,15 @@ class NodeWorkflowStateV2(BaseModel):
     last_error: dict[str, Any] | None = None
     idempotency_records: dict[str, dict[str, Any]] = Field(default_factory=dict)
     thread_bindings: dict[str, ThreadBinding] = Field(default_factory=dict)
+    execution_projection: dict[str, Any] | None = None
+    review_package: dict[str, Any] | None = None
 
     created_at: str | None = None
     updated_at: str | None = None
+
+    def thread_id_for(self, role: ThreadRole) -> str | None:
+        binding = self.thread_bindings.get(role)
+        return binding.thread_id if binding is not None else None
 
 
 class WorkflowThreadsResponseV2(WorkflowModel):
@@ -236,10 +237,10 @@ def workflow_state_to_response(
         phase=state.phase,
         version=state.state_version,
         threads=WorkflowThreadsResponseV2(
-            askPlanning=state.ask_thread_id,
-            execution=state.execution_thread_id,
-            audit=state.audit_thread_id,
-            packageReview=state.package_review_thread_id,
+            askPlanning=state.thread_id_for("ask_planning"),
+            execution=state.thread_id_for("execution"),
+            audit=state.thread_id_for("audit"),
+            packageReview=state.thread_id_for("package_review"),
         ),
         decisions=WorkflowDecisionsResponseV2(
             execution=copy.deepcopy(state.current_execution_decision),

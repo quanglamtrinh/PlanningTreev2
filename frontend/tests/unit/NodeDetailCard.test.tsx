@@ -2701,9 +2701,9 @@ describe('NodeDetailCard', () => {
     expect(await screen.findByTestId('review-detail-panel')).toBeInTheDocument()
     expect(screen.getByText('Child review accepted.')).toBeInTheDocument()
     expect(screen.getByText('Completed siblings')).toBeInTheDocument()
-    expect(screen.getByText('1.A Child 1')).toBeInTheDocument()
+    expect(screen.getByText('1 Child 1')).toBeInTheDocument()
     expect(screen.getByText('Current active sibling')).toBeInTheDocument()
-    expect(screen.getByText('1.B Child 2')).toBeInTheDocument()
+    expect(screen.getByText('2 Child 2')).toBeInTheDocument()
     expect(screen.getByText('Remaining pending siblings')).toBeInTheDocument()
     expect(screen.getByText('Rollup draft summary')).toBeInTheDocument()
 
@@ -2717,7 +2717,7 @@ describe('NodeDetailCard', () => {
 
   it('shows a package-audit-ready banner on parent task nodes', async () => {
     apiMock.getDetailState.mockResolvedValue({
-      node_id: 'root',
+      node_id: 'parent-1',
       frame_confirmed: true,
       frame_confirmed_revision: 1,
       frame_revision: 1,
@@ -2742,7 +2742,7 @@ describe('NodeDetailCard', () => {
       review_status: 'accepted' as const,
     })
     apiMock.getNodeDocument.mockResolvedValue({
-      node_id: 'root',
+      node_id: 'parent-1',
       kind: 'frame',
       content: '# Frame',
       updated_at: '2026-03-21T00:00:00Z',
@@ -2752,6 +2752,12 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({
+          node_id: 'parent-1',
+          parent_id: 'root',
+          node_kind: 'original',
+          is_init_node: false,
+          depth: 1,
+          hierarchical_number: '1.1',
           status: 'done',
           workflow: {
             frame_confirmed: true,

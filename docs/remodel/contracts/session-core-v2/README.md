@@ -28,8 +28,10 @@ It is intentionally aligned to Codex app-server semantics and names.
 
 ## Source of truth rule
 
-Backend Session Core V2 journal/snapshot is the runtime source of truth.
-Frontend stores are projection/render caches only.
+Backend Session Core V2 journal/snapshot is the sole runtime source of truth.
+Frontend stores are projection/render caches only. Legacy conversation runtime,
+chat-service, Codex-client, and V3 thread store/component paths have been
+removed and must not be reintroduced as runtime owners.
 
 ## Change control
 

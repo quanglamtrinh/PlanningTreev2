@@ -4,14 +4,13 @@ import copy
 import json
 import logging
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-
-from backend.services.codex_account_service import resolve_codex_home
 
 DEFAULT_DAYS = 30
 MIN_DAYS = 1
@@ -21,6 +20,15 @@ MAX_LINE_BYTES = 512_000
 DEFAULT_CACHE_TTL_SEC = 30.0
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_codex_home(explicit: Path | None = None) -> Path:
+    if explicit is not None:
+        return explicit.expanduser().resolve()
+    raw = os.environ.get("CODEX_HOME")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path.home() / ".codex").resolve()
 
 
 @dataclass
@@ -122,7 +130,7 @@ class LocalUsageSnapshotService:
             raise
 
     def _resolve_sessions_root(self) -> Path:
-        return resolve_codex_home(self._codex_home) / "sessions"
+        return _resolve_codex_home(self._codex_home) / "sessions"
 
     def _get_cached_entry(
         self,

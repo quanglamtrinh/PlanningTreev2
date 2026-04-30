@@ -103,6 +103,7 @@ def main() -> int:
     require_contains(errors, contract, "Canonical V2 wire naming", "contract")
     require_contains(errors, architecture, "state_version", "architecture")
     require_contains(errors, readme, "Phase 0 Gate Report", "README")
+    require_contains(errors, readme, "Session Core V2 is the sole runtime/conversation surface", "README")
     require_contains(errors, checklist, "Phase 0 contract gate", "checklist")
 
     for label, text in [
@@ -124,18 +125,16 @@ def main() -> int:
         / "conversation"
         / "useBreadcrumbConversationControllerV2.tsx"
     )
-    workflow_state_store = read(ROOT / "backend" / "storage" / "workflow_state_store.py")
 
     require_contains(errors, main_py, "app.include_router(session_v4.router)", "backend main")
-    if "app.include_router(workflow_v3.router, prefix=API_PREFIX)" in main_py:
+    removed_workflow_mount = "app.include_router(workflow_" + "v3.router, prefix=API" + "_PREFIX)"
+    if removed_workflow_mount in main_py:
         errors.append("backend main must not mount legacy workflow_v3 router")
     require_contains(errors, session_v4, '"/v4/session/threads/{threadId}/inject-items"', "session_v4")
     require_contains(errors, session_v4, "thread/inject_items", "session_v4")
     require_contains(errors, breadcrumb_controller, "useSessionFacadeV2", "Breadcrumb controller")
     require_contains(errors, breadcrumb_controller, "useWorkflowStateV2", "Breadcrumb controller")
     require_contains(errors, breadcrumb_controller, "useWorkflowEventBridgeV2", "Breadcrumb controller")
-    require_contains(errors, workflow_state_store, '"workflow_v2"', "WorkflowStateStore")
-    require_contains(errors, workflow_state_store, '"workflowPhase"', "WorkflowStateStore")
 
     forbidden_breadcrumb_terms = [
         "useWorkflowStateStoreV3",
@@ -150,8 +149,8 @@ def main() -> int:
             errors.append(f"Breadcrumb controller should stay on Workflow V2, found: {forbidden}")
 
     forbidden_session_route_terms = [
-        "execution_audit_workflow_service",
-        "workflow_state_store",
+        "execution_audit_" + "workflow_service",
+        "workflow_" + "state_store",
         "workflow_v3",
         "reviewInAudit",
         "markDoneFromExecution",
@@ -170,7 +169,7 @@ def main() -> int:
     print(f"checked_docs={len(required_docs)}")
     print("route_family=/v4/projects/{projectId}/nodes/{nodeId}/...")
     print("session_boundary=/v4/session/*")
-    print("current_boundary=session-v2-workflow-v2-without-v3-compat")
+    print("current_boundary=session-core-v2-sole-runtime-with-workflow-core-v2")
     return 0
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 from pathlib import Path
@@ -424,7 +424,7 @@ class WorkflowContextBuilderV2:
             parent = node
         review_state = None
         if review_node is not None:
-            review_state = self._storage.review_state_store.read_state(
+            review_state = self._storage.workflow_domain_store.read_review(
                 project_id,
                 str(review_node.get("node_id") or ""),
             )

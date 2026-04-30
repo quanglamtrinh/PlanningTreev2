@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import json
@@ -136,7 +136,7 @@ def build_auto_review_prompt(
         if not isinstance(node, dict):
             raise ValueError(f"Node {node_id!r} not found in project {project_id!r}.")
         node_dir = resolve_node_dir(snapshot, node_id)
-        exec_state = storage.execution_state_store.read_state(project_id, node_id)
+        exec_state = storage.workflow_domain_store.read_execution(project_id, node_id)
 
     sections: list[str] = []
 

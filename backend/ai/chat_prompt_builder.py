@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
@@ -97,7 +97,7 @@ def build_local_review_prompt(
     with storage.project_lock(project_id):
         snapshot, node, _ = _load_snapshot_and_node_locked(storage, project_id, node_id)
         node_dir = resolve_node_dir(snapshot, node_id)
-        execution_state = storage.execution_state_store.read_state(project_id, node_id)
+        execution_state = storage.workflow_domain_store.read_execution(project_id, node_id)
 
     sections: list[str] = []
     title = str(node.get("title") or "").strip()
@@ -149,7 +149,7 @@ def build_package_review_prompt(
         review_node_id = str(node.get("review_node_id") or "").strip()
         review_node = node_by_id.get(review_node_id) if review_node_id else None
         review_state = (
-            storage.review_state_store.read_state(project_id, review_node_id)
+            storage.workflow_domain_store.read_review(project_id, review_node_id)
             if review_node_id
             else None
         )
@@ -209,7 +209,7 @@ def build_child_activation_prompt(
     with storage.project_lock(project_id):
         snapshot, node, node_by_id = _load_snapshot_and_node_locked(storage, project_id, node_id)
         review_node = node_by_id.get(review_node_id)
-        review_state = storage.review_state_store.read_state(project_id, review_node_id)
+        review_state = storage.workflow_domain_store.read_review(project_id, review_node_id)
         parent_id = str(node.get("parent_id") or "").strip()
         parent = node_by_id.get(parent_id) if parent_id else None
         manifest = (

@@ -278,6 +278,40 @@ class RootThreadEnsureRequest(BaseModel):
     modelProvider: str | None = None
 
 
+def _root_thread_title(project_id: str, node_id: str) -> str:
+    return f"PlanningTree root thread {project_id}:{node_id}"
+
+
+def _session_thread_metadata_store(request: Request) -> Any | None:
+    return getattr(request.app.state, "session_thread_metadata_store_v2", None)
+
+
+def _read_root_thread_from_metadata(request: Request, project_id: str, node_id: str) -> str | None:
+    store = _session_thread_metadata_store(request)
+    finder = getattr(store, "find_project_thread", None)
+    if not callable(finder):
+        return None
+    try:
+        metadata = finder(project_id=project_id, title=_root_thread_title(project_id, node_id))
+    except Exception:
+        return None
+    thread_id = str(getattr(metadata, "thread_id", "") or "").strip()
+    return thread_id or None
+
+
+def _bind_root_thread_metadata(request: Request, project_id: str, node_id: str, thread_id: str) -> None:
+    store = _session_thread_metadata_store(request)
+    update = getattr(store, "create_or_update", None)
+    if not callable(update):
+        return
+    update(
+        thread_id=thread_id,
+        project_id=project_id,
+        title=_root_thread_title(project_id, node_id),
+        status="idle",
+    )
+
+
 def _thread_id_from_start_response(response: dict[str, Any]) -> str | None:
     if not isinstance(response, dict):
         return None
@@ -329,26 +363,10 @@ def _ensure_root_thread(
     manager = _manager(request)
     with storage.project_lock(project_id):
         snapshot = _ensure_root_node_or_raise(storage, project_id, node_id)
-        session = storage.chat_state_store.read_session(project_id, node_id, thread_role="root")
-        existing_thread_id = str(session.get("thread_id") or "").strip()
+        existing_thread_id = _read_root_thread_from_metadata(request, project_id, node_id)
         if existing_thread_id and _native_thread_exists(manager, existing_thread_id):
             return {"threadId": existing_thread_id, "role": "root"}
 
-        # Backward-compat: older root-node sessions could be persisted without the
-        # dedicated `root` role (flat/ask_planning storage). Reuse that thread id
-        # instead of creating a fresh root thread so transcript hydration preserves
-        # prior history when opening breadcrumb at the root node.
-        legacy_session = storage.chat_state_store.read_session(
-            project_id,
-            node_id,
-            thread_role="ask_planning",
-        )
-        legacy_thread_id = str(legacy_session.get("thread_id") or "").strip()
-        if legacy_thread_id and _native_thread_exists(manager, legacy_thread_id):
-            session["thread_id"] = legacy_thread_id
-            session["thread_role"] = "root"
-            storage.chat_state_store.write_session(project_id, node_id, session, thread_role="root")
-            return {"threadId": legacy_thread_id, "role": "root"}
 
         project = snapshot.get("project") if isinstance(snapshot.get("project"), dict) else {}
         cwd = str(project.get("project_path") or "").strip()
@@ -370,9 +388,7 @@ def _ensure_root_thread(
                 details={"response": response if isinstance(response, dict) else None},
             )
 
-        session["thread_id"] = thread_id
-        session["thread_role"] = "root"
-        storage.chat_state_store.write_session(project_id, node_id, session, thread_role="root")
+        _bind_root_thread_metadata(request, project_id, node_id, thread_id)
         return {"threadId": thread_id, "role": "root"}
 
 

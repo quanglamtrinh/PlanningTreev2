@@ -12,6 +12,7 @@ dist/
 node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
 
 # Build artifacts
 build/
@@ -38,6 +39,9 @@ dist-electron/
 Thumbs.db
 
 # Test outputs
+.codex_pytest_tmp/
+codex_pytest_tmp/
+pytest_tmp_dir/
 playwright-report/
 test-results/
 htmlcov/

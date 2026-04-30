@@ -49,7 +49,6 @@ class WorkspaceStore:
                 seen_paths.add(normalized_path)
         return {
             "entries": entries,
-            "legacy_projects_purged": bool(raw.get("legacy_projects_purged")),
         }
 
     def write(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -67,10 +66,7 @@ class WorkspaceStore:
                     "folder_path": self._normalize_folder_path(folder_path),
                 }
             )
-        data = {
-            "entries": entries,
-            "legacy_projects_purged": bool(payload.get("legacy_projects_purged")),
-        }
+        data = {"entries": entries}
         atomic_write_json(self.path, data)
         return data
 
@@ -123,14 +119,6 @@ class WorkspaceStore:
         state["entries"] = [
             item for item in state["entries"] if item["project_id"] not in normalized_ids
         ]
-        self.write(state)
-
-    def legacy_projects_purged(self) -> bool:
-        return bool(self.read()["legacy_projects_purged"])
-
-    def mark_legacy_projects_purged(self) -> None:
-        state = self.read()
-        state["legacy_projects_purged"] = True
         self.write(state)
 
     def _normalize_folder_path(self, folder_path: str) -> str:

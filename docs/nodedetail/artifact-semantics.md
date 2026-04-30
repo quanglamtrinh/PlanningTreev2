@@ -246,8 +246,8 @@ When clarify is confirmed, `node_detail_service.init_spec()`:
 ## 9. AI Generation Thread Model (Phase 4+)
 
 For AI generation phases:
-- **Context source:** Reads chat history from `chat_state_store.py` for the node's existing thread.
-- **Execution:** Creates a **separate generation thread** for the AI call. Does not reuse or pollute the user-facing chat thread identity.
-- **Pattern:** Follows `split_service.py` — background job, state tracking, stale-job recovery.
+- **Context source:** Builds context from Workflow Core V2 thread bindings and the node's confirmed artifacts; legacy chat history stores are no longer used.
+- **Execution:** Uses `WorkflowArtifactTurnRunnerV2` to run generation through Session Core V2 on the appropriate workflow thread.
+- **Pattern:** Background generation services track accepted jobs, recover stale status, and persist artifact output through the canonical artifact/domain stores.
 - **Output:** AI writes directly to `frame.md` / `clarify.json` / `spec.md`. No intermediate structured representation.
-- **One generic service:** `ArtifactGenerationService` parameterized by kind (frame|clarify|spec), not 3 separate services.
+- **Services:** Frame, clarify, spec, and split generation keep separate domain services while sharing the Session Core V2 artifact turn runner.

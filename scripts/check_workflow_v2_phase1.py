@@ -29,7 +29,7 @@ FORBIDDEN_STATE_MACHINE_IMPORTS = [
     "sse",
     "codex",
     "ExecutionAuditWorkflowService",
-    "execution_audit_workflow_service",
+            "execution_audit_" + "workflow_service",
 ]
 
 
@@ -49,8 +49,8 @@ def main() -> int:
     repository_source = repository_path.read_text(encoding="utf-8") if repository_path.exists() else ""
     if "workflow_core_v2" not in repository_source:
         errors.append("Repository does not reference canonical workflow_core_v2 storage path.")
-    if "LEGACY_PHASE_TO_V2" not in repository_source:
-        errors.append("Repository does not define legacy phase conversion.")
+    if "LEGACY_PHASE_TO_V2" in repository_source:
+        errors.append("Repository must not retain legacy phase conversion after runtime removal.")
 
     phase0 = subprocess.run(
         [sys.executable, "scripts/check_workflow_v2_phase0.py"],

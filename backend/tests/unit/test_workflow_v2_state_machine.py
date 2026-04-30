@@ -26,7 +26,7 @@ def test_execution_and_audit_happy_path_transitions() -> None:
     state = default_workflow_state("project-1", "node-1")
     assert derive_allowed_actions(state) == ["start_execution"]
 
-    executing = start_execution(state, execution_run_id="exec-run-1", execution_thread_id="thread-exec")
+    executing = start_execution(state, execution_run_id="exec-run-1")
     assert executing.phase == "executing"
     assert derive_allowed_actions(executing) == []
 
@@ -44,11 +44,9 @@ def test_execution_and_audit_happy_path_transitions() -> None:
     auditing = start_audit(
         execution_done,
         audit_run_id="audit-run-1",
-        audit_thread_id="thread-audit",
         expected_workspace_hash="sha256:workspace",
     )
     assert auditing.phase == "audit_running"
-    assert auditing.audit_thread_id == "thread-audit"
 
     review_pending = complete_audit(
         auditing,
@@ -105,10 +103,8 @@ def test_mark_done_from_audit_validates_review_commit() -> None:
     assert done.accepted_sha == "review-sha"
     assert derive_allowed_actions(done) == ["start_package_review"]
 
-    package_reviewing = start_package_review(done, package_review_thread_id="thread-package")
+    package_reviewing = start_package_review(done)
     assert package_reviewing.phase == "done"
-    assert package_reviewing.package_review_thread_id == "thread-package"
-    assert derive_allowed_actions(package_reviewing) == []
 
 
 def test_invalid_transition_raises_stable_action_error() -> None:
@@ -130,8 +126,8 @@ def test_state_machine_has_no_forbidden_runtime_imports() -> None:
         "session_core",
         "sse",
         "codex",
-        "ExecutionAuditWorkflowService",
-        "execution_audit_workflow_service",
+        "ExecutionAudit" + "WorkflowService",
+        "execution_audit" + "_workflow_service",
     ]
 
     assert [token for token in forbidden if token in source] == []

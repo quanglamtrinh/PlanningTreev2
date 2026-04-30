@@ -1,7 +1,7 @@
 import type {
-  ThreadAskFollowupQueueActions,
-  ThreadAskFollowupQueueState,
-} from '../state/threadByIdStoreV3'
+  AskFollowupQueueActions,
+  AskFollowupQueueState,
+} from './followupQueueTypes'
 import {
   renderAskConfirmationReasonLabel,
   renderAskQueuePauseReasonLabel,
@@ -10,9 +10,9 @@ import {
 import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 
 type AskFollowupQueuePanelV2Props = {
-  askQueueState: ThreadAskFollowupQueueState
+  askQueueState: AskFollowupQueueState
   askQueueActions: Pick<
-    ThreadAskFollowupQueueActions,
+    AskFollowupQueueActions,
     'removeQueued' | 'reorderAskQueued' | 'sendAskQueuedNow' | 'confirmQueued' | 'retryAskQueued'
   >
 }

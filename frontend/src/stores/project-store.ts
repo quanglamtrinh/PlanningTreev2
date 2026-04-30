@@ -10,8 +10,8 @@ import type {
 } from '../api/types'
 
 const ACTIVE_PROJECT_KEY = 'planningtree.active-project-id'
-const LEGACY_PROJECT_MESSAGE =
-  'This project uses a removed legacy schema. Delete it or recreate it before continuing.'
+const UNSUPPORTED_PROJECT_MESSAGE =
+  'This project uses an unsupported PlanningTree layout. Delete it or recreate it before continuing.'
 const SPLIT_POLL_INTERVAL_MS = 1500
 
 let splitPollTimer: ReturnType<typeof globalThis.setInterval> | null = null
@@ -37,8 +37,8 @@ function writeStoredActiveProjectId(projectId: string | null) {
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.code === 'legacy_project_unsupported') {
-      return LEGACY_PROJECT_MESSAGE
+    if (error.code === 'unsupported_project_layout') {
+      return UNSUPPORTED_PROJECT_MESSAGE
     }
     return error.message
   }

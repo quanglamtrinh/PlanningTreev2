@@ -4,18 +4,17 @@ import { AskFollowupQueuePanelV2 } from '../../src/features/conversation/compone
 import { BreadcrumbThreadTabsV2 } from '../../src/features/conversation/components/BreadcrumbThreadTabsV2'
 import { ExecutionFollowupQueuePanelV2 } from '../../src/features/conversation/components/ExecutionFollowupQueuePanelV2'
 import type {
-  ThreadAskFollowupQueueActions,
-  ThreadAskFollowupQueueState,
-  ThreadExecutionFollowupQueueActions,
-  ThreadExecutionFollowupQueueState,
-} from '../../src/features/conversation/state/threadByIdStoreV3'
+  AskFollowupQueueActions,
+  AskFollowupQueueState,
+  ExecutionFollowupQueueActions,
+  ExecutionFollowupQueueState,
+} from '../../src/features/conversation/components/followupQueueTypes'
 
 function makeExecutionState(
-  overrides: Partial<ThreadExecutionFollowupQueueState> = {},
-): ThreadExecutionFollowupQueueState {
+  overrides: Partial<ExecutionFollowupQueueState> = {},
+): ExecutionFollowupQueueState {
   return {
-    activeThreadRole: 'execution',
-    executionFollowupQueue: [],
+        executionFollowupQueue: [],
     executionQueuePauseReason: 'none',
     executionQueueOperatorPaused: false,
     isSending: false,
@@ -24,7 +23,7 @@ function makeExecutionState(
 }
 
 function makeExecutionActions(): Pick<
-  ThreadExecutionFollowupQueueActions,
+  ExecutionFollowupQueueActions,
   'removeQueued' | 'reorderQueued' | 'sendQueuedNow' | 'confirmQueued' | 'retryQueued' | 'setOperatorPause'
 > {
   return {
@@ -38,12 +37,10 @@ function makeExecutionActions(): Pick<
 }
 
 function makeAskState(
-  overrides: Partial<ThreadAskFollowupQueueState> = {},
-): ThreadAskFollowupQueueState {
+  overrides: Partial<AskFollowupQueueState> = {},
+): AskFollowupQueueState {
   return {
-    activeThreadRole: 'ask_planning',
-    askFollowupQueueEnabled: true,
-    askFollowupQueue: [],
+        askFollowupQueue: [],
     askQueuePauseReason: 'none',
     isSending: false,
     ...overrides,
@@ -51,7 +48,7 @@ function makeAskState(
 }
 
 function makeAskActions(): Pick<
-  ThreadAskFollowupQueueActions,
+  AskFollowupQueueActions,
   'removeQueued' | 'reorderAskQueued' | 'sendAskQueuedNow' | 'confirmQueued' | 'retryAskQueued'
 > {
   return {

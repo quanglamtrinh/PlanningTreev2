@@ -76,6 +76,24 @@ class ThreadMetadataStore:
             ).fetchone()
         return self._row_to_metadata(row) if row is not None else None
 
+    def find_project_thread(self, *, project_id: str, title: str | None = None) -> ThreadMetadata | None:
+        normalized_project_id = str(project_id or "").strip()
+        if not normalized_project_id:
+            return None
+        clauses = ["project_id = ?", "archived_at_ms IS NULL"]
+        params: list[Any] = [normalized_project_id]
+        if title is not None:
+            clauses.append("title = ?")
+            params.append(str(title))
+        sql = (
+            "SELECT thread_id, project_id, title, created_at_ms, updated_at_ms, status, "
+            "rollout_path, native_session_id, forked_from_id, archived_at_ms FROM session_threads "
+            f"WHERE {' AND '.join(clauses)} ORDER BY updated_at_ms DESC LIMIT 1"
+        )
+        with self._lock:
+            row = self._db.execute(sql, params).fetchone()
+        return self._row_to_metadata(row) if row is not None else None
+
     def list(self, *, include_archived: bool = False, limit: int | None = None) -> list[ThreadMetadata]:
         clauses = []
         params: list[Any] = []

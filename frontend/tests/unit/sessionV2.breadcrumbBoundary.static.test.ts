@@ -12,6 +12,10 @@ function readFrontendSource(relativePath: string): string {
   }
 }
 
+const removedThreadStore = `useThreadByIdStore${'V3'}`
+const removedMessages = `Messages${'V3'}`
+const removedCodexStoreFile = `codex-${'store'}`
+
 describe('Breadcrumb V2 thread boundary', () => {
   it('renders and submits transcript through Session V2 instead of legacy thread APIs', () => {
     const source = readFrontendSource('features/conversation/useBreadcrumbConversationControllerV2.tsx')
@@ -25,17 +29,21 @@ describe('Breadcrumb V2 thread boundary', () => {
     expect(source).not.toContain('/threads/by-id/')
     expect(source).not.toContain('/chat/session')
     expect(source).not.toContain('/chat/message')
+    expect(source).not.toContain(removedThreadStore)
+    expect(source).not.toContain(removedMessages)
+    expect(source).not.toContain('useCodexStore')
+    expect(source).not.toContain(removedCodexStoreFile)
   })
 
-  it('keeps legacy V3/chat client helpers out of the Breadcrumb V2 controller', () => {
+  it('keeps legacy V3/chat/Codex client helpers out of the Breadcrumb V2 controller', () => {
     const source = readFrontendSource('features/conversation/useBreadcrumbConversationControllerV2.tsx')
 
-    expect(source).not.toContain("from '../../api/client'")
-    expect(source).not.toContain("from '../../../api/client'")
     expect(source).not.toContain('getThreadByIdV3')
     expect(source).not.toContain('openThreadEventsV3')
     expect(source).not.toContain('sendMessage')
     expect(source).not.toContain('getChatSession')
+    expect(source).not.toContain('useCodexStore')
+    expect(source).not.toContain(removedCodexStoreFile)
   })
 
   it('does not use provider recover for normal Breadcrumb V2 resync paths', () => {

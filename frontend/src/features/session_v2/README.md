@@ -1,8 +1,10 @@
 # Session V2 Boundary
 
-`session_v2` is the frontend boundary for the native session runtime. It owns
-session transport state and protocol projection only. It must not own PlanningTree
-workflow business logic.
+`session_v2` is the frontend boundary for Session Core V2, the sole active
+runtime/conversation surface. It owns session transport state and protocol
+projection only. It must not own PlanningTree workflow business logic, legacy
+conversation runtime concerns, Codex-client state, chat-service state, or V3
+thread store/component behavior.
 
 ## Owns
 
@@ -29,11 +31,14 @@ workflow business logic.
 - Graph mutations, node mutations, artifact workflow state, or project route
   canonicalization.
 - Business queue policy for ask/execution/audit followups.
+- Legacy conversation runtime APIs, chat-service APIs, Codex-client state, or V3
+  thread-by-id stores/components.
 
 ## State Ownership
 
-Backend/session manager is authoritative for protocol state. The frontend stores
-under `session_v2/store` are projection caches for rendering and interaction:
+Backend Session Core V2 manager/journal/snapshot state is authoritative for
+protocol state. The frontend stores under `session_v2/store` are projection
+caches for rendering and interaction:
 
 - `connectionStore` projects connection phase and connection errors.
 - `threadSessionStore` projects threads, turns, items, event cursors, stream

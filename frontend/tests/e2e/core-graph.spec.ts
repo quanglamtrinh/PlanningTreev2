@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+﻿import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 
@@ -13,7 +13,7 @@ test('attaches project folders, renders the graph shell, and opens the breadcrum
   await mkdir(workspaceRoot, { recursive: true })
   await page.goto('/')
 
-  const attachProjectResponse = await request.post('/v3/projects/attach', {
+  const attachProjectResponse = await request.post('/v4/projects/attach', {
     data: { folder_path: workspaceRoot },
   })
   expect(attachProjectResponse.ok()).toBeTruthy()
@@ -29,7 +29,7 @@ test('attaches project folders, renders the graph shell, and opens the breadcrum
     .waitForResponse(
       (response) =>
         response.request().method() === 'GET' &&
-        response.url().includes(`/v3/projects/${attachedSnapshot.project.id}/snapshot`),
+        response.url().includes(`/v4/projects/${attachedSnapshot.project.id}/snapshot`),
       { timeout: 45_000 },
     )
     .catch(() => null)

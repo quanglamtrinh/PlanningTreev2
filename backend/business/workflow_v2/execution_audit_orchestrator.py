@@ -18,13 +18,13 @@ from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 from backend.business.workflow_v2.execution_audit_helpers import (
     GitArtifactService,
     WorkflowMetadataService,
+    WorkflowProgressionService,
 )
 from backend.business.workflow_v2.models import (
     AuditRunV2,
     ExecutionRunV2,
     NodeWorkflowStateV2,
     WorkflowAction,
-    WorkflowPhase,
     utc_now_iso,
     workflow_state_to_response,
 )
@@ -78,8 +78,6 @@ class ExecutionAuditOrchestratorV2:
         event_publisher: WorkflowEventPublisherV2 | None,
         storage: Any,
         tree_service: Any,
-        finish_task_service: Any,
-        review_service: Any | None,
         git_checkpoint_service: Any | None,
     ) -> None:
         self._repository = repository
@@ -88,18 +86,14 @@ class ExecutionAuditOrchestratorV2:
         self._event_publisher = event_publisher
         self._storage = storage
         self._tree_service = tree_service
-        self._finish_task_service = finish_task_service
-        self._review_service = review_service
-        self._metadata_service = WorkflowMetadataService(tree_service, finish_task_service)
+        self._metadata_service = WorkflowMetadataService(storage, tree_service, git_checkpoint_service)
+        self._progression_service = WorkflowProgressionService(storage, tree_service)
         self._artifact_service = GitArtifactService(git_checkpoint_service)
         self._settlement_mismatch_count = 0
         self._last_reconcile_ms_by_turn: dict[tuple[str, str], int] = {}
 
     def get_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
         return _public_state(self._repository.read_state(project_id, node_id))
-
-    def get_legacy_workflow_state(self, project_id: str, node_id: str) -> dict[str, Any]:
-        return legacy_workflow_state_view(self._repository.read_state(project_id, node_id))
 
     def get_active_execution_start_response(self, project_id: str, node_id: str) -> dict[str, Any] | None:
         state = self._repository.read_state(project_id, node_id)
@@ -109,7 +103,7 @@ class ExecutionAuditOrchestratorV2:
         run = state.execution_runs.get(str(run_id or ""))
         return {
             "accepted": True,
-            "threadId": run.thread_id if run is not None else state.execution_thread_id,
+            "threadId": run.thread_id if run is not None else state.thread_id_for("execution"),
             "turnId": run.turn_id if run is not None else None,
             "executionRunId": run_id,
             "workflowState": _public_state(state),
@@ -204,7 +198,6 @@ class ExecutionAuditOrchestratorV2:
         transition_start_execution(
             state,
             execution_run_id=execution_run_id,
-            execution_thread_id=state.execution_thread_id,
         )
 
         metadata = self._metadata_service.load_execution_metadata(
@@ -261,6 +254,7 @@ class ExecutionAuditOrchestratorV2:
             completed_at=utc_now_iso(),
         )
         persisted = self._repository.write_state(project_id, node_id, next_state)
+        self._sync_execution_projection(project_id, node_id, persisted)
         self._publish_state_changed(persisted, action="start_execution", reason="execution_completed")
         return {"workflowState": _public_state(persisted)}
 
@@ -373,7 +367,6 @@ class ExecutionAuditOrchestratorV2:
         transition_start_audit(
             state,
             audit_run_id=audit_run_id,
-            audit_thread_id=state.audit_thread_id,
             expected_workspace_hash=expected_workspace_hash,
         )
 
@@ -399,7 +392,6 @@ class ExecutionAuditOrchestratorV2:
         next_state = transition_start_audit(
             latest_state,
             audit_run_id=audit_run_id,
-            audit_thread_id=thread_id,
             expected_workspace_hash=expected_workspace_hash,
         )
         prompt = self._metadata_service.build_audit_review_prompt(
@@ -510,6 +502,7 @@ class ExecutionAuditOrchestratorV2:
             completed_at=utc_now_iso(),
         )
         persisted = self._repository.write_state(project_id, node_id, next_state)
+        self._sync_execution_projection(project_id, node_id, persisted)
         self._publish_state_changed(persisted, action="review_in_audit", reason="audit_completed")
         return {"workflowState": _public_state(persisted)}
 
@@ -602,7 +595,6 @@ class ExecutionAuditOrchestratorV2:
             state,
             expected_review_commit_sha=expected_review_commit_sha,
             execution_run_id=execution_run_id,
-            execution_thread_id=state.execution_thread_id,
         )
         metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
         self._require_head_sha(metadata["workspaceRoot"], expected_review_commit_sha)
@@ -688,10 +680,7 @@ class ExecutionAuditOrchestratorV2:
         replay = self._resolve_idempotent(state, "start_package_review", key, payload_hash)
         if replay is not None:
             return replay
-        transition_start_package_review(
-            state,
-            package_review_thread_id=None,
-        )
+        transition_start_package_review(state)
 
         binding = self._thread_binding_service.ensure_thread(
             project_id=project_id,
@@ -703,10 +692,7 @@ class ExecutionAuditOrchestratorV2:
         )
         thread_id = _binding_thread_id(binding)
         latest_state = self._repository.read_state(project_id, node_id)
-        next_state = transition_start_package_review(
-            latest_state,
-            package_review_thread_id=thread_id,
-        )
+        next_state = latest_state.model_copy(deep=True)
         metadata = self._metadata_service.load_execution_metadata(project_id, node_id)
         prompt = build_package_review_prompt(
             self._storage,
@@ -884,6 +870,7 @@ class ExecutionAuditOrchestratorV2:
                 error_message=message,
             )
         persisted = self._repository.write_state(project_id, node_id, next_state)
+        self._sync_execution_projection(project_id, node_id, persisted)
         self._publish_state_changed(persisted, action="start_execution" if kind == "execution" else "start_audit", reason="turn_failed")
         return {"workflowState": _public_state(persisted)}
 
@@ -911,13 +898,11 @@ class ExecutionAuditOrchestratorV2:
                 validation_state,
                 expected_review_commit_sha=start_sha,
                 execution_run_id=run_id,
-                execution_thread_id=validation_state.execution_thread_id,
             )
         else:
             transition_start_execution(
                 validation_state,
                 execution_run_id=run_id,
-                execution_thread_id=validation_state.execution_thread_id,
             )
         binding = self._thread_binding_service.ensure_thread(
             project_id=project_id,
@@ -934,13 +919,11 @@ class ExecutionAuditOrchestratorV2:
                 latest_state,
                 expected_review_commit_sha=start_sha,
                 execution_run_id=run_id,
-                execution_thread_id=thread_id,
             )
         else:
             next_state = transition_start_execution(
                 latest_state,
                 execution_run_id=run_id,
-                execution_thread_id=thread_id,
             )
         turn_id = self._start_session_turn(
             thread_id=thread_id,
@@ -1180,10 +1163,36 @@ class ExecutionAuditOrchestratorV2:
             node_id,
             next_state.model_copy(deep=True, update={"idempotency_records": records}),
         )
+        self._sync_execution_projection(project_id, node_id, persisted)
         public_action = _public_action(action)
         self._publish_action_completed(persisted, action=public_action, reason=action)
         self._publish_state_changed(persisted, action=public_action, reason=action)
         return response_builder(persisted)
+
+    def _sync_execution_projection(self, project_id: str, node_id: str, state: NodeWorkflowStateV2) -> None:
+        run_id = state.active_execution_run_id or state.latest_execution_run_id
+        run = state.execution_runs.get(str(run_id or ""))
+        if run is None and state.current_execution_decision is None and state.phase == "ready_for_execution":
+            return
+        status = _execution_projection_status(state, run)
+        projection = {
+            "status": status,
+            "initial_sha": state.base_commit_sha or (run.start_sha if run is not None else None),
+            "head_sha": state.head_commit_sha or (run.committed_head_sha if run is not None else None),
+            "started_at": run.started_at if run is not None else None,
+            "completed_at": (
+                run.completed_at
+                if run is not None and run.completed_at
+                else (run.decided_at if run is not None else None)
+            ),
+            "local_review_started_at": None,
+            "local_review_prompt_consumed_at": None,
+            "commit_message": None,
+            "changed_files": [],
+            "error_message": run.error_message if run is not None else None,
+            "auto_review": None,
+        }
+        self._storage.workflow_domain_store.write_execution(project_id, node_id, projection)
 
     def _publish_state_changed(
         self,
@@ -1237,66 +1246,17 @@ class ExecutionAuditOrchestratorV2:
         accepted_sha: str,
         summary_text: str | None,
     ) -> None:
-        activated_sibling_id: str | None = None
-        activated_review_node_id: str | None = None
-        activated_workspace_root: str | None = None
-        rollup_ready_review_node_id: str | None = None
-
-        with self._storage.project_lock(project_id):
-            snapshot = self._storage.project_store.load_snapshot(project_id)
-            node_by_id = self._tree_service.node_index(snapshot)
-            node = node_by_id.get(node_id)
-            if node is None:
-                raise NodeNotFound(node_id)
-            node["status"] = "done"
-            parent_id = str(node.get("parent_id") or "").strip()
-            parent = node_by_id.get(parent_id) if parent_id else None
-            review_node_id = str(parent.get("review_node_id") or "").strip() if isinstance(parent, dict) else ""
-            if review_node_id:
-                self._storage.review_state_store.add_checkpoint(
-                    project_id,
-                    review_node_id,
-                    sha=accepted_sha,
-                    summary=summary_text,
-                    source_node_id=node_id,
-                )
-                activated_review_node_id = review_node_id
-                if self._review_service is not None:
-                    (
-                        activated_sibling_id,
-                        rollup_ready_review_node_id,
-                    ) = self._review_service._try_activate_next_sibling(
-                        project_id,
-                        parent,
-                        review_node_id,
-                        snapshot,
-                        node_by_id,
-                    )
-                    if activated_sibling_id:
-                        activated_workspace_root = self._finish_task_service._workspace_root_from_snapshot(snapshot)
-            elif isinstance(parent, dict):
-                unlocked_id = self._tree_service.unlock_next_sibling(node, node_by_id)
-                if unlocked_id:
-                    snapshot["tree_state"]["active_node_id"] = unlocked_id
-                    activated_sibling_id = unlocked_id
-
-            now = iso_now()
-            snapshot["updated_at"] = now
-            self._storage.project_store.save_snapshot(project_id, snapshot)
-            self._storage.project_store.touch_meta(project_id, now)
-
-        if rollup_ready_review_node_id and self._review_service is not None:
-            try:
-                self._review_service.start_review_rollup(project_id, rollup_ready_review_node_id)
-            except Exception:
-                pass
-
-        if activated_sibling_id and activated_review_node_id and activated_workspace_root and self._review_service is not None:
-            self._review_service._bootstrap_child_audit_best_effort(
+        result = self._progression_service.complete_node(
+            project_id,
+            node_id,
+            accepted_sha=accepted_sha,
+            summary_text=summary_text,
+        )
+        if result.get("rollupReadyReviewNodeId"):
+            logger.debug(
+                "Workflow V2 marked review rollup ready for %s/%s",
                 project_id,
-                activated_review_node_id,
-                activated_sibling_id,
-                activated_workspace_root,
+                result.get("rollupReadyReviewNodeId"),
             )
 
     def _upsert_handoff_summary_best_effort(
@@ -1351,6 +1311,24 @@ def _binding_thread_id(response: dict[str, Any]) -> str:
     if not thread_id:
         raise WorkflowActionNotAllowedError("ensure_thread", "unknown", message="Workflow thread binding did not return a thread id.")
     return thread_id
+
+
+def _execution_projection_status(state: NodeWorkflowStateV2, run: ExecutionRunV2 | None) -> str:
+    if run is not None and run.status == "failed":
+        return "failed"
+    if state.phase == "executing":
+        return "executing"
+    if state.phase == "done":
+        return "review_accepted"
+    if state.phase in {"review_pending", "audit_running", "audit_needs_changes", "audit_accepted"}:
+        return "review_pending"
+    if state.phase == "execution_completed":
+        return "completed"
+    if state.phase == "blocked":
+        return "failed"
+    if run is not None and run.status == "completed":
+        return "completed"
+    return "idle"
 
 
 def _extract_turn_text(turn: dict[str, Any] | None) -> str | None:
@@ -1529,68 +1507,3 @@ def _update_audit_run(
         },
     )
     return state.model_copy(deep=True, update={"audit_runs": runs})
-
-
-def legacy_workflow_state_view(state: NodeWorkflowStateV2) -> dict[str, Any]:
-    legacy_phase = _legacy_phase(state.phase)
-    execution_decision = (
-        state.current_execution_decision.model_dump(by_alias=True, mode="json")
-        if state.current_execution_decision is not None
-        else None
-    )
-    audit_decision = _legacy_audit_decision(state)
-    return {
-        "nodeId": state.node_id,
-        "workflowPhase": legacy_phase,
-        "askThreadId": state.ask_thread_id,
-        "executionThreadId": state.execution_thread_id,
-        "auditLineageThreadId": state.audit_thread_id,
-        "reviewThreadId": state.audit_thread_id,
-        "activeExecutionRunId": state.active_execution_run_id,
-        "latestExecutionRunId": state.latest_execution_run_id,
-        "activeReviewCycleId": state.active_audit_run_id,
-        "latestReviewCycleId": state.latest_audit_run_id,
-        "currentExecutionDecision": execution_decision,
-        "currentAuditDecision": audit_decision,
-        "acceptedSha": state.accepted_sha,
-        "runtimeBlock": (
-            {"kind": "workflow_v2_blocked", "message": state.blocked_reason or ""}
-            if state.phase == "blocked"
-            else copy.deepcopy(state.last_error)
-        ),
-        "canSendExecutionMessage": legacy_phase == "execution_decision_pending" and execution_decision is not None,
-        "canReviewInAudit": legacy_phase == "execution_decision_pending" and execution_decision is not None,
-        "canImproveInExecution": legacy_phase == "audit_decision_pending" and audit_decision is not None,
-        "canMarkDoneFromExecution": legacy_phase == "execution_decision_pending" and execution_decision is not None,
-        "canMarkDoneFromAudit": legacy_phase == "audit_decision_pending" and audit_decision is not None,
-    }
-
-
-def _legacy_phase(phase: WorkflowPhase) -> str:
-    mapping = {
-        "planning": "idle",
-        "ready_for_execution": "idle",
-        "executing": "execution_running",
-        "execution_completed": "execution_decision_pending",
-        "audit_running": "audit_running",
-        "review_pending": "audit_decision_pending",
-        "audit_needs_changes": "audit_decision_pending",
-        "audit_accepted": "audit_decision_pending",
-        "done": "done",
-        "blocked": "failed",
-    }
-    return mapping[phase]
-
-
-def _legacy_audit_decision(state: NodeWorkflowStateV2) -> dict[str, Any] | None:
-    decision = state.current_audit_decision
-    if decision is None:
-        return None
-    return {
-        "status": decision.status,
-        "sourceReviewCycleId": decision.source_audit_run_id,
-        "reviewCommitSha": decision.review_commit_sha,
-        "finalReviewText": decision.final_review_text,
-        "reviewDisposition": decision.review_disposition,
-        "createdAt": decision.created_at,
-    }

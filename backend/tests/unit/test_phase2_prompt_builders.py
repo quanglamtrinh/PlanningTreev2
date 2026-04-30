@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -45,7 +45,7 @@ def test_build_local_review_prompt_includes_confirmed_artifacts_and_execution_st
         "# Spec\nShip the reviewed implementation.",
         encoding="utf-8",
     )
-    storage.execution_state_store.write_state(
+    storage.workflow_domain_store.write_execution(
         project_id,
         root_id,
         {
@@ -89,7 +89,7 @@ def test_build_package_review_prompt_uses_manifest_and_rollup_state(
             "confirmed_content": "# Frame\nPackage around the golden path.",
         },
     )
-    storage.review_state_store.write_state(
+    storage.workflow_domain_store.write_review(
         project_id,
         review_id,
         {
@@ -154,7 +154,7 @@ def test_build_child_activation_prompt_includes_assignment_and_prior_checkpoints
     review_id = _add_review_node(snapshot, root_id)
     _save_snapshot(storage, project_id, snapshot, workspace_root)
 
-    storage.review_state_store.write_state(
+    storage.workflow_domain_store.write_review(
         project_id,
         review_id,
         {
@@ -230,7 +230,7 @@ def test_build_rollup_prompt_from_storage_uses_checkpoint_summaries_and_json_con
         },
     )
 
-    storage.review_state_store.write_state(
+    storage.workflow_domain_store.write_review(
         project_id,
         review_id,
         {

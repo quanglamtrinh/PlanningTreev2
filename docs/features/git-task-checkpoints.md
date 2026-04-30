@@ -10,7 +10,7 @@ Git as a task-checkpoint engine for the execution lifecycle. Not a full Git clie
 
 User initializes a Git repo for their project via the Sidebar CTA.
 
-- `POST /v1/projects/{project_id}/git/init`
+- `POST /v4/projects/{project_id}/git/init`
 - Creates repo with `git init --initial-branch main`, adds `.planningtree/` to `.gitignore`, creates initial commit
 - Blocks if project folder is inside an existing parent repo (V1: no nested repos)
 - Returns initial commit SHA
@@ -65,14 +65,16 @@ The detail-state panel shows:
 
 ### 5. Reset Workspace
 
-Two reset modes via `POST /v1/projects/{project_id}/nodes/{node_id}/reset-workspace`:
+Two reset modes via `POST /v4/projects/{project_id}/nodes/{node_id}/reset-workspace`:
 
 - `target: "initial"` — `git reset --hard {initial_sha}` (undo execution changes)
 - `target: "head"` — `git reset --hard {head_sha}` (restore execution result)
 
-Guards: no active execution or chat turns for the project. Target SHA must exist.
+Guards: no active execution for the project. Target SHA must exist.
 
-Execution state files are NOT modified by reset. `current_head_sha` and `task_present_in_current_workspace` are computed live from git state.
+Workflow Core V2 execution projections are NOT modified by reset.
+`current_head_sha` and `task_present_in_current_workspace` are computed live
+from git state.
 
 ## SHA Domains
 
@@ -80,11 +82,11 @@ Mixed-format SHA behavior is an explicit design choice:
 
 | Domain | Format | Producer |
 |---|---|---|
-| Execution: `initial_sha`, `head_sha`, `current_head_sha` | Git commit SHA (40-char hex) | `finish_task_service` via git |
-| Review checkpoints: K0.sha | `sha256:` (V1 legacy) | `split_service` via `compute_workspace_sha` |
-| Review checkpoints: K1+.sha | Git commit SHA | `review_service` via `head_sha` from exec_state |
+| Execution: `initial_sha`, `head_sha`, `current_head_sha` | Git commit SHA (40-char hex) | `ExecutionAuditOrchestratorV2` via `GitCheckpointService` |
+| Review checkpoints: K0.sha | `sha256:` historical workspace hash | `split_service` via `compute_workspace_sha` |
+| Review checkpoints: K1+.sha | Git commit SHA | `WorkflowProgressionService` from accepted workflow state |
 | Review: `k0_git_head_sha` | Git commit SHA or null | `split_service` (new, alongside K0) |
-| Rollup: `rollup.sha`, `rollup.draft.sha` | `sha256:` (V1 legacy) | `review_service` via `_compute_workspace_sha` |
+| Rollup: `rollup.sha`, `rollup.draft.sha` | `sha256:` historical workspace hash shape | Workflow Core V2 review package state via workspace hashing |
 
 Rule: never use `checkpoints[-1]["sha"]` directly for git operations. Normalize through `_resolve_expected_baseline_sha()` which detects format via `is_git_commit_sha()` and falls back to `k0_git_head_sha`.
 
@@ -102,14 +104,14 @@ Extended statuses: `idle | executing | completed | failed | review_pending | rev
 
 **`git_checkpoint_service.py`** — Pure git subprocess operations, stateless. All git commands run via `_run_git()` with 30s timeout.
 
-Wired into: `FinishTaskService`, `NodeDetailService`, `ProjectService`, `SnapshotViewService`, `SplitService`.
+Wired into: `ExecutionAuditOrchestratorV2`, `NodeDetailService`, `ProjectService`, `SnapshotViewService`, and `SplitService`.
 
 ## Public Routes
 
 Existing route families (per AGENT_RULES.md — no new route families):
 
-- `POST /v1/projects/{project_id}/git/init` — in `projects.py`
-- `POST /v1/projects/{project_id}/nodes/{node_id}/reset-workspace` — in `nodes.py`
+- `POST /v4/projects/{project_id}/git/init` - in `projects.py`
+- `POST /v4/projects/{project_id}/nodes/{node_id}/reset-workspace` - in `nodes.py`
 
 ## Non-Goals
 

@@ -170,12 +170,12 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('Context')).toBeInTheDocument()
     expect(screen.queryByText('Parent frame content')).not.toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
+    expect(screen.getByText('Parent Task')).toBeInTheDocument()
     expect(screen.getByText('Parent frame content')).toBeInTheDocument()
     expect(screen.getByText('Use the selected child.')).toBeInTheDocument()
     expect(screen.getByText('Use Auth0')).toBeInTheDocument()
     expect(screen.queryByText('Not answered')).not.toBeInTheDocument()
-    expect(screen.getByText('1.1 Current Child')).toBeInTheDocument()
+    expect(screen.getByText('1 Current Child')).toBeInTheDocument()
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getAllByTestId('workflow-context-document-frame.md').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByTestId('workflow-context-document-spec.md').length).toBeGreaterThanOrEqual(1)
@@ -226,7 +226,7 @@ describe('TranscriptPanel', () => {
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expect(screen.queryByText('Hydrated frame content')).not.toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Hydrated Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Hydrated Child').length).toBeGreaterThan(0)
     expect(screen.getByText('Hydrated frame content')).toBeInTheDocument()
   })
 
@@ -270,26 +270,26 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Canonical Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Canonical Child').length).toBeGreaterThan(0)
     expect(screen.getByText('Canonical frame content')).toBeInTheDocument()
   })
 
-  it('renders legacy workflow context from injected XML text', () => {
+  it('renders workflow context from injected XML fallback text', () => {
     const packet = {
       kind: 'ask_planning_context',
       payload: {
         artifactContext: {
           ancestorContext: [],
           currentContext: {
-            node: { node_id: 'child', hierarchical_number: '1.1', title: 'Legacy Child' },
-            frame: { content: 'Legacy frame content' },
-            spec: { content: 'Legacy spec content' },
+            node: { node_id: 'child', hierarchical_number: '1.1', title: 'XML Child' },
+            frame: { content: 'XML frame content' },
+            spec: { content: 'XML spec content' },
           },
         },
       },
     }
     const item: SessionItem = {
-      id: 'workflow-context-legacy',
+      id: 'workflow-context-xml',
       threadId: 'thread-1',
       turnId: 'turn-1',
       kind: 'systemMessage',
@@ -317,9 +317,9 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Legacy Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 XML Child').length).toBeGreaterThan(0)
     expect(screen.getByText('current task')).toBeInTheDocument()
-    expect(screen.getByText('Legacy spec content')).toBeInTheDocument()
+    expect(screen.getByText('XML spec content')).toBeInTheDocument()
     expect(container.textContent).not.toContain('<planning_tree_context')
   })
 
@@ -371,7 +371,7 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Codex Item Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Codex Item Child').length).toBeGreaterThan(0)
     expect(screen.getByText('Codex item frame content')).toBeInTheDocument()
   })
 
@@ -419,7 +419,7 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Updated Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Updated Child').length).toBeGreaterThan(0)
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getByText('Updated spec content')).toBeInTheDocument()
   })
@@ -463,9 +463,9 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
+    expect(screen.getByText('Parent Task')).toBeInTheDocument()
     expect(screen.getByText('Parent task frame fallback')).toBeInTheDocument()
-    expect(screen.getByText('1.1 Compact Child')).toBeInTheDocument()
+    expect(screen.getByText('1 Compact Child')).toBeInTheDocument()
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getByText('Compact frame content')).toBeInTheDocument()
     expect(screen.getByText('Compact spec content')).toBeInTheDocument()

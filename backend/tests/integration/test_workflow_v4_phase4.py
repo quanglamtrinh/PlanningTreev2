@@ -136,36 +136,9 @@ def test_v4_workflow_state_returns_direct_canonical_default(client, workspace_ro
     assert payload["allowedActions"] == ["start_execution"]
 
 
-def test_v4_workflow_state_read_through_converts_legacy_v3_phase(client, workspace_root) -> None:
-    project_id, node_id, _ = _project_with_confirmed_docs(client, workspace_root)
-    client.app.state.storage.workflow_state_store.write_state(
-        project_id,
-        node_id,
-        {
-            "nodeId": node_id,
-            "workflowPhase": "audit_decision_pending",
-            "reviewThreadId": "review-thread-1",
-            "currentAuditDecision": {
-                "status": "current",
-                "sourceReviewCycleId": "cycle-1",
-                "reviewCommitSha": "sha-review",
-                "finalReviewText": "review text",
-            },
-        },
-    )
-
-    response = client.get(f"/v4/projects/{project_id}/nodes/{node_id}/workflow-state")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["phase"] == "review_pending"
-    assert payload["threads"]["audit"] == "review-thread-1"
-    assert payload["decisions"]["audit"]["reviewCommitSha"] == "sha-review"
-    assert payload["allowedActions"] == ["improve_in_execution", "mark_done_from_audit"]
-
 
 @pytest.mark.anyio
-async def test_v4_workflow_events_filter_and_adapt_legacy_updates(client, workspace_root) -> None:
+async def test_v4_workflow_events_filter_and_adapt_detail_updates(client, workspace_root) -> None:
     project_id, node_id, _ = _project_with_confirmed_docs(client, workspace_root)
     broker = GlobalEventBroker()
     client.app.state.workflow_event_broker = broker
@@ -191,7 +164,7 @@ async def test_v4_workflow_events_filter_and_adapt_legacy_updates(client, worksp
         )
         broker.publish(
             {
-                "eventId": "evt-legacy",
+                "eventId": "evt-state",
                 "projectId": project_id,
                 "nodeId": node_id,
                 "occurredAt": "2026-04-24T00:00:00Z",
@@ -200,7 +173,7 @@ async def test_v4_workflow_events_filter_and_adapt_legacy_updates(client, worksp
         )
 
         payload = await _read_sse_payload(response)
-        assert payload["eventId"] == "evt-legacy"
+        assert payload["eventId"] == "evt-state"
         assert payload["projectId"] == project_id
         assert payload["nodeId"] == node_id
         assert payload["type"] == "workflow/state_changed"

@@ -11,35 +11,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 TEST_GROUPS: list[tuple[str, list[str]]] = [
     (
-        "split latestCommit invariants (diff + no-diff)",
+        "workflow state-machine commit invariants",
         [
-            "backend/tests/unit/test_split_service.py::test_split_service_commits_projection_and_updates_k0_git_head",
-            "backend/tests/unit/test_split_service.py::test_split_service_records_latest_commit_on_no_diff_without_overwriting_k0_head",
+            "backend/tests/unit/test_workflow_v2_state_machine.py::test_mark_done_from_execution_validates_workspace_hash",
+            "backend/tests/unit/test_workflow_v2_state_machine.py::test_mark_done_from_audit_validates_review_commit",
         ],
     ),
     (
-        "execution/audit latestCommit invariants",
+        "workflow v4 execution/audit invariants",
         [
-            "backend/tests/unit/test_execution_audit_workflow_service.py::test_mark_done_from_execution_writes_latest_commit_metadata",
-            "backend/tests/unit/test_execution_audit_workflow_service.py::test_review_in_audit_writes_latest_commit_metadata_and_uses_head_sha",
-            "backend/tests/unit/test_execution_audit_workflow_service.py::test_mark_done_from_audit_keeps_existing_latest_commit_metadata",
-        ],
-    ),
-    (
-        "workflow integration invariants (retry + detail-state projection)",
-        [
-            "backend/tests/integration/test_workflow_v2_review_thread_context.py::test_first_review_cycle_uses_detached_thread_with_project_workspace",
-            "backend/tests/integration/test_workflow_v2_review_thread_context.py::test_mark_done_from_execution_persists_latest_commit_and_idempotency",
-            "backend/tests/integration/test_workflow_v2_review_thread_context.py::test_mark_done_from_audit_reuses_existing_latest_commit_without_overwrite",
-        ],
-    ),
-    (
-        "describe fallback invariant",
-        [
-            "backend/tests/unit/test_node_detail_service_audit_v2.py::test_detail_state_falls_back_to_execution_state_when_latest_commit_missing",
+            "backend/tests/integration/test_workflow_v4_phase5.py::test_v4_execution_start_uses_v2_orchestrator_and_is_idempotent",
+            "backend/tests/integration/test_workflow_v4_phase5.py::test_v2_orchestrator_direct_settlement_is_idempotent_when_no_active_run",
+            "backend/tests/integration/test_workflow_v4_phase5.py::test_audit_settlement_uses_final_review_message_for_improve_prompt",
         ],
     ),
 ]
+
 
 
 def _run_pytest_cases(cases: list[str]) -> int:

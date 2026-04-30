@@ -6,8 +6,6 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from backend.ai.ask_thread_config import build_ask_planning_thread_config
-from backend.ai.codex_client import CodexAppClient, CodexTransportError
 from backend.ai.frame_prompt_builder import (
     build_frame_generation_prompt,
     build_frame_generation_role_prefix,
@@ -22,11 +20,10 @@ from backend.errors.app_errors import (
     NodeNotFound,
     ProjectNotFound,
 )
-from backend.conversation.services.thread_transcript_builder import ThreadTranscriptBuilder
 from backend.services import planningtree_workspace
 from backend.services.execution_gating import require_shaping_not_frozen
-from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
+from backend.business.workflow_v2.artifact_turn_runner import WorkflowArtifactTurnRunnerV2
 from backend.services.workflow_artifact_write_guard import ensure_allowed_workflow_artifact_write
 from backend.storage.file_utils import atomic_write_json, iso_now, load_json, new_id
 from backend.storage.storage import Storage
@@ -36,7 +33,6 @@ logger = logging.getLogger(__name__)
 FRAME_GEN_STATE_FILE = "frame_gen.json"
 
 _STALE_JOB_MESSAGE = "Frame generation was interrupted because the server restarted before it completed."
-_INSTRUCTIONS_REQUIRED_MESSAGE = "instructions are required"
 
 
 def _default_gen_state() -> dict[str, Any]:
@@ -52,22 +48,13 @@ class FrameGenerationService:
         self,
         storage: Storage,
         tree_service: TreeService,
-        codex_client: CodexAppClient,
-        thread_lineage_service: ThreadLineageService,
         frame_gen_timeout: int,
-        thread_transcript_builder: ThreadTranscriptBuilder | None = None,
-        artifact_turn_runner: Any | None = None,
+        artifact_turn_runner: WorkflowArtifactTurnRunnerV2,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
-        self._codex_client = codex_client
-        self._thread_lineage_service = thread_lineage_service
         self._timeout = int(frame_gen_timeout)
         self._artifact_turn_runner = artifact_turn_runner
-        self._thread_transcript_builder = thread_transcript_builder or ThreadTranscriptBuilder(
-            storage,
-            storage.thread_snapshot_store_v2,
-        )
         self._live_jobs_lock = threading.Lock()
         self._live_jobs: dict[str, str] = {}  # keyed by "project_id::node_id"
 
@@ -191,15 +178,7 @@ class FrameGenerationService:
 
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             task_context = build_split_context(snapshot, node, node_by_id)
-            chat_messages = (
-                []
-                if self._artifact_turn_runner is not None
-                else self._thread_transcript_builder.build_prompt_messages(
-                    project_id,
-                    node_id,
-                    "ask_planning",
-                )
-            )
+            chat_messages: list[dict[str, Any]] = []
 
         # Build prompt and run turn (outside lock)
         role_prefix = build_frame_generation_role_prefix()
@@ -268,40 +247,17 @@ class FrameGenerationService:
                 snapshot = self._persist_snapshot(project_id, snapshot)
                 self._sync_snapshot_tree(snapshot)
 
-    # ── Thread management ──────────────────────────────────────────
+    # -- Thread management ------------------------------------------
 
     def _ensure_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
-        if self._artifact_turn_runner is not None:
-            return str(
-                self._artifact_turn_runner.ensure_ask_thread(
-                    project_id=project_id,
-                    node_id=node_id,
-                    workspace_root=workspace_root,
-                    artifact_kind="frame",
-                )
-            )
-        base_instructions, dynamic_tools = build_ask_planning_thread_config()
-        try:
-            session = self._thread_lineage_service.ensure_forked_thread(
-                project_id,
-                node_id,
-                "ask_planning",
-                source_node_id=node_id,
-                source_role="audit",
-                fork_reason="ask_bootstrap",
+        return str(
+            self._artifact_turn_runner.ensure_ask_thread(
+                project_id=project_id,
+                node_id=node_id,
                 workspace_root=workspace_root,
-                base_instructions=base_instructions,
-                dynamic_tools=dynamic_tools,
+                artifact_kind="frame",
             )
-        except CodexTransportError as exc:
-            raise FrameGenerationBackendUnavailable(str(exc)) from exc
-
-        thread_id = str(session.get("thread_id") or "").strip()
-        if not thread_id:
-            raise FrameGenerationBackendUnavailable(
-                "Ask thread bootstrap did not return a thread id."
-            )
-        return thread_id
+        )
 
     def _run_frame_turn_with_recovery(
         self,
@@ -312,77 +268,19 @@ class FrameGenerationService:
         prompt: str,
         workspace_root: str | None,
     ) -> dict[str, Any]:
-        if self._artifact_turn_runner is not None:
-            return self._artifact_turn_runner.run_prompt(
-                project_id=project_id,
-                node_id=node_id,
-                thread_id=thread_id,
-                prompt=prompt,
-                artifact_kind="frame",
-                cwd=workspace_root,
-                output_schema=build_frame_output_schema(),
-                sandbox_policy={"type": "readOnly"},
-                timeout_sec=self._timeout,
-            )
-        try:
-            return self._codex_client.run_turn_streaming(
-                prompt,
-                thread_id=thread_id,
-                timeout_sec=self._timeout,
-                cwd=workspace_root,
-                writable_roots=None,
-                sandbox_profile="read_only",
-                output_schema=build_frame_output_schema(),
-            )
-        except CodexTransportError as exc:
-            if not self._is_instructions_required_error(exc):
-                raise
-            logger.warning(
-                "Ask thread requires explicit instructions; rebuilding ask thread for %s/%s.",
-                project_id,
-                node_id,
-            )
-            rebuilt_thread_id = self._rebuild_ask_thread(project_id, node_id, workspace_root)
-            return self._codex_client.run_turn_streaming(
-                prompt,
-                thread_id=rebuilt_thread_id,
-                timeout_sec=self._timeout,
-                cwd=workspace_root,
-                writable_roots=None,
-                sandbox_profile="read_only",
-                output_schema=build_frame_output_schema(),
-            )
-
-    def _rebuild_ask_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
-        if self._artifact_turn_runner is not None:
-            return self._ensure_ask_thread(project_id, node_id, workspace_root)
-        base_instructions, dynamic_tools = build_ask_planning_thread_config()
-        try:
-            session = self._thread_lineage_service.rebuild_from_ancestor(
-                project_id,
-                node_id,
-                "ask_planning",
-                workspace_root,
-                base_instructions=base_instructions,
-                dynamic_tools=dynamic_tools,
-                writable_roots=None,
-            )
-        except CodexTransportError as exc:
-            raise FrameGenerationBackendUnavailable(str(exc)) from exc
-        thread_id = str(session.get("thread_id") or "").strip()
-        if not thread_id:
-            raise FrameGenerationBackendUnavailable(
-                "Ask thread rebuild did not return a thread id."
-            )
-        return thread_id
-
-    @staticmethod
-    def _is_instructions_required_error(exc: Exception) -> bool:
-        return _INSTRUCTIONS_REQUIRED_MESSAGE in str(exc).lower()
+        return self._artifact_turn_runner.run_prompt(
+            project_id=project_id,
+            node_id=node_id,
+            thread_id=thread_id,
+            prompt=prompt,
+            artifact_kind="frame",
+            cwd=workspace_root,
+            output_schema=build_frame_output_schema(),
+            sandbox_policy={"type": "readOnly"},
+            timeout_sec=self._timeout,
+        )
 
     def _refresh_ask_context(self, project_id: str, node_id: str) -> None:
-        if self._artifact_turn_runner is None:
-            return
         self._artifact_turn_runner.refresh_ask_context(
             project_id=project_id,
             node_id=node_id,

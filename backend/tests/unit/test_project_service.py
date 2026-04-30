@@ -50,7 +50,7 @@ def test_create_project_initializes_root_and_minimal_files(
     }
     assert storage.project_store.meta_path(project_id).exists()
     assert storage.project_store.tree_path(project_id).exists()
-    assert not storage.split_state_store.path(project_id).exists()
+    assert not storage.workflow_domain_store.artifact_jobs_path(project_id).exists()
     assert snapshot["project"]["project_path"] == str(workspace_root.resolve())
     assert not (project_dir / "chat").exists()
     assert not (project_dir / "state.json").exists()
@@ -217,8 +217,6 @@ def test_bootstrap_status_exposes_core_readiness_only(storage: Storage) -> None:
 
     assert status["ready"] is True
     assert status["workspace_configured"] is True
-    assert status["ask_v3_backend_enabled"] is True
-    assert status["ask_v3_frontend_enabled"] is True
     assert status["ask_followup_queue_enabled"] is False
     assert "execution_audit_v2_enabled" not in status
     assert "execution_audit_uiux_v3_backend_enabled" not in status

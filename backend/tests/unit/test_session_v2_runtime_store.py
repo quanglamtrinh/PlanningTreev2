@@ -454,37 +454,3 @@ def test_runtime_store_migrates_legacy_pending_requests_turn_id_to_nullable() ->
             assert restored["turnId"] is None
         finally:
             store.close()
-
-
-def test_runtime_store_legacy_migration_marker_is_idempotent_and_persisted() -> None:
-    with _workspace_temp_dir() as tmp:
-        db_path = tmp / "session_v2.sqlite3"
-        store = RuntimeStoreV2(db_path=db_path)
-        marker = store.mark_legacy_thread_migrated(
-            thread_id="thread-legacy-1",
-            source_project_id="project-1",
-            source_node_id="node-1",
-            source_role="execution",
-            source_snapshot_version=7,
-            source_item_count=12,
-            source_pending_request_count=1,
-            source_hash="sha256:test",
-        )
-        assert marker["threadId"] == "thread-legacy-1"
-        assert store.has_legacy_migration_marker(thread_id="thread-legacy-1") is True
-
-        duplicate = store.mark_legacy_thread_migrated(thread_id="thread-legacy-1")
-        assert duplicate == marker
-        store.close()
-
-        reopened = RuntimeStoreV2(db_path=db_path)
-        try:
-            assert reopened.has_legacy_migration_marker(thread_id="thread-legacy-1") is True
-            restored = reopened.read_legacy_migration_marker(thread_id="thread-legacy-1")
-            assert restored is not None
-            assert restored["sourceProjectId"] == "project-1"
-            assert restored["sourceNodeId"] == "node-1"
-            assert restored["sourceRole"] == "execution"
-            assert restored["sourceItemCount"] == 12
-        finally:
-            reopened.close()

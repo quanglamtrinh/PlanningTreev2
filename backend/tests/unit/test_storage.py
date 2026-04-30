@@ -4,21 +4,13 @@ from backend.config.app_config import build_app_paths
 from backend.storage.storage import Storage
 
 
-def test_storage_purges_legacy_projects_only_once(data_root) -> None:
+def test_storage_does_not_delete_projects_root_on_startup(data_root) -> None:
     paths = build_app_paths(data_root)
-    legacy_project_dir = paths.projects_root / "legacy-project"
-    legacy_project_dir.mkdir(parents=True)
-    (legacy_project_dir / "meta.json").write_text("{}", encoding="utf-8")
+    existing_project_dir = paths.projects_root / "existing-project"
+    existing_project_dir.mkdir(parents=True)
+    (existing_project_dir / "meta.json").write_text("{}", encoding="utf-8")
 
     storage = Storage(paths)
 
-    assert not paths.projects_root.exists()
-    assert storage.workspace_store.legacy_projects_purged() is True
-
-    recreated_legacy_dir = paths.projects_root / "legacy-project-2"
-    recreated_legacy_dir.mkdir(parents=True)
-    (recreated_legacy_dir / "meta.json").write_text("{}", encoding="utf-8")
-
-    Storage(paths)
-
-    assert recreated_legacy_dir.exists()
+    assert existing_project_dir.exists()
+    assert storage.workspace_store.read() == {"entries": []}
