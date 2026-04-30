@@ -27,7 +27,7 @@ describe('ComposerBar early response UX', () => {
     const onSend = vi.fn()
     render(<ComposerBar onSend={onSend} disabled={false} earlyResponsePhase="idle" />)
 
-    const input = screen.getByPlaceholderText('Send a message...') as HTMLTextAreaElement
+    const input = screen.getByPlaceholderText('Send a message') as HTMLTextAreaElement
     fireEvent.change(input, { target: { value: 'hello world' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 

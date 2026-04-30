@@ -1,13 +1,12 @@
 import type { NodeWorkflowView } from '../../api/types'
 import { toTurnExecutionPolicy, type SessionConfig, type TurnExecutionPolicy } from '../session_v2/contracts'
 import type { ComposerRequestedPolicy } from '../session_v2/components/ComposerPane'
-import type { ThreadTab } from './surfaceRouting'
+import type { WorkflowThreadTab } from './surfaceRouting'
 
 export type WorkflowPolicyKind =
   | 'ask'
   | 'execution'
   | 'audit'
-  | 'package'
   | 'review-readonly'
   | 'default'
 
@@ -34,7 +33,7 @@ export type WorkflowLaneAction = {
 }
 
 export type WorkflowThreadLane = {
-  lane: ThreadTab
+  lane: WorkflowThreadTab
   threadId: string | null
   policy: WorkflowPolicy
   sessionConfig: SessionConfig
@@ -42,15 +41,15 @@ export type WorkflowThreadLane = {
 }
 
 export type WorkflowProjection = {
-  lanes: Record<ThreadTab, WorkflowThreadLane>
-  activeLane: ThreadTab
+  lanes: Record<WorkflowThreadTab, WorkflowThreadLane>
+  activeLane: WorkflowThreadTab
   active: WorkflowThreadLane
   isLoaded: boolean
 }
 
 export type ResolveWorkflowThreadLaneInput = {
   workflowState: NodeWorkflowView | null | undefined
-  threadTab: ThreadTab
+  threadTab: WorkflowThreadTab
   selectedModel?: string | null
   selectedModelProvider?: string | null
   projectPath?: string | null
@@ -58,7 +57,7 @@ export type ResolveWorkflowThreadLaneInput = {
 }
 
 export type ResolveWorkflowProjectionInput = Omit<ResolveWorkflowThreadLaneInput, 'threadTab'> & {
-  activeLane: ThreadTab
+  activeLane: WorkflowThreadTab
 }
 
 export type ResolveWorkflowSubmitTurnPolicyInput = {
@@ -68,7 +67,7 @@ export type ResolveWorkflowSubmitTurnPolicyInput = {
 
 function resolveWorkflowThreadId(
   workflowState: NodeWorkflowView | null | undefined,
-  lane: ThreadTab,
+  lane: WorkflowThreadTab,
 ): string | null {
   if (!workflowState) {
     return null
@@ -87,7 +86,7 @@ function resolveWorkflowThreadId(
 
 function resolveWorkflowPolicy(input: {
   workflowState: NodeWorkflowView | null | undefined
-  lane: ThreadTab
+  lane: WorkflowThreadTab
   threadId: string | null
   isReviewNode?: boolean
 }): WorkflowPolicy {
@@ -129,7 +128,7 @@ function resolveWorkflowPolicy(input: {
 
 function resolveWorkflowActions(
   workflowState: NodeWorkflowView | null | undefined,
-  lane: ThreadTab,
+  lane: WorkflowThreadTab,
 ): WorkflowLaneAction[] {
   if (!workflowState) {
     return []
@@ -254,16 +253,15 @@ export function resolveWorkflowProjection(
   input: ResolveWorkflowProjectionInput,
 ): WorkflowProjection {
   const { activeLane, ...laneInput } = input
-  const resolveLane = (threadTab: ThreadTab): WorkflowThreadLane =>
+  const resolveLane = (threadTab: WorkflowThreadTab): WorkflowThreadLane =>
     resolveWorkflowThreadLane({
       ...laneInput,
       threadTab,
     })
-  const lanes: Record<ThreadTab, WorkflowThreadLane> = {
+  const lanes: Record<WorkflowThreadTab, WorkflowThreadLane> = {
     ask: resolveLane('ask'),
     execution: resolveLane('execution'),
     audit: resolveLane('audit'),
-    package: resolveLane('package'),
   }
 
   return {

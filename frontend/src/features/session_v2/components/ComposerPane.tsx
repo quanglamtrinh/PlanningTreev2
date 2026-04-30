@@ -607,9 +607,12 @@ export function ComposerPane({
             }}
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
-            placeholder={isTurnRunning ? 'Steer active turn...' : 'Send a follow-up message'}
+            placeholder="Send a message"
             rows={2}
             disabled={disabled || isSubmitting}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
           />
         </div>
 

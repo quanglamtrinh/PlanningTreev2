@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import re
@@ -118,33 +118,13 @@ def _normalize_optional_string(value: Any) -> str | None:
     return normalized or None
 
 
-def _latest_commit_value(latest_commit: Dict[str, Any] | None, *keys: str) -> str | None:
-    if not isinstance(latest_commit, dict):
-        return None
-    for key in keys:
-        value = _normalize_optional_string(latest_commit.get(key))
-        if value is not None:
-            return value
-    return None
-
-
 def _resolve_commit_projection(
     *,
-    workflow_state: Dict[str, Any] | None,
     exec_state: Dict[str, Any] | None,
 ) -> tuple[str | None, str | None, str | None]:
-    latest_commit = None
-    if isinstance(workflow_state, dict):
-        latest_commit = workflow_state.get("latestCommit") or workflow_state.get("latest_commit")
-    initial_sha = _latest_commit_value(latest_commit, "initialSha", "initial_sha")
-    head_sha = _latest_commit_value(latest_commit, "headSha", "head_sha")
-    commit_message = _latest_commit_value(latest_commit, "commitMessage", "commit_message")
-    if initial_sha is None:
-        initial_sha = _normalize_optional_string(exec_state.get("initial_sha")) if exec_state else None
-    if head_sha is None:
-        head_sha = _normalize_optional_string(exec_state.get("head_sha")) if exec_state else None
-    if commit_message is None:
-        commit_message = _normalize_optional_string(exec_state.get("commit_message")) if exec_state else None
+    initial_sha = _normalize_optional_string(exec_state.get("initial_sha")) if exec_state else None
+    head_sha = _normalize_optional_string(exec_state.get("head_sha")) if exec_state else None
+    commit_message = _normalize_optional_string(exec_state.get("commit_message")) if exec_state else None
     return initial_sha, head_sha, commit_message
 
 
@@ -154,7 +134,6 @@ def build_detail_state(
     node_id: str,
     node_dir: Path,
     *,
-    workflow_state: Dict[str, Any] | None = None,
     exec_state: Dict[str, Any] | None = None,
     node: Dict[str, Any] | None = None,
     review_state: Dict[str, Any] | None = None,
@@ -165,6 +144,7 @@ def build_detail_state(
     clarify = _load_clarify_from_node_dir(node_dir)
     spec_meta = _load_spec_meta_from_node_dir(node_dir)
     workflow = derive_workflow_summary_from_artifacts(frame_meta, clarify, spec_meta)
+    split_confirmed = bool(str((node or {}).get("review_node_id") or "").strip())
 
     frame_conf_rev = frame_meta.get("confirmed_revision", 0)
     frame_rev = frame_meta.get("revision", 0)
@@ -190,11 +170,10 @@ def build_detail_state(
         spec_stale = spec_src_frame < frame_conf_rev
 
     effective_initial_sha, effective_head_sha, effective_commit_message = _resolve_commit_projection(
-        workflow_state=workflow_state,
         exec_state=exec_state,
     )
 
-    # ── Git-aware fields ────────────────────────────────────────────
+    # â”€â”€ Git-aware fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     git_ready: bool | None = None
     git_blocker_message: str | None = None
     current_head_sha: str | None = None
@@ -216,7 +195,7 @@ def build_detail_state(
             except Exception:
                 pass
 
-    # ── Execution-aware derived fields ─────────────────────────────
+    # â”€â”€ Execution-aware derived fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     execution_fields = derive_execution_workflow_fields(
         storage,
         project_id,
@@ -230,6 +209,7 @@ def build_detail_state(
     shaping_frozen = bool(execution_fields["shaping_frozen"])
     workflow_summary = {
         **workflow,
+        "split_confirmed": split_confirmed,
         "execution_started": execution_fields["execution_started"],
         "execution_completed": execution_fields["execution_completed"],
         "shaping_frozen": shaping_frozen,
@@ -254,6 +234,7 @@ def build_detail_state(
         "spec_read_only": shaping_frozen or active_step != "spec" or frame_branch_ready,
         "spec_stale": spec_stale,
         "spec_confirmed": workflow["spec_confirmed"],
+        "split_confirmed": split_confirmed,
         "initial_sha": effective_initial_sha,
         "head_sha": effective_head_sha,
         "commit_message": effective_commit_message,
@@ -308,6 +289,7 @@ def build_review_detail_state(
         "spec_read_only": True,
         "spec_stale": False,
         "spec_confirmed": False,
+        "split_confirmed": False,
         "initial_sha": None,
         "head_sha": None,
         "commit_message": None,
@@ -335,12 +317,12 @@ class NodeDetailService:
         self._tree_service = tree_service
         self._git_checkpoint_service = git_checkpoint_service
 
-    # ── Shaping freeze guard ─────────────────────────────────────
+    # â”€â”€ Shaping freeze guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _require_shaping_not_frozen(self, project_id: str, node_id: str, action: str) -> None:
         require_shaping_not_frozen(self._storage, project_id, node_id, action)
 
-    # ── Detail state (derived from artifact metadata) ─────────────
+    # â”€â”€ Detail state (derived from artifact metadata) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_detail_state(self, project_id: str, node_id: str) -> Dict[str, Any]:
         with self._storage.project_lock(project_id):
@@ -352,21 +334,19 @@ class NodeDetailService:
             review_state = None
             review_node_id = node.get("review_node_id")
             if review_node_id:
-                review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+                review_state = self._storage.workflow_domain_store.read_review(project_id, review_node_id)
             elif node_kind == "review":
-                review_state = self._storage.review_state_store.read_state(project_id, node_id)
+                review_state = self._storage.workflow_domain_store.read_review(project_id, node_id)
                 return build_review_detail_state(
                     node_id,
                     review_state=review_state,
                 )
 
             node_dir = self._resolve_node_dir(snapshot, node_id)
-            workflow_state = self._storage.workflow_state_store.read_state(project_id, node_id)
-            exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            exec_state = self._storage.workflow_domain_store.read_execution(project_id, node_id)
             project = snapshot.get("project", {})
             raw_project_path = str(project.get("project_path") or "").strip()
             node_copy = copy.deepcopy(node)
-            workflow_state_copy = copy.deepcopy(workflow_state)
             exec_state_copy = copy.deepcopy(exec_state)
             review_state_copy = copy.deepcopy(review_state)
 
@@ -376,7 +356,6 @@ class NodeDetailService:
             project_id,
             node_id,
             node_dir,
-            workflow_state=workflow_state_copy,
             exec_state=exec_state_copy,
             node=node_copy,
             review_state=review_state_copy,
@@ -384,7 +363,7 @@ class NodeDetailService:
             project_path=pp,
         )
 
-    # ── Confirm frame ─────────────────────────────────────────────
+    # â”€â”€ Confirm frame â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def confirm_frame(self, project_id: str, node_id: str) -> Dict[str, Any]:
         self._require_shaping_not_frozen(project_id, node_id, "confirm frame")
@@ -428,7 +407,7 @@ class NodeDetailService:
             self._seed_clarify_internal(node_dir, content, frame_meta)
         return self.get_detail_state(project_id, node_id)
 
-    # ── Bump revision on save (called by document service) ────────
+    # â”€â”€ Bump revision on save (called by document service) â”€â”€â”€â”€â”€â”€â”€â”€
 
     def bump_frame_revision(self, project_id: str, node_id: str) -> None:
         """Increment frame revision when frame.md is saved. Called externally."""
@@ -441,7 +420,7 @@ class NodeDetailService:
             frame_meta["revision"] = (frame_meta.get("revision") or 0) + 1
             self._save_frame_meta(node_dir, frame_meta)
 
-    # ── Clarify ────────────────────────────────────────────────────
+    # â”€â”€ Clarify â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_clarify(self, project_id: str, node_id: str) -> Dict[str, Any]:
         with self._storage.project_lock(project_id):
@@ -564,7 +543,7 @@ class NodeDetailService:
                     f"{len(unresolved)} question(s) still open. Resolve all questions before applying."
                 )
 
-            # Build field_name → resolved_value map
+            # Build field_name â†’ resolved_value map
             resolutions: Dict[str, str] = {}
             for q in questions:
                 if not isinstance(q, dict):
@@ -596,7 +575,7 @@ class NodeDetailService:
 
             return self.get_detail_state(project_id, node_id)
 
-    # ── Confirm spec ─────────────────────────────────────────────
+    # â”€â”€ Confirm spec â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def confirm_spec(self, project_id: str, node_id: str) -> Dict[str, Any]:
         self._require_shaping_not_frozen(project_id, node_id, "confirm spec")
@@ -619,14 +598,14 @@ class NodeDetailService:
             if not content.strip():
                 raise ConfirmationNotAllowed("Cannot confirm an empty spec.")
 
-            # Update spec.meta.json — spec provenance is frame-only
+            # Update spec.meta.json â€” spec provenance is frame-only
             spec_meta = self._load_spec_meta(node_dir)
             spec_meta["source_frame_revision"] = frame_meta.get("confirmed_revision", 0)
             spec_meta["confirmed_at"] = iso_now()
             self._save_spec_meta(node_dir, spec_meta)
         return self.get_detail_state(project_id, node_id)
 
-    # ── Internal helpers ──────────────────────────────────────────
+    # â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _extract_task_title(self, markdown_content: str) -> str | None:
         """Extract the first line of content under '# Task Title' section."""
@@ -703,7 +682,7 @@ class NodeDetailService:
                 old = old_by_field.get(q["field_name"])
                 if old:
                     q["custom_answer"] = old.get("custom_answer", "")
-                    # Preserve selected_option_id — deterministic seed has empty
+                    # Preserve selected_option_id â€” deterministic seed has empty
                     # options, but AI regenerate will later merge new options with
                     # this selection. Keeping it on disk avoids data loss between
                     # frame re-confirm and AI regenerate completion.
@@ -711,7 +690,7 @@ class NodeDetailService:
                     if old_selected is not None:
                         q["selected_option_id"] = old_selected
 
-        # No unresolved fields in frame.md → clarify step is complete (auto-confirm).
+        # No unresolved fields in frame.md â†’ clarify step is complete (auto-confirm).
         # If we already had answered clarify questions on disk (e.g. after apply_clarify
         # filled the frame), keep that list for review instead of replacing it with [].
         extracted_empty = len(new_questions) == 0
@@ -759,7 +738,7 @@ class NodeDetailService:
     def _extract_unresolved_shaping_fields(self, markdown_content: str) -> List[Dict[str, Any]]:
         """Parse '# Task-Shaping Fields' section for unresolved fields.
 
-        Format: ``- field name: value`` — if value is empty, the field is unresolved.
+        Format: ``- field name: value`` â€” if value is empty, the field is unresolved.
         """
         lines = markdown_content.split("\n")
         in_section = False

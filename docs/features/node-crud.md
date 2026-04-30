@@ -1,4 +1,4 @@
-# Node CRUD
+﻿# Node CRUD
 
 ## Scope
 
@@ -13,10 +13,10 @@ All node content lives inline in `tree.json` in the current build.
 
 ## Public Routes
 
-- `PATCH /v1/projects/{project_id}/active-node`
-- `POST /v1/projects/{project_id}/nodes`
-- `PATCH /v1/projects/{project_id}/nodes/{node_id}`
-- `POST /v1/projects/{project_id}/nodes/{node_id}/split`
+- `PATCH /v4/projects/{project_id}/active-node`
+- `POST /v4/projects/{project_id}/nodes`
+- `PATCH /v4/projects/{project_id}/nodes/{node_id}`
+- `POST /v4/projects/{project_id}/nodes/{node_id}/artifacts/split/start`
 
 ## Create Child
 
@@ -40,5 +40,6 @@ All node content lives inline in `tree.json` in the current build.
 - Request body: `{ mode }`
 - Accepted modes: `workflow`, `simplify_workflow`, `phase_breakdown`, `agent_breakdown`
 - Split is rejected for superseded nodes, done nodes, nodes that already have active children, nodes without a confirmed frame, or nodes whose latest confirmed frame still has clarify work remaining.
-- Split is async: the route returns `202 accepted`, then the frontend polls project split status.
+- Split is async: the route returns `202 accepted`, then the frontend polls V4 artifact-job status.
 - Successful split creates new child nodes inline in `tree.json` and selects the first child.
+

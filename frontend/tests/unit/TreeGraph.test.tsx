@@ -730,16 +730,17 @@ describe('TreeGraph', () => {
     expect(screen.queryByTestId('rf-node-review::root')).not.toBeInTheDocument()
 
     const reviewCard = screen.getByTestId('graph-review-node-root')
-    expect(within(reviewCard).getByText('1.A')).toBeInTheDocument()
-    expect(within(reviewCard).getByText('1.B')).toBeInTheDocument()
-    expect(within(reviewCard).getByText('1.C')).toBeInTheDocument()
+    expect(reviewCard).toBeInTheDocument()
+    expect(within(screen.getByTestId('sibling-1-active')).getByText('1')).toBeInTheDocument()
+    expect(within(screen.getByTestId('sibling-2-pending')).getByText('2')).toBeInTheDocument()
+    expect(within(screen.getByTestId('sibling-3-pending')).getByText('3')).toBeInTheDocument()
 
     const ghostB = screen.getByTestId('graph-ghost-node-2')
-    expect(within(ghostB).getByText('1.B')).toBeInTheDocument()
+    expect(within(ghostB).getByText('2')).toBeInTheDocument()
     expect(within(ghostB).getByText('Second lazy step')).toBeInTheDocument()
 
     const ghostC = screen.getByTestId('graph-ghost-node-3')
-    expect(within(ghostC).getByText('1.C')).toBeInTheDocument()
+    expect(within(ghostC).getByText('3')).toBeInTheDocument()
     expect(within(ghostC).getByText('Final lazy step')).toBeInTheDocument()
 
     expect(renderedEdges('ghost-review')).toHaveLength(2)

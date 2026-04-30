@@ -142,10 +142,6 @@ describe('workflowThreadLaneV2', () => {
 
     expect(lane.actions).toEqual([
       expect.objectContaining({
-        kind: 'start_execution',
-        testId: 'workflow-start-execution',
-      }),
-      expect.objectContaining({
         kind: 'review_in_audit',
         testId: 'workflow-review-in-audit',
         candidateWorkspaceHash: 'sha256:workspace',
@@ -200,30 +196,16 @@ describe('workflowThreadLaneV2', () => {
     ])
   })
 
-  it('resolves package review lane and start action from V2 state', () => {
+  it('does not expose package review as a Breadcrumb lane action', () => {
     const lane = resolveWorkflowThreadLaneV2({
       workflowState: makeWorkflowState({
         phase: 'done',
-        threads: {
-          packageReview: null,
-        },
         allowedActions: ['start_package_review'],
       }),
-      threadTab: 'package',
+      threadTab: 'execution',
     })
 
-    expect(lane.threadId).toBeNull()
-    expect(lane.policy).toEqual({
-      kind: 'package',
-      canSubmit: false,
-      disabledReason: 'No workflow thread is available for this lane.',
-    })
-    expect(lane.actions).toEqual([
-      expect.objectContaining({
-        kind: 'start_package_review',
-        testId: 'workflow-start-package-review',
-      }),
-    ])
+    expect(lane.actions).toEqual([])
   })
 
   it('marks review nodes as read-only even when a thread exists', () => {

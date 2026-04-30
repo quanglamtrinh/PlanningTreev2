@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import styles from './ConversationMarkdown.module.css'
@@ -6,24 +5,6 @@ import {
   getConversationMarkdownDesktopHooks,
 } from './markdownDesktopHooks'
 import { parseLocalLinkTarget, renderLocalLinkDisplayLabel } from '../../markdown/localLink'
-import {
-  buildParseCacheKey,
-  PARSE_CACHE_RENDERER_VERSION,
-  type ParseCacheMode,
-} from './v3/parseCacheContract'
-import { emitParseCacheTrace } from './v3/messagesV3ProfilingHooks'
-import type { MessagesV3Phase11Mode } from './v3/phase11Config'
-import { shouldStreamRenderPlainText } from './v3/streamMarkdownBoundary'
-import { useThreadByIdStoreV3 } from '../state/threadByIdStoreV3'
-
-export type ConversationMarkdownParseTrace = {
-  threadId: string | null | undefined
-  itemId: string
-  updatedAt: string
-  mode: ParseCacheMode
-  rendererVersion?: string | null
-  source?: string
-}
 
 function decodeHref(value: string): string {
   try {
@@ -76,246 +57,107 @@ function transformMarkdownUrl(url: string, key: string): string {
 
 export function ConversationMarkdown({
   content,
-  parseTrace,
-  phase11Mode = 'off',
-  phase11DeferredTimeoutMs = 800,
-  streamingPlainTextMode = false,
 }: {
   content: string
-  parseTrace?: ConversationMarkdownParseTrace
-  phase11Mode?: MessagesV3Phase11Mode
-  phase11DeferredTimeoutMs?: number
-  streamingPlainTextMode?: boolean
 }) {
   if (!content.trim()) {
     return null
   }
 
   const desktopHooks = getConversationMarkdownDesktopHooks()
-  const recordMarkdownParseDuration = useThreadByIdStoreV3((state) => state.recordMarkdownParseDuration)
-  const renderStartAtMsRef = useRef<number>(Date.now())
-  renderStartAtMsRef.current = Date.now()
-
-  const traceSource = parseTrace?.source ?? 'conversation_markdown'
-  const traceRendererVersion = parseTrace?.rendererVersion ?? PARSE_CACHE_RENDERER_VERSION
-  const traceKey =
-    parseTrace == null
-      ? null
-      : buildParseCacheKey({
-          threadId: parseTrace.threadId,
-          itemId: parseTrace.itemId,
-          updatedAt: parseTrace.updatedAt,
-          mode: parseTrace.mode,
-          rendererVersion: traceRendererVersion,
-        })
-
-  const shouldDeferMarkdown = phase11Mode === 'on'
-  const shouldPreferPlainText = shouldStreamRenderPlainText(content, {
-    isStreaming: streamingPlainTextMode,
-  })
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const [isVisibleInViewport, setIsVisibleInViewport] = useState(() => !shouldDeferMarkdown)
-  const [isIdleReady, setIsIdleReady] = useState(() => !shouldDeferMarkdown)
-  const shouldRenderMarkdown =
-    !shouldPreferPlainText && (!shouldDeferMarkdown || isVisibleInViewport || isIdleReady)
-  const normalizedDeferredTimeoutMs = useMemo(() => {
-    const value = Math.floor(phase11DeferredTimeoutMs)
-    if (!Number.isFinite(value) || value <= 0) {
-      return 800
-    }
-    return value
-  }, [phase11DeferredTimeoutMs])
-
-  useEffect(() => {
-    if (!shouldDeferMarkdown) {
-      setIsVisibleInViewport(true)
-      setIsIdleReady(true)
-      return
-    }
-    setIsVisibleInViewport(false)
-    setIsIdleReady(false)
-  }, [content, parseTrace?.itemId, parseTrace?.updatedAt, shouldDeferMarkdown])
-
-  useEffect(() => {
-    if (!shouldDeferMarkdown || isVisibleInViewport) {
-      return
-    }
-    const node = rootRef.current
-    if (!node || typeof IntersectionObserver === 'undefined') {
-      setIsVisibleInViewport(true)
-      return
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0]
-        if (entry?.isIntersecting) {
-          setIsVisibleInViewport(true)
-          observer.disconnect()
-        }
-      },
-      {
-        root: null,
-        threshold: 0.01,
-      },
-    )
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [isVisibleInViewport, shouldDeferMarkdown])
-
-  useEffect(() => {
-    if (!shouldDeferMarkdown || isVisibleInViewport || isIdleReady) {
-      return
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      setIsIdleReady(true)
-    }, normalizedDeferredTimeoutMs)
-    return () => {
-      globalThis.clearTimeout(timeoutId)
-    }
-  }, [
-    isIdleReady,
-    isVisibleInViewport,
-    normalizedDeferredTimeoutMs,
-    shouldDeferMarkdown,
-  ])
-
-  useEffect(() => {
-    if (parseTrace == null || traceKey == null) {
-      return
-    }
-    emitParseCacheTrace({
-      source: traceSource,
-      threadId: parseTrace.threadId ?? null,
-      itemId: parseTrace.itemId,
-      updatedAt: parseTrace.updatedAt,
-      mode: parseTrace.mode,
-      rendererVersion: traceRendererVersion,
-      key: traceKey,
-    })
-  }, [
-    traceKey,
-    parseTrace?.itemId,
-    parseTrace?.mode,
-    parseTrace?.threadId,
-    parseTrace?.updatedAt,
-    traceRendererVersion,
-    traceSource,
-  ])
-
-  useEffect(() => {
-    const durationMs = Math.max(0, Date.now() - renderStartAtMsRef.current)
-    recordMarkdownParseDuration(durationMs)
-  }, [
-    content,
-    shouldRenderMarkdown,
-    parseTrace?.itemId,
-    parseTrace?.updatedAt,
-    recordMarkdownParseDuration,
-  ])
 
   return (
-    <div className={styles.root} ref={rootRef}>
-      {shouldRenderMarkdown ? (
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          urlTransform={(url, key) => transformMarkdownUrl(url, key)}
-          components={{
-            a: ({ node: _node, href, onClick, onContextMenu, children, ...props }) => {
-              const safeHref = typeof href === 'string' ? href : ''
-              const localPath = toLocalPathFromHref(safeHref)
-              const localLinkTarget = safeHref ? parseLocalLinkTarget(safeHref) : null
-              const localDisplayLabel =
-                localPath && localLinkTarget?.locationSuffix
-                  ? renderLocalLinkDisplayLabel(safeHref)
-                  : null
-              const threadId = toThreadIdFromHref(safeHref)
-              return (
-                <a
-                  {...props}
-                  href={safeHref}
-                  onClick={(event) => {
-                    onClick?.(event)
-                    if (event.defaultPrevented) {
-                      return
-                    }
-                    if (localPath) {
-                      if (desktopHooks.openLocalFile({ path: localPath, event }) === true) {
-                        event.preventDefault()
-                      }
-                      return
-                    }
-                    if (threadId) {
-                      if (desktopHooks.openThreadLink({ threadId, event }) === true) {
-                        event.preventDefault()
-                      }
-                    }
-                  }}
-                  onContextMenu={(event) => {
-                    onContextMenu?.(event)
-                    if (event.defaultPrevented) {
-                      return
-                    }
-                    desktopHooks.onFileLinkContextMenu({
-                      href: safeHref,
-                      path: localPath,
-                      event,
-                    })
-                  }}
-                >
-                  {localDisplayLabel ?? children}
-                </a>
-              )
-            },
-            img: ({ node: _node, src, alt, onClick, ...props }) => {
-              const safeSrc = typeof src === 'string' ? src : ''
-              const safeAlt = typeof alt === 'string' ? alt : ''
-              return (
-                <img
-                  {...props}
-                  src={safeSrc}
-                  alt={safeAlt}
-                  onClick={(event) => {
-                    onClick?.(event)
-                    if (event.defaultPrevented || !safeSrc) {
-                      return
-                    }
-                    if (desktopHooks.openImageLightbox({ src: safeSrc, alt: safeAlt, event }) === true) {
-                      event.preventDefault()
-                    }
-                  }}
-                />
-              )
-            },
-            pre: ({ node: _node, children, onDoubleClick, ...props }) => (
-              <pre
+    <div className={styles.root}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={(url, key) => transformMarkdownUrl(url, key)}
+        components={{
+          a: ({ node: _node, href, onClick, onContextMenu, children, ...props }) => {
+            const safeHref = typeof href === 'string' ? href : ''
+            const localPath = toLocalPathFromHref(safeHref)
+            const localLinkTarget = safeHref ? parseLocalLinkTarget(safeHref) : null
+            const localDisplayLabel =
+              localPath && localLinkTarget?.locationSuffix
+                ? renderLocalLinkDisplayLabel(safeHref)
+                : null
+            const threadId = toThreadIdFromHref(safeHref)
+            return (
+              <a
                 {...props}
-                onDoubleClick={(event) => {
-                  onDoubleClick?.(event)
+                href={safeHref}
+                onClick={(event) => {
+                  onClick?.(event)
                   if (event.defaultPrevented) {
                     return
                   }
-                  const code = String(event.currentTarget.textContent ?? '').trim()
-                  if (!code) {
+                  if (localPath) {
+                    if (desktopHooks.openLocalFile({ path: localPath, event }) === true) {
+                      event.preventDefault()
+                    }
                     return
                   }
-                  desktopHooks.copyCodeBlock({ code, event })
+                  if (threadId && desktopHooks.openThreadLink({ threadId, event }) === true) {
+                    event.preventDefault()
+                  }
+                }}
+                onContextMenu={(event) => {
+                  onContextMenu?.(event)
+                  if (event.defaultPrevented) {
+                    return
+                  }
+                  desktopHooks.onFileLinkContextMenu({
+                    href: safeHref,
+                    path: localPath,
+                    event,
+                  })
                 }}
               >
-                {children}
-              </pre>
-            ),
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-      ) : (
-        <pre
-          className={styles.lazyPlainText}
-          data-testid="conversation-markdown-lazy-plain"
-        >
-          {content}
-        </pre>
-      )}
+                {localDisplayLabel ?? children}
+              </a>
+            )
+          },
+          img: ({ node: _node, src, alt, onClick, ...props }) => {
+            const safeSrc = typeof src === 'string' ? src : ''
+            const safeAlt = typeof alt === 'string' ? alt : ''
+            return (
+              <img
+                {...props}
+                src={safeSrc}
+                alt={safeAlt}
+                onClick={(event) => {
+                  onClick?.(event)
+                  if (event.defaultPrevented || !safeSrc) {
+                    return
+                  }
+                  if (desktopHooks.openImageLightbox({ src: safeSrc, alt: safeAlt, event }) === true) {
+                    event.preventDefault()
+                  }
+                }}
+              />
+            )
+          },
+          pre: ({ node: _node, children, onDoubleClick, ...props }) => (
+            <pre
+              {...props}
+              onDoubleClick={(event) => {
+                onDoubleClick?.(event)
+                if (event.defaultPrevented) {
+                  return
+                }
+                const code = String(event.currentTarget.textContent ?? '').trim()
+                if (!code) {
+                  return
+                }
+                desktopHooks.copyCodeBlock({ code, event })
+              }}
+            >
+              {children}
+            </pre>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   )
 }

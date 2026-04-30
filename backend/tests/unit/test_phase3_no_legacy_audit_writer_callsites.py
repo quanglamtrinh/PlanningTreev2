@@ -25,7 +25,4 @@ def test_no_production_callsites_use_legacy_append_immutable_audit_record() -> N
                 if pattern.search(line):
                     hits.append((relpath, lineno, line.strip()))
 
-    assert len(hits) == 1
-    relpath, _, line = hits[0]
-    assert relpath == "backend/services/execution_gating.py"
-    assert line.startswith("def append_immutable_audit_record(")
+    assert hits == []

@@ -4,18 +4,17 @@ import { AskFollowupQueuePanelV2 } from '../../src/features/conversation/compone
 import { BreadcrumbThreadTabsV2 } from '../../src/features/conversation/components/BreadcrumbThreadTabsV2'
 import { ExecutionFollowupQueuePanelV2 } from '../../src/features/conversation/components/ExecutionFollowupQueuePanelV2'
 import type {
-  ThreadAskFollowupQueueActions,
-  ThreadAskFollowupQueueState,
-  ThreadExecutionFollowupQueueActions,
-  ThreadExecutionFollowupQueueState,
-} from '../../src/features/conversation/state/threadByIdStoreV3'
+  AskFollowupQueueActions,
+  AskFollowupQueueState,
+  ExecutionFollowupQueueActions,
+  ExecutionFollowupQueueState,
+} from '../../src/features/conversation/components/followupQueueTypes'
 
 function makeExecutionState(
-  overrides: Partial<ThreadExecutionFollowupQueueState> = {},
-): ThreadExecutionFollowupQueueState {
+  overrides: Partial<ExecutionFollowupQueueState> = {},
+): ExecutionFollowupQueueState {
   return {
-    activeThreadRole: 'execution',
-    executionFollowupQueue: [],
+        executionFollowupQueue: [],
     executionQueuePauseReason: 'none',
     executionQueueOperatorPaused: false,
     isSending: false,
@@ -24,7 +23,7 @@ function makeExecutionState(
 }
 
 function makeExecutionActions(): Pick<
-  ThreadExecutionFollowupQueueActions,
+  ExecutionFollowupQueueActions,
   'removeQueued' | 'reorderQueued' | 'sendQueuedNow' | 'confirmQueued' | 'retryQueued' | 'setOperatorPause'
 > {
   return {
@@ -38,12 +37,10 @@ function makeExecutionActions(): Pick<
 }
 
 function makeAskState(
-  overrides: Partial<ThreadAskFollowupQueueState> = {},
-): ThreadAskFollowupQueueState {
+  overrides: Partial<AskFollowupQueueState> = {},
+): AskFollowupQueueState {
   return {
-    activeThreadRole: 'ask_planning',
-    askFollowupQueueEnabled: true,
-    askFollowupQueue: [],
+        askFollowupQueue: [],
     askQueuePauseReason: 'none',
     isSending: false,
     ...overrides,
@@ -51,7 +48,7 @@ function makeAskState(
 }
 
 function makeAskActions(): Pick<
-  ThreadAskFollowupQueueActions,
+  AskFollowupQueueActions,
   'removeQueued' | 'reorderAskQueued' | 'sendAskQueuedNow' | 'confirmQueued' | 'retryAskQueued'
 > {
   return {
@@ -72,15 +69,12 @@ describe('BreadcrumbThreadTabsV2', () => {
     expect(screen.getByTestId('breadcrumb-thread-tab-execution')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('breadcrumb-thread-tab-ask')).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByTestId('breadcrumb-thread-tab-audit')).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByTestId('breadcrumb-thread-tab-package')).toHaveAttribute('aria-selected', 'false')
+    expect(screen.queryByTestId('breadcrumb-thread-tab-package')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-ask'))
     fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-audit'))
-    fireEvent.click(screen.getByTestId('breadcrumb-thread-tab-package'))
-
     expect(onThreadTabChange).toHaveBeenNthCalledWith(1, 'ask')
     expect(onThreadTabChange).toHaveBeenNthCalledWith(2, 'audit')
-    expect(onThreadTabChange).toHaveBeenNthCalledWith(3, 'package')
   })
 })
 

@@ -7,6 +7,11 @@ type SessionSseEventName = SessionNotificationMethod | 'session/error'
 
 const EVENT_METHODS: SessionSseEventName[] = [
   'session/error',
+  'user/message',
+  'user_message',
+  'assistant/message',
+  'assistant_message',
+  'agent/message',
   'thread/started',
   'thread/status/changed',
   'thread/closed',
@@ -50,6 +55,7 @@ const EVENT_METHODS: SessionSseEventName[] = [
   'serverRequest/created',
   'serverRequest/updated',
   'serverRequest/resolved',
+  'warning',
   'error',
 ]
 
@@ -118,6 +124,7 @@ const STREAM_TRACE_METHODS = new Set<string>([
   'serverRequest/created',
   'serverRequest/updated',
   'serverRequest/resolved',
+  'warning',
   'error',
 ])
 

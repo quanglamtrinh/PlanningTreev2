@@ -29,6 +29,12 @@ export function isItemKind(value: unknown): value is ItemKind {
 
 export type ItemStatus = 'inProgress' | 'completed' | 'failed'
 
+export type SessionItemVisibility = 'user' | 'internal' | 'debug'
+
+export type SessionItemRenderAs = 'chatBubble' | 'workflowContext' | 'frameArtifact' | 'specArtifact' | 'hidden'
+
+export type SessionItemWorkflowKind = 'generate_frame' | 'regenerate_frame' | 'generate_spec' | 'regenerate_spec'
+
 export type PendingRequestStatus = 'pending' | 'submitted' | 'resolved' | 'rejected' | 'expired'
 
 export type EventTier = 'tier0' | 'tier1' | 'tier2'
@@ -106,8 +112,17 @@ export interface SessionItem {
   createdAtMs: number
   updatedAtMs: number
   payload: Record<string, unknown>
+  visibility?: SessionItemVisibility
+  renderAs?: SessionItemRenderAs
+  workflowKind?: SessionItemWorkflowKind
   rawItem?: ThreadItem
   rawParams?: Record<string, unknown>
+}
+
+export type VisibleTranscriptItem = SessionItem & {
+  visibility: SessionItemVisibility
+  renderAs: SessionItemRenderAs
+  workflowKind?: SessionItemWorkflowKind
 }
 
 export interface SessionTurn {
@@ -120,6 +135,11 @@ export interface SessionTurn {
   items: SessionItem[]
   error: SessionError | null
   metadata?: Record<string, unknown>
+}
+
+export type VisibleTranscriptRow = {
+  turn: SessionTurn
+  item: VisibleTranscriptItem
 }
 
 export interface SessionThread {
@@ -163,6 +183,12 @@ export interface PendingServerRequest {
 
 export type SessionNotificationMethod =
   | 'error'
+  | 'warning'
+  | 'user/message'
+  | 'user_message'
+  | 'assistant/message'
+  | 'assistant_message'
+  | 'agent/message'
   | 'thread/started'
   | 'thread/status/changed'
   | 'thread/closed'
@@ -234,6 +260,12 @@ export interface ServerRequestEnvelope {
   params: Record<string, unknown>
 }
 
+export interface McpTurnContextV4 {
+  projectId: string
+  nodeId: string
+  role: string
+}
+
 export interface TurnStartRequestV4 {
   input: Array<Record<string, unknown>>
   model?: string | null
@@ -246,6 +278,7 @@ export interface TurnStartRequestV4 {
   summary?: string | Record<string, unknown> | null
   serviceTier?: string | null
   outputSchema?: Record<string, unknown> | null
+  mcpContext?: McpTurnContextV4 | null
 }
 
 export type ThreadCreationPolicy = Partial<{
@@ -271,6 +304,7 @@ export type SessionInputAction =
       threadId: string
       input: Array<Record<string, unknown>>
       policy?: TurnExecutionPolicy
+      context?: { mcpContext?: McpTurnContextV4 | null }
     }
   | {
       type: 'turn.steer'

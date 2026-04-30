@@ -23,7 +23,7 @@ def derive_allowed_actions(state: NodeWorkflowStateV2) -> list[WorkflowAction]:
         return ["review_in_audit", "mark_done_from_execution"]
     if state.phase in {"review_pending", "audit_needs_changes"} and state.current_audit_decision is not None:
         return ["improve_in_execution", "mark_done_from_audit"]
-    if state.phase == "done" and state.package_review_thread_id is None:
+    if state.phase == "done" and state.thread_id_for("package_review") is None:
         return ["start_package_review"]
     return []
 
@@ -32,14 +32,12 @@ def start_execution(
     state: NodeWorkflowStateV2,
     *,
     execution_run_id: str,
-    execution_thread_id: str | None = None,
 ) -> NodeWorkflowStateV2:
     _require_action(state, "start_execution")
     return state.model_copy(
         deep=True,
         update={
             "phase": "executing",
-            "execution_thread_id": execution_thread_id or state.execution_thread_id,
             "active_execution_run_id": execution_run_id,
             "latest_execution_run_id": execution_run_id,
             "current_execution_decision": None,
@@ -114,7 +112,6 @@ def start_audit(
     state: NodeWorkflowStateV2,
     *,
     audit_run_id: str,
-    audit_thread_id: str | None = None,
     expected_workspace_hash: str,
 ) -> NodeWorkflowStateV2:
     _require_action(state, "review_in_audit")
@@ -129,7 +126,6 @@ def start_audit(
         deep=True,
         update={
             "phase": "audit_running",
-            "audit_thread_id": audit_thread_id or state.audit_thread_id,
             "active_audit_run_id": audit_run_id,
             "latest_audit_run_id": audit_run_id,
             "active_execution_run_id": None,
@@ -177,7 +173,6 @@ def improve_execution(
     *,
     expected_review_commit_sha: str,
     execution_run_id: str,
-    execution_thread_id: str | None = None,
 ) -> NodeWorkflowStateV2:
     _require_action(state, "improve_in_execution")
     decision = state.current_audit_decision
@@ -191,7 +186,6 @@ def improve_execution(
         deep=True,
         update={
             "phase": "executing",
-            "execution_thread_id": execution_thread_id or state.execution_thread_id,
             "active_execution_run_id": execution_run_id,
             "latest_execution_run_id": execution_run_id,
             "current_execution_decision": None,
@@ -223,24 +217,9 @@ def mark_done_from_audit(
     )
 
 
-def start_package_review(
-    state: NodeWorkflowStateV2,
-    *,
-    package_review_thread_id: str | None = None,
-) -> NodeWorkflowStateV2:
-    if (
-        state.phase == "done"
-        and state.package_review_thread_id is not None
-        and state.package_review_thread_id == package_review_thread_id
-    ):
-        return state.model_copy(deep=True)
+def start_package_review(state: NodeWorkflowStateV2) -> NodeWorkflowStateV2:
     _require_action(state, "start_package_review")
-    return state.model_copy(
-        deep=True,
-        update={
-            "package_review_thread_id": package_review_thread_id or state.package_review_thread_id,
-        },
-    )
+    return state.model_copy(deep=True)
 
 
 def block(

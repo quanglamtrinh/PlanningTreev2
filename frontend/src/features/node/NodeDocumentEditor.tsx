@@ -17,7 +17,7 @@ import {
   primeAndSelectWorkflowTurn,
 } from '../session_v2/facade/workflowLiveTurnBridge'
 import { useWorkflowStateV2 } from '../workflow_v2/hooks/useWorkflowStateV2'
-import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
+import { DocumentRichViewContent } from '../markdown/DocumentRichView'
 import type { WorkflowTab } from './WorkflowStepper'
 import { vscodeMarkdownSyntaxHighlighting } from './codemirror/vscodeMarkdownHighlight'
 import styles from './NodeDetailCard.module.css'
@@ -54,6 +54,7 @@ type Props = {
   readOnly?: boolean
   /** Tracks spec vs split commitment after Frame updated (for mutual exclusivity). */
   framePostUpdateBranch?: FramePostUpdateBranch
+  splitConfirmed?: boolean
   onFramePostUpdateCommit?: (branch: 'spec' | 'split') => void
   /** Breadcrumb: replaces frame.md/spec.md label in the toolbar row */
   documentToolbarTabs?: ReactNode
@@ -68,6 +69,7 @@ export function NodeDocumentEditor({
   onConfirm,
   readOnly,
   framePostUpdateBranch = 'none',
+  splitConfirmed = false,
   onFramePostUpdateCommit,
   documentToolbarTabs,
 }: Props) {
@@ -134,8 +136,8 @@ export function NodeDocumentEditor({
   const isUpdatedFrameStep = kind === 'frame' && workflowTab === 'frame_updated'
   const isSpecStep = kind === 'spec'
 
-  const confirmAndSplitDisabled = framePostUpdateBranch === 'spec'
-  const confirmAndCreateSpecDisabled = framePostUpdateBranch === 'split'
+  const confirmAndSplitDisabled = framePostUpdateBranch === 'spec' || splitConfirmed
+  const confirmAndCreateSpecDisabled = framePostUpdateBranch === 'split' || splitConfirmed
 
   useEffect(() => {
     void loadDocument(projectId, node.node_id, kind).catch(() => undefined)
@@ -772,17 +774,11 @@ export function NodeDocumentEditor({
           ) : (
             <>
               {isRichView ? (
-                <div className={styles.richViewSurface} data-testid={`document-rich-view-${kind}`}>
-                  {entry.content.trim() ? (
-                    <SharedMarkdownRenderer
-                      content={entry.content}
-                      projectRootPath={projectRootPath}
-                      variant="document"
-                    />
-                  ) : (
-                    <p className={styles.richViewEmpty}>No content yet.</p>
-                  )}
-                </div>
+                <DocumentRichViewContent
+                  content={entry.content}
+                  projectRootPath={projectRootPath}
+                  testId={`document-rich-view-${kind}`}
+                />
               ) : (
                 <CodeMirror
                   className={styles.codemirrorHost}
@@ -842,9 +838,11 @@ export function NodeDocumentEditor({
                 data-testid="confirm-and-split-button"
                 onClick={handleConfirmAndSplit}
                 title={
-                  confirmAndSplitDisabled
-                    ? 'You already committed to Create Spec from Frame updated'
-                    : undefined
+                  splitConfirmed
+                    ? 'This node has already been split'
+                    : confirmAndSplitDisabled
+                      ? 'You already committed to Create Spec from Frame updated'
+                      : undefined
                 }
               >
                 Confirm and Split
@@ -856,9 +854,11 @@ export function NodeDocumentEditor({
                 data-testid="confirm-and-create-spec-button"
                 onClick={handleConfirmAndCreateSpec}
                 title={
-                  confirmAndCreateSpecDisabled
-                    ? 'You already committed to Split from Frame updated'
-                    : undefined
+                  splitConfirmed
+                    ? 'This node has already been split'
+                    : confirmAndCreateSpecDisabled
+                      ? 'You already committed to Split from Frame updated'
+                      : undefined
                 }
               >
                 Confirm and Create Spec
@@ -891,11 +891,6 @@ export function NodeDocumentEditor({
                 >
                   {isFinishActionPending ? 'Finishing...' : 'Confirm and Finish Task'}
                 </button>
-                {isFinishTaskDisabled && finishTaskDisabledHint ? (
-                  <p className={styles.finishTaskDisabledHint} role="status" data-testid="finish-task-disabled-hint">
-                    {finishTaskDisabledHint}
-                  </p>
-                ) : null}
               </div>
             </>
           ) : null}

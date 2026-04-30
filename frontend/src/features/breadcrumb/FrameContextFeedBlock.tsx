@@ -9,8 +9,8 @@ import {
 import { useClarifyStore } from '../../stores/clarify-store'
 import { useNodeDocumentStore } from '../../stores/node-document-store'
 import { useProjectStore } from '../../stores/project-store'
-import { SharedMarkdownRenderer } from '../markdown/SharedMarkdownRenderer'
 import { FrameMarkdownViewer } from './FrameMarkdownViewer'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './FrameContextFeedBlock.module.css'
 
 type PanelId = 'frame' | 'clarify' | 'split' | 'spec'
@@ -59,23 +59,7 @@ function buildAncestorChain(nodeId: string, registry: NodeRecord[]): NodeRecord[
 }
 
 function isInitNode(node: NodeRecord): boolean {
-  return node.is_init_node === true
-}
-
-function normalizeShellNodeNumber(rawNumber: string | null | undefined, stripInitPrefix: boolean): string | null {
-  const value = String(rawNumber ?? '').trim()
-  if (!value) {
-    return null
-  }
-  if (!stripInitPrefix) {
-    return value
-  }
-  const dotIndex = value.indexOf('.')
-  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
-    return value
-  }
-  const normalized = value.slice(dotIndex + 1).trim()
-  return normalized || null
+  return node.is_init_node === true || node.node_kind === 'root'
 }
 
 function panelKey(nodeId: string, panelId: PanelId): string {
@@ -93,6 +77,41 @@ function resolveAnswer(question: ClarifyQuestion): string | null {
   }
   const custom = question.custom_answer.trim()
   return custom || null
+}
+
+function buildClarifyMarkdown(questions: ClarifyQuestion[]): string {
+  if (questions.length === 0) {
+    return ''
+  }
+  const blocks = questions.map((question, index) => {
+    const prompt = question.question.trim() || question.field_name.trim() || `Question ${index + 1}`
+    const answer = resolveAnswer(question) ?? '_Not answered_'
+    return `## ${index + 1}. ${prompt}\n\n${answer}`
+  })
+  return blocks.join('\n\n')
+}
+
+function buildSplitMarkdown(
+  node: NodeRecord,
+  nodeRegistry: NodeRecord[],
+  currentNodeId: string,
+): string {
+  const byId = new Map(nodeRegistry.map((item) => [item.node_id, item]))
+  const rows = node.child_ids
+    .map((id) => byId.get(id))
+    .filter((child): child is NodeRecord => child !== undefined)
+    .map((child) => {
+      const displayNumber = formatNodeDisplayIndex(child)
+      const label = displayNumber ? `${displayNumber} ${child.title}` : child.title
+      return child.node_id === currentNodeId
+        ? `## ${label}\n\n_Current path_`
+        : `## ${label}`
+    })
+
+  if (rows.length === 0) {
+    return ''
+  }
+  return rows.join('\n')
 }
 
 function summarizeArtifactAction(
@@ -145,52 +164,21 @@ function Chevron({ expanded }: { expanded: boolean }) {
 }
 
 /** Reply / return curve — clarify answer row (reference UI). */
-function IconClarifyReply() {
-  return (
-    <svg className={styles.clarifyQaReplySvg} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-      <path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" />
-    </svg>
-  )
-}
-
-function ClarifyQABlock({ n, question }: { n: number; question: ClarifyQuestion }) {
-  const answer = resolveAnswer(question)
-  return (
-    <div className={styles.clarifyQaBlock}>
-      <span className={styles.clarifyQaQuestion}>
-        {n}. {question.question}
-      </span>
-      <div className={styles.clarifyQaDivider} aria-hidden />
-      {answer ? (
-        <div className={styles.clarifyQaAnswerBox}>
-          <span className={styles.clarifyQaReplyIcon} aria-hidden>
-            <IconClarifyReply />
-          </span>
-          <span className={styles.clarifyQaAnswerText}>{answer}</span>
-        </div>
-      ) : (
-        <div className={`${styles.clarifyQaAnswerBox} ${styles.clarifyQaAnswerBoxUnset}`}>
-          <span className={styles.clarifyQaAnswerEmpty}>Not answered</span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Clarify metadata: flat numbered Q/A only (no frame-style section labels or IconUsers). */
-function ContextClarifyView({ questions }: { questions: ClarifyQuestion[] }) {
-  if (questions.length === 0) {
+/** Clarify metadata rendered with the same document rhythm as spec.md. */
+function ContextClarifyView({
+  questions,
+  projectRootPath,
+}: {
+  questions: ClarifyQuestion[]
+  projectRootPath?: string
+}) {
+  const markdown = buildClarifyMarkdown(questions)
+  if (!markdown) {
     return <div className={styles.stateEmpty}>No clarify questions.</div>
   }
 
   return (
-    <div className={styles.clarifyDoc}>
-      <div className={styles.clarifyQaStack}>
-        {questions.map((question, index) => (
-          <ClarifyQABlock key={question.field_name} n={index + 1} question={question} />
-        ))}
-      </div>
-    </div>
+    <FrameMarkdownViewer content={markdown} projectRootPath={projectRootPath} />
   )
 }
 
@@ -198,12 +186,12 @@ function ContextSplitView({
   node,
   nodeRegistry,
   currentNodeId,
-  stripInitPrefix,
+  projectRootPath,
 }: {
   node: NodeRecord
   nodeRegistry: NodeRecord[]
   currentNodeId: string
-  stripInitPrefix: boolean
+  projectRootPath?: string
 }) {
   const byId = useMemo(() => new Map(nodeRegistry.map((item) => [item.node_id, item])), [nodeRegistry])
   const children = useMemo(
@@ -215,24 +203,12 @@ function ContextSplitView({
     return <div className={styles.stateEmpty}>No subtasks.</div>
   }
 
-  return (
-    <div className={styles.childList}>
-      {children.map((child) => {
-        const isCurrent = child.node_id === currentNodeId
-        const displayNumber = normalizeShellNodeNumber(child.hierarchical_number, stripInitPrefix)
-        return (
-          <div key={child.node_id} className={styles.childItem}>
-            {displayNumber ? (
-              <span className={styles.childNumber}>{displayNumber}</span>
-            ) : null}
-            <span className={`${styles.childTitle} ${isCurrent ? styles.childTitleCurrent : ''}`}>
-              {child.title}
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
+  const markdown = buildSplitMarkdown(node, nodeRegistry, currentNodeId)
+  if (!markdown) {
+    return <div className={styles.stateEmpty}>No subtasks.</div>
+  }
+
+  return <FrameMarkdownViewer content={markdown} projectRootPath={projectRootPath} />
 }
 
 function NodePanel({ label, panelId, nodeId, expanded, onToggle, children, documentChrome }: PanelProps) {
@@ -277,7 +253,6 @@ export function FrameContextFeedBlock({
       : undefined,
   )
   const rawChain = useMemo(() => buildAncestorChain(nodeId, nodeRegistry), [nodeId, nodeRegistry])
-  const stripInitPrefix = rawChain.length > 0 && isInitNode(rawChain[0])
   const chain = useMemo(() => rawChain.filter((node) => !isInitNode(node)), [rawChain])
   const actionState = useAskShellActionStore(
     (state) => state.entries[askShellNodeActionStateKey(projectId, nodeId)],
@@ -342,7 +317,7 @@ export function FrameContextFeedBlock({
       <div className={styles.nodeList}>
         {chain.map((node) => {
           const isCurrent = node.node_id === nodeId
-          const displayNumber = normalizeShellNodeNumber(node.hierarchical_number, stripInitPrefix)
+          const displayNumber = formatNodeDisplayIndex(node)
           const frameEntry = frameEntries[`${projectId}::${node.node_id}::frame`]
           const specEntry = frameEntries[`${projectId}::${node.node_id}::spec`]
           const clarifyEntry = clarifyEntries[`${projectId}::${node.node_id}`]
@@ -398,10 +373,9 @@ export function FrameContextFeedBlock({
                         ) : !frameEntry.content.trim() ? (
                           <div className={styles.stateEmpty}>No frame content yet.</div>
                         ) : (
-                          <SharedMarkdownRenderer
+                          <FrameMarkdownViewer
                             content={frameEntry.content}
                             projectRootPath={projectRootPath}
-                            variant="document"
                           />
                         )}
                       </div>
@@ -421,7 +395,7 @@ export function FrameContextFeedBlock({
                         ) : clarifyEntry.loadError ? (
                           <div className={styles.stateError}>{clarifyEntry.loadError}</div>
                         ) : (
-                          <ContextClarifyView questions={clarifyQuestions} />
+                          <ContextClarifyView questions={clarifyQuestions} projectRootPath={projectRootPath} />
                         )}
                       </div>
                     </NodePanel>
@@ -440,7 +414,7 @@ export function FrameContextFeedBlock({
                             node={node}
                             nodeRegistry={nodeRegistry}
                             currentNodeId={nodeId}
-                            stripInitPrefix={stripInitPrefix}
+                            projectRootPath={projectRootPath}
                           />
                         </div>
                       </NodePanel>

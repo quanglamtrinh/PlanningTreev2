@@ -78,7 +78,7 @@ class NodeService:
                 node_by_id=node_by_id,
                 parent=parent,
                 parent_id=parent_id,
-                title="New Task",
+                title=cleaned_description,
                 description=cleaned_description,
             )
             snapshot["tree_state"]["active_node_id"] = new_node_id

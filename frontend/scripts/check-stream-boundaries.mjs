@@ -45,10 +45,31 @@ const workflowChecks = [
   },
 ]
 
+const removedThreadStorePattern = new RegExp(
+  [
+    'threadByIdStore' + 'V3',
+    'Messages' + 'V3',
+    'BreadcrumbChatView' + 'V2',
+    'buildThreadByIdEventsUrl' + 'V3',
+  ].join('|'),
+)
+const removedCodexStorePattern = new RegExp(
+  ['useCodexStore', 'codex-' + 'store', 'getChatSession', 'sendMessage', 'chatService'].join('|'),
+  'i',
+)
+
 const sessionChecks = [
   {
     pattern: /features\/workflow_v2\/api\/client|workflow_v2\/store\/workflowStateStoreV2|openWorkflowEventsStreamV2/,
     reason: 'session_v2 must not depend on workflow SSE/store ownership paths.',
+  },
+  {
+    pattern: removedThreadStorePattern,
+    reason: 'session_v2 is the sole runtime projection and must not depend on legacy V3 conversation stores/components.',
+  },
+  {
+    pattern: removedCodexStorePattern,
+    reason: 'session_v2 must not depend on legacy Codex/chat-service client state.',
   },
 ]
 
@@ -60,7 +81,11 @@ const violations = [
 if (violations.length > 0) {
   const lines = violations.map((entry) => `- ${path.relative(ROOT, entry.file)}: ${entry.reason}`)
   process.stderr.write(
-    ['Stream boundary check failed.', ...lines, 'Fix imports/calls crossing workflow/session stream boundaries.'].join('\n') + '\n',
+    [
+      'Stream boundary check failed.',
+      ...lines,
+      'Session Core V2 must remain the sole runtime/conversation projection; fix ownership boundary crossings.',
+    ].join('\n') + '\n',
   )
   process.exit(1)
 }

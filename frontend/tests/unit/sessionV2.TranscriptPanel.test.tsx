@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import { describe, expect, it } from 'vitest'
 
-import type { SessionItem, SessionTurn } from '../../src/features/session_v2/contracts'
-import { TranscriptPanel } from '../../src/features/session_v2/components/TranscriptPanel'
+import type { SessionItem, SessionTurn, VisibleTranscriptRow } from '../../src/features/session_v2/contracts'
+import { TranscriptPanel as TranscriptPanelComponent } from '../../src/features/session_v2/components/TranscriptPanel'
 
 function baseTurn(items: SessionItem[], status: SessionTurn['status'] = 'completed'): SessionTurn {
   return {
@@ -15,6 +16,58 @@ function baseTurn(items: SessionItem[], status: SessionTurn['status'] = 'complet
     error: null,
     items,
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object'
+}
+
+function isRawChatItem(item: SessionItem): boolean {
+  return item.normalizedKind === 'userMessage' || item.normalizedKind === 'agentMessage' || item.kind === 'userMessage' || item.kind === 'agentMessage'
+}
+
+function isWorkflowContextItem(item: SessionItem): boolean {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
+  return metadata.workflowContext === true
+}
+
+function isInternalItem(turn: SessionTurn, item: SessionItem): boolean {
+  const payload = isRecord(item.payload) ? item.payload : {}
+  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
+  return metadata.workflowInternal === true || (turn.metadata?.workflowInternal === true && isRawChatItem(item))
+}
+
+function visibleRowsFor(turns: SessionTurn[], itemsByTurn?: Record<string, SessionItem[]>): VisibleTranscriptRow[] {
+  const rows: VisibleTranscriptRow[] = []
+  for (const turn of turns) {
+    const items = itemsByTurn?.[`${turn.threadId}:${turn.id}`] ?? turn.items
+    for (const item of items) {
+      if (isInternalItem(turn, item) || isWorkflowContextItem(item)) {
+        continue
+      }
+      rows.push({
+        turn,
+        item: {
+          ...item,
+          visibility: item.visibility ?? 'user',
+          renderAs: item.renderAs ?? 'chatBubble',
+        },
+      })
+    }
+  }
+  return rows
+}
+
+type TranscriptPanelProps = ComponentProps<typeof TranscriptPanelComponent>
+
+function TranscriptPanel(props: TranscriptPanelProps) {
+  return (
+    <TranscriptPanelComponent
+      {...props}
+      visibleRows={props.visibleRows ?? visibleRowsFor(props.turns, props.itemsByTurn)}
+    />
+  )
 }
 
 function expandWorkflowContext() {
@@ -73,7 +126,18 @@ describe('TranscriptPanel', () => {
                   node: { node_id: 'root', hierarchical_number: '1', title: 'Parent Task' },
                   frame: { content: 'Parent frame content' },
                   clarify: {
-                    questions: [{ question: 'Which path?', custom_answer: 'Use the selected child.' }],
+                    questions: [
+                      { question: 'Which path?', custom_answer: 'Use the selected child.' },
+                      {
+                        question: 'Which auth provider?',
+                        selected_option_id: 'auth0',
+                        options: [
+                          { id: 'auth0', label: 'Use Auth0', value: 'auth0' },
+                          { id: 'clerk', label: 'Use Clerk', value: 'clerk' },
+                        ],
+                        custom_answer: '',
+                      },
+                    ],
                   },
                   split: {
                     children: [
@@ -106,11 +170,16 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('Context')).toBeInTheDocument()
     expect(screen.queryByText('Parent frame content')).not.toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
+    expect(screen.getByText('Parent Task')).toBeInTheDocument()
     expect(screen.getByText('Parent frame content')).toBeInTheDocument()
     expect(screen.getByText('Use the selected child.')).toBeInTheDocument()
-    expect(screen.getByText('1.1 Current Child')).toBeInTheDocument()
+    expect(screen.getByText('Use Auth0')).toBeInTheDocument()
+    expect(screen.queryByText('Not answered')).not.toBeInTheDocument()
+    expect(screen.getByText('1 Current Child')).toBeInTheDocument()
     expect(screen.getByText('current task')).toBeInTheDocument()
+    expect(screen.getAllByTestId('workflow-context-document-frame.md').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByTestId('workflow-context-document-spec.md').length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('Rich View')).not.toBeInTheDocument()
     expect(screen.getByText('Current spec content')).toBeInTheDocument()
     expect(container.textContent).not.toContain('<planning_tree_context>')
     expect(screen.queryByText('Unknown Codex item')).not.toBeInTheDocument()
@@ -148,15 +217,16 @@ describe('TranscriptPanel', () => {
     render(
       <TranscriptPanel
         threadId="thread-1"
-        turns={[baseTurn([contextItem])]}
+        turns={[baseTurn([])]}
         itemsByTurn={{}}
+        workflowContextItem={contextItem}
       />,
     )
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expect(screen.queryByText('Hydrated frame content')).not.toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Hydrated Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Hydrated Child').length).toBeGreaterThan(0)
     expect(screen.getByText('Hydrated frame content')).toBeInTheDocument()
   })
 
@@ -200,26 +270,26 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Canonical Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Canonical Child').length).toBeGreaterThan(0)
     expect(screen.getByText('Canonical frame content')).toBeInTheDocument()
   })
 
-  it('renders legacy workflow context from injected XML text', () => {
+  it('renders workflow context from injected XML fallback text', () => {
     const packet = {
       kind: 'ask_planning_context',
       payload: {
         artifactContext: {
           ancestorContext: [],
           currentContext: {
-            node: { node_id: 'child', hierarchical_number: '1.1', title: 'Legacy Child' },
-            frame: { content: 'Legacy frame content' },
-            spec: { content: 'Legacy spec content' },
+            node: { node_id: 'child', hierarchical_number: '1.1', title: 'XML Child' },
+            frame: { content: 'XML frame content' },
+            spec: { content: 'XML spec content' },
           },
         },
       },
     }
     const item: SessionItem = {
-      id: 'workflow-context-legacy',
+      id: 'workflow-context-xml',
       threadId: 'thread-1',
       turnId: 'turn-1',
       kind: 'systemMessage',
@@ -247,9 +317,9 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Legacy Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 XML Child').length).toBeGreaterThan(0)
     expect(screen.getByText('current task')).toBeInTheDocument()
-    expect(screen.getByText('Legacy spec content')).toBeInTheDocument()
+    expect(screen.getByText('XML spec content')).toBeInTheDocument()
     expect(container.textContent).not.toContain('<planning_tree_context')
   })
 
@@ -301,7 +371,7 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Codex Item Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Codex Item Child').length).toBeGreaterThan(0)
     expect(screen.getByText('Codex item frame content')).toBeInTheDocument()
   })
 
@@ -349,7 +419,7 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getAllByText('1.1 Updated Child').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 Updated Child').length).toBeGreaterThan(0)
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getByText('Updated spec content')).toBeInTheDocument()
   })
@@ -393,9 +463,9 @@ describe('TranscriptPanel', () => {
 
     expect(screen.getByTestId('workflow-context-card')).toBeInTheDocument()
     expandWorkflowContext()
-    expect(screen.getByText('1 Parent Task')).toBeInTheDocument()
+    expect(screen.getByText('Parent Task')).toBeInTheDocument()
     expect(screen.getByText('Parent task frame fallback')).toBeInTheDocument()
-    expect(screen.getByText('1.1 Compact Child')).toBeInTheDocument()
+    expect(screen.getByText('1 Compact Child')).toBeInTheDocument()
     expect(screen.getByText('current task')).toBeInTheDocument()
     expect(screen.getByText('Compact frame content')).toBeInTheDocument()
     expect(screen.getByText('Compact spec content')).toBeInTheDocument()
@@ -532,7 +602,7 @@ describe('TranscriptPanel', () => {
     expect(screen.getByText('Visible Ask reply')).toBeInTheDocument()
   })
 
-  it('renders unknown native item as an explicit fallback card', () => {
+  it('does not render unknown native item payloads', () => {
     const item: SessionItem = {
       id: 'item-unknown',
       threadId: 'thread-1',
@@ -548,7 +618,7 @@ describe('TranscriptPanel', () => {
       },
     }
 
-    const { container } = render(
+    render(
       <TranscriptPanel
         threadId="thread-1"
         turns={[baseTurn([item])]}
@@ -556,11 +626,8 @@ describe('TranscriptPanel', () => {
       />,
     )
 
-    expect(screen.getByText('Unknown Codex item')).toBeInTheDocument()
-    const text = container.textContent ?? ''
-    expect(text).toContain('kind: browserScreenshot')
-    expect(text).toContain('payload:')
-    expect(text).toContain('https://example.test/screenshot.png')
+    expect(screen.queryByText('Unknown Codex item')).not.toBeInTheDocument()
+    expect(screen.queryByText('https://example.test/screenshot.png')).not.toBeInTheDocument()
   })
 
   it('summarizes tool items when turn is terminal', () => {
@@ -903,11 +970,12 @@ describe('TranscriptPanel', () => {
       },
     }
 
+    const items = [fileChange, message]
     render(
       <TranscriptPanel
         threadId="thread-1"
-        turns={[baseTurn([fileChange], 'completed')]}
-        itemsByTurn={{ 'thread-1:turn-1': [message] }}
+        turns={[baseTurn([], 'completed')]}
+        itemsByTurn={{ 'thread-1:turn-1': items }}
       />,
     )
 

@@ -161,6 +161,12 @@ def test_protocol_parity_inventory_is_disjoint_and_matches_adapter_methods() -> 
     client.turn_start("thread-1", {"input": [{"type": "text", "text": "hi"}]})
     client.turn_steer("thread-1", {"expectedTurnId": "turn-1", "input": [{"type": "text", "text": "continue"}]})
     client.turn_interrupt("thread-1", "turn-1")
+    client.config_batch_write({"values": []})
+    client.mcp_server_refresh()
+    client.mcp_server_status_list({})
+    client.mcp_resource_read("thread-1", {"server": "filesystem", "uri": "file:///README.md"})
+    client.mcp_server_tool_call("thread-1", {"server": "filesystem", "tool": "read_file", "arguments": {}})
+    client.mcp_server_oauth_login({"name": "github"})
 
     emitted_methods = tuple(method for method, _ in transport.requests)
     assert emitted_methods == SUPPORTED_CLIENT_METHODS

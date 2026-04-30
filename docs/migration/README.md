@@ -1,21 +1,22 @@
-# Workflow V2 Migration Docs
+# Workflow Core V2 Boundary Docs
 
-This directory tracks the migration from the current hybrid architecture to a
-Workflow Core V2 owned business workflow plane.
+This directory now serves two purposes:
+
+- The current boundary docs for the hard V4/Session Core V2 architecture.
+- A historical archive of the phase plans used to reach that boundary.
 
 Current boundary:
 
-- Session Core V2 is the native runtime/conversation surface under
-  `/v4/session/*`.
-- Execution/audit workflow business logic has moved behind Workflow Core V2 and
-  V4 workflow routes for the Breadcrumb V2 path.
-- Legacy V3 workflow state/mutation routes now exist only as deprecated
-  compatibility adapters over Workflow Core V2.
+- Session Core V2 is the sole runtime/conversation surface under
+  `/v4/session/*`; the legacy conversation runtime, chat-service, Codex-client,
+  V3 thread stores, and V3 conversation components have been removed.
+- Execution/audit workflow business logic is owned by Workflow Core V2 and V4
+  workflow routes for the Breadcrumb V2 path.
 - Active frontend workflow entry points use Workflow V2 state, events, and
   mutations.
-- The migration target is a V2 workflow core that owns workflow state, thread
-  binding, context packets, execution/audit orchestration, events, and V4
-  workflow routes. Remaining V3 routes become compatibility adapters.
+- The current V2 workflow core owns workflow state, thread binding, context
+  packets, execution/audit orchestration, events, artifact generation, and V4
+  workflow routes. Product APIs are exposed under `/v4` only.
 
 Documents:
 
@@ -36,7 +37,7 @@ Documents:
   audit, frozen contract decisions, blockers, and verification command for the
   contract-alignment phase.
 - [Phase 6 Breadcrumb Cutover Plan](./phase-6-breadcrumb-v2-cutover-plan-v1.md)
-  records the completed frontend cutover from V3 workflow state/mutations to
+  records the completed frontend cutover from the old workflow state/mutations to
   Workflow V2 while keeping Session Core V2 as the runtime surface.
 - [Phase 7 End-to-End Workflow Actions Plan](./phase-7-end-to-end-workflow-actions-plan-v1.md)
   records the completed vertical slices and gates for proving ask, execution,
@@ -51,9 +52,7 @@ Documents:
   artifact workflows, including V4 routes, Workflow V2 events, and context
   freshness integration.
 - [Phase 10 V3 Compatibility, Deprecation, and Removal Plan](./phase-10-v3-compatibility-deprecation-removal-plan-v1.md)
-  records the completed conversion of remaining workflow V3 state/mutation routes
-  into explicit compatibility adapters over Workflow Core V2, plus deprecation
-  telemetry and removal gates.
+  is retained as historical context for the compatibility-removal work.
 
 Migration rules:
 
@@ -61,9 +60,8 @@ Migration rules:
   the session route layer.
 - Keep business prompts, thread binding, context rebasing, and workflow action
   authorization in the backend.
-- Do not remove V3 during the migration. First make V3 a thin adapter over
-  Workflow Core V2, then deprecate or remove it after the new UI path no longer
-  imports V3 workflow code.
+- Do not reintroduce V3 conversation runtime, thread stores, or direct Codex
+  client execution.
 - Treat `thread/inject_items` support in Session Core V2 as an early blocker for
   thread binding and context packet delivery.
 - Run `python scripts/check_workflow_v2_phase0.py` after changing these docs to

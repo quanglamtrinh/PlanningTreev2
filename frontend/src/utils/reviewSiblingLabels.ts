@@ -1,21 +1,12 @@
-export function indexToReviewLetter(index: number): string {
-  let next = Math.max(1, Math.trunc(index))
-  let label = ''
-
-  while (next > 0) {
-    next -= 1
-    label = String.fromCharCode(65 + (next % 26)) + label
-    next = Math.floor(next / 26)
-  }
-
-  return label
-}
+import { formatHierarchicalDisplayIndex } from './nodeDisplayIndex'
 
 export function formatReviewChainLabel(
   parentHierarchicalNumber: string,
   index: number,
 ): string {
-  return `${parentHierarchicalNumber}.${indexToReviewLetter(index)}`
+  const parentNumber = parentHierarchicalNumber.trim()
+  const numericIndex = Math.max(1, Math.trunc(index))
+  return formatHierarchicalDisplayIndex(parentNumber ? `${parentNumber}.${numericIndex}` : String(numericIndex)) ?? String(numericIndex)
 }
 
 export function parentHierarchicalNumberFromReviewNode(

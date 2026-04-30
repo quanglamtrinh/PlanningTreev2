@@ -1,18 +1,11 @@
-export type ThreadTab = 'ask' | 'execution' | 'audit' | 'package'
+export type ThreadTab = 'root' | 'ask' | 'execution' | 'audit'
+export type WorkflowThreadTab = Exclude<ThreadTab, 'root'>
 
 export function parseThreadTab(rawValue: string | null): ThreadTab | null {
   if (rawValue === 'review') {
     return 'audit'
   }
-  if (rawValue === 'package-review') {
-    return 'package'
-  }
-  if (
-    rawValue === 'ask' ||
-    rawValue === 'execution' ||
-    rawValue === 'audit' ||
-    rawValue === 'package'
-  ) {
+  if (rawValue === 'root' || rawValue === 'ask' || rawValue === 'execution' || rawValue === 'audit') {
     return rawValue
   }
   return null
@@ -29,8 +22,13 @@ export function buildChatV2Url(
 export function resolveV2RouteTarget(options: {
   requestedThreadTab: ThreadTab | null
   isReviewNode: boolean
+  isRootNode?: boolean
 }): { surface: 'legacy' | 'v2'; threadTab: ThreadTab } {
-  const { requestedThreadTab, isReviewNode } = options
+  const { requestedThreadTab, isReviewNode, isRootNode = false } = options
+
+  if (isRootNode) {
+    return { surface: 'v2', threadTab: 'root' }
+  }
 
   if (isReviewNode) {
     if (requestedThreadTab === 'ask') {
@@ -41,11 +39,7 @@ export function resolveV2RouteTarget(options: {
   if (requestedThreadTab === 'ask') {
     return { surface: 'v2', threadTab: 'ask' }
   }
-  if (
-    requestedThreadTab === 'execution' ||
-    requestedThreadTab === 'audit' ||
-    requestedThreadTab === 'package'
-  ) {
+  if (requestedThreadTab === 'execution' || requestedThreadTab === 'audit') {
     return { surface: 'v2', threadTab: requestedThreadTab }
   }
   return { surface: 'v2', threadTab: 'execution' }

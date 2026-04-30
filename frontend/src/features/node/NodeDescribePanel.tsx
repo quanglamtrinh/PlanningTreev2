@@ -1,60 +1,56 @@
-import { useState } from 'react'
-import type { ChangedFileRecord, DetailState, NodeRecord } from '../../api/types'
+import { useEffect, useState } from 'react'
+import { api } from '../../api/client'
+import type { ChangedFileRecord, DetailState, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord } from '../../api/types'
 import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
+import { DocumentRichViewContent } from '../markdown/DocumentRichView'
 import styles from './NodeDetailCard.module.css'
 
-const INFO_TAB_SKILLS_PATHS = [
-  'structured-output/SKILL.md',
-  'progress-updates/SKILL.md',
-  'planning/SKILL.md',
-  'tool-selection/SKILL.md',
-] as const
-
 const INFO_TAB_DOCS_PATHS = [
-  'docs/codebase-summary.md',
-  'docs/project-roadmap.md',
-  'docs/handoff.md',
-  'workflows/development-rules.md',
+  'docs/overview.md',
+  'docs/setup.md',
+  'docs/architecture.md',
+  'docs/codebase-map.md',
+  'docs/development-notes.md',
+  'task/context.md',
+  'task/handoff.md',
 ] as const
 
-type DummyInfoExtension = {
-  id: string
-  name: string
-  description: string
-  badge: string
+const INFO_TAB_CONTEXT_PATH = 'task/context.md'
+const INFO_TAB_CONTEXT_FALLBACK = `# Context
+
+No workflow context is available for this thread yet.
+`
+
+function mcpTransportBadge(transport: McpRegistryServer['transport']): string {
+  const t = transport?.type as McpTransportType | undefined
+  if (t === 'stdio') {
+    return 'stdio'
+  }
+  if (t === 'streamable_http') {
+    return 'HTTP'
+  }
+  return t ? String(t) : 'MCP'
 }
 
-const INFO_TAB_DUMMY_EXTENSIONS: readonly DummyInfoExtension[] = [
-  {
-    id: 'context-sync',
-    name: 'Context Sync',
-    description: 'Keeps node context, docs, and latest workspace notes aligned before execution.',
-    badge: 'Workspace',
-  },
-  {
-    id: 'risk-scan',
-    name: 'Risk Scan',
-    description: 'Highlights dependency, migration, and rollout risks while planning a task.',
-    badge: 'Review',
-  },
-  {
-    id: 'handoff-pack',
-    name: 'Handoff Pack',
-    description: 'Drafts a compact handoff with open questions, changed files, and next actions.',
-    badge: 'Docs',
-  },
-] as const
+type InfoWorkspaceFileTarget = {
+  relativePath: string
+  scope: 'workspace' | 'root_node' | 'node'
+}
 
-/** Maps list row path to project-root path for workspace-text-file API. */
-export function infoTabListPathToWorkspaceRelative(
+/** Maps list row path to workspace-text-file API target. */
+export function infoTabListPathToWorkspaceTarget(
   variant: 'docs' | 'skills',
   listPath: string,
-): string {
+): InfoWorkspaceFileTarget {
   const trimmed = listPath.replace(/^[/\\]+/, '')
   if (variant === 'skills') {
-    return `.codex/skills/${trimmed}`
+    return { relativePath: `.codex/skills/${trimmed}`, scope: 'workspace' }
   }
-  return trimmed
+  if (trimmed.startsWith('task/')) {
+    return { relativePath: trimmed.slice('task/'.length), scope: 'node' }
+  }
+  return { relativePath: trimmed, scope: 'root_node' }
 }
 
 function IconInfoDoc() {
@@ -140,44 +136,371 @@ function InfoPathList({
   )
 }
 
-function InfoExtensionList({
-  extensions,
-  enabledExtensionIds,
-  onToggleExtension,
-}: {
-  extensions: readonly DummyInfoExtension[]
-  enabledExtensionIds: ReadonlySet<string>
-  onToggleExtension: (id: string) => void
-}) {
+type InfoTabMcpRole = Extract<McpThreadRole, 'ask_planning' | 'execution' | 'audit' | 'root'>
+
+type InfoTabMcpRoleBlock = {
+  role: InfoTabMcpRole
+  title: string
+  description: string
+}
+
+type McpRolePanelState = {
+  profile: McpThreadProfile | null
+  error: string | null
+}
+
+const INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
+  {
+    role: 'ask_planning',
+    title: 'Ask',
+    description: 'Planning and clarification thread for this node.',
+  },
+  {
+    role: 'execution',
+    title: 'Execution',
+    description: 'Implementation thread that applies changes.',
+  },
+  {
+    role: 'audit',
+    title: 'Audit',
+    description: 'Review thread for checking the execution result.',
+  },
+]
+
+type InfoTabSkillRole = Extract<InfoTabMcpRole, 'ask_planning' | 'execution' | 'audit'>
+
+type InfoTabSkillBlock = {
+  role: InfoTabSkillRole
+  title: string
+  description: string
+  skillName: string
+  skillDescription: string
+  badge: string
+}
+
+const INFO_TAB_SKILL_BLOCKS: readonly InfoTabSkillBlock[] = [
+  {
+    role: 'ask_planning',
+    title: 'Ask',
+    description: 'Planning and clarification thread for this node.',
+    skillName: 'Planning brief',
+    skillDescription: 'Frames goals, constraints, and open questions before implementation work begins.',
+    badge: 'Planning',
+  },
+  {
+    role: 'execution',
+    title: 'Execution',
+    description: 'Implementation thread that applies changes.',
+    skillName: 'Implementation guardrails',
+    skillDescription: 'Keeps code edits scoped, validates risky changes, and follows local project patterns.',
+    badge: 'Build',
+  },
+  {
+    role: 'audit',
+    title: 'Audit',
+    description: 'Review thread for checking the execution result.',
+    skillName: 'Review checklist',
+    skillDescription: 'Prioritizes regressions, missing tests, and release-blocking risks in review output.',
+    badge: 'Review',
+  },
+]
+
+function createDefaultSkillStates(): Record<InfoTabSkillRole, boolean> {
+  return INFO_TAB_SKILL_BLOCKS.reduce(
+    (states, { role }) => {
+      states[role] = role !== 'audit'
+      return states
+    },
+    {} as Record<InfoTabSkillRole, boolean>,
+  )
+}
+
+function ThreadSkillsPanel() {
+  const [skillStates, setSkillStates] = useState<Record<InfoTabSkillRole, boolean>>(() =>
+    createDefaultSkillStates(),
+  )
+
+  function toggleSkill(role: InfoTabSkillRole) {
+    setSkillStates((current) => ({
+      ...current,
+      [role]: !current[role],
+    }))
+  }
+
   return (
-    <ul className={styles.infoExtensionList} data-testid="info-tab-extensions">
-      {extensions.map((extension) => {
-        const enabled = enabledExtensionIds.has(extension.id)
-        return (
-          <li key={extension.id} className={styles.infoExtensionItem}>
-            <div className={styles.infoExtensionCopy}>
-              <div className={styles.infoExtensionTitleRow}>
-                <span className={styles.infoExtensionName}>{extension.name}</span>
-                <span className={styles.infoExtensionBadge}>{extension.badge}</span>
+    <div className={styles.infoMcpPanel} data-testid="info-tab-skills-panel">
+      <div className={styles.infoMcpHeaderRow}>
+        <p className={styles.infoExtensionDescription}>
+          Toggle dummy skills per workflow thread. Global skills are managed in <strong>Graph - Skills</strong>.
+        </p>
+      </div>
+
+      <div className={styles.infoMcpRoleGrid}>
+        {INFO_TAB_SKILL_BLOCKS.map(({ role, title, description, skillName, skillDescription, badge }) => {
+          const enabled = skillStates[role]
+          return (
+            <section key={role} className={styles.infoMcpRoleBlock} data-testid={`info-tab-skills-role-${role}`}>
+              <div className={styles.infoMcpRoleHeader}>
+                <div>
+                  <h3 className={styles.infoMcpTitle}>{title}</h3>
+                  <p className={styles.infoExtensionDescription}>{description}</p>
+                </div>
+                <button
+                  type="button"
+                  className={styles.infoSkillAddButton}
+                  onClick={() => undefined}
+                >
+                  Add skill
+                </button>
               </div>
-              <p className={styles.infoExtensionDescription}>{extension.description}</p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
-              onClick={() => onToggleExtension(extension.id)}
-            >
-              <span className={styles.infoExtensionToggleTrack} aria-hidden>
-                <span className={styles.infoExtensionToggleThumb} />
-              </span>
-              <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
-            </button>
-          </li>
-        )
-      })}
-    </ul>
+
+              <p className={styles.infoMcpListHeading}>Included skill</p>
+              <ul className={styles.infoExtensionList} data-testid={`info-tab-skills-${role}`}>
+                <li className={styles.infoExtensionItem}>
+                  <div className={styles.infoExtensionCopy}>
+                    <div className={styles.infoExtensionTitleRow}>
+                      <span className={styles.infoExtensionName}>{skillName}</span>
+                      <span className={styles.infoExtensionBadge}>{badge}</span>
+                    </div>
+                    <p className={styles.infoExtensionDescription}>{skillDescription}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={enabled}
+                    className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                    onClick={() => toggleSkill(role)}
+                  >
+                    <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                      <span className={styles.infoExtensionToggleThumb} />
+                    </span>
+                    <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export const ROOT_INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
+  {
+    role: 'root',
+    title: 'Root',
+    description: 'Project preparation thread for codebase scans, docs, and knowledge artifacts.',
+  },
+]
+
+function createEmptyMcpRoleStates(roleBlocks: readonly InfoTabMcpRoleBlock[]): Record<InfoTabMcpRole, McpRolePanelState> {
+  return roleBlocks.reduce(
+    (states, { role }) => {
+      states[role] = { profile: null, error: null }
+      return states
+    },
+    {} as Record<InfoTabMcpRole, McpRolePanelState>,
+  )
+}
+
+function mcpErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
+
+function ThreadMcpExtensionsPanel({
+  projectId,
+  nodeId,
+  roleBlocks = INFO_TAB_MCP_ROLE_BLOCKS,
+}: {
+  projectId: string
+  nodeId: string
+  roleBlocks?: readonly InfoTabMcpRoleBlock[]
+}) {
+  const [registry, setRegistry] = useState<McpRegistryServer[]>([])
+  const [registryError, setRegistryError] = useState<string | null>(null)
+  const [roleStates, setRoleStates] = useState<Record<InfoTabMcpRole, McpRolePanelState>>(() =>
+    createEmptyMcpRoleStates(roleBlocks),
+  )
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setRegistryError(null)
+      setRegistry([])
+      setRoleStates(createEmptyMcpRoleStates(roleBlocks))
+
+      try {
+        const [registryResponse, roleResponses] = await Promise.all([
+          api.listMcpRegistry(),
+          Promise.all(
+            roleBlocks.map(async ({ role }) => {
+              try {
+                const profileResponse = await api.readMcpThreadProfile(projectId, nodeId, role)
+                return {
+                  role,
+                  state: {
+                    profile: profileResponse.profile,
+                    error: null,
+                  },
+                }
+              } catch (loadError) {
+                return {
+                  role,
+                  state: {
+                    profile: null,
+                    error: mcpErrorMessage(loadError, 'Failed to load MCP profile'),
+                  },
+                }
+              }
+            }),
+          ),
+        ])
+        if (cancelled) {
+          return
+        }
+
+        const nextRoleStates = createEmptyMcpRoleStates(roleBlocks)
+        roleResponses.forEach(({ role, state }) => {
+          nextRoleStates[role] = state
+        })
+        setRegistry(registryResponse.servers)
+        setRoleStates(nextRoleStates)
+      } catch (loadError) {
+        if (cancelled) {
+          return
+        }
+        setRegistry([])
+        setRegistryError(mcpErrorMessage(loadError, 'Failed to load MCP registry'))
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, nodeId, roleBlocks])
+
+  async function patchProfile(role: InfoTabMcpRole, patch: Partial<McpThreadProfile>) {
+    try {
+      const response = await api.updateMcpThreadProfile(projectId, nodeId, role, patch)
+      setRoleStates((current) => ({
+        ...current,
+        [role]: {
+          profile: response.profile,
+          error: null,
+        },
+      }))
+    } catch (updateError) {
+      setRoleStates((current) => ({
+        ...current,
+        [role]: {
+          ...current[role],
+          error: mcpErrorMessage(updateError, 'Failed to update MCP profile'),
+        },
+      }))
+    }
+  }
+
+  function toggleServer(role: InfoTabMcpRole, state: McpRolePanelState, serverId: string) {
+    const current = state.profile?.servers?.[serverId]
+    void patchProfile(role, {
+      servers: {
+        ...(state.profile?.servers ?? {}),
+        [serverId]: {
+          enabled: !current?.enabled,
+          enabledTools: current?.enabledTools ?? [],
+          disabledTools: current?.disabledTools ?? [],
+          approvalMode: current?.approvalMode ?? state.profile?.approvalMode ?? 'never',
+          toolApproval: current?.toolApproval ?? {},
+        },
+      },
+    })
+  }
+
+  return (
+    <div className={styles.infoMcpPanel} data-testid="info-tab-mcp-extensions">
+      <div className={styles.infoMcpHeaderRow}>
+        <p className={styles.infoExtensionDescription}>
+          Global servers are managed in <strong>Graph - Extensions</strong>. Configure MCP separately
+          for each workflow thread below.
+        </p>
+      </div>
+
+      {registryError ? <p className={styles.infoMcpError}>{registryError}</p> : null}
+
+      <div className={styles.infoMcpRoleGrid}>
+        {roleBlocks.map(({ role, title, description }) => {
+          const state = roleStates[role]
+          const profile = state.profile
+          return (
+            <section key={role} className={styles.infoMcpRoleBlock} data-testid={`info-tab-mcp-role-${role}`}>
+              <div className={styles.infoMcpRoleHeader}>
+                <div>
+                  <h3 className={styles.infoMcpTitle}>{title}</h3>
+                  <p className={styles.infoExtensionDescription}>{description}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(profile?.mcpEnabled)}
+                  disabled={!profile}
+                  className={profile?.mcpEnabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                  onClick={() => void patchProfile(role, { mcpEnabled: !profile?.mcpEnabled })}
+                >
+                  <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                    <span className={styles.infoExtensionToggleThumb} />
+                  </span>
+                  <span className={styles.infoExtensionToggleLabel}>{profile?.mcpEnabled ? 'MCP on' : 'MCP off'}</span>
+                </button>
+              </div>
+
+              {state.error ? <p className={styles.infoMcpError}>{state.error}</p> : null}
+
+              <p className={styles.infoMcpListHeading}>Include servers</p>
+              <ul className={styles.infoExtensionList} data-testid={`info-tab-extensions-${role}`}>
+                {registry.length === 0 ? (
+                  <li className={styles.infoExtensionItem}>
+                    <p className={styles.changedFilesEmpty}>No global MCP servers registered yet.</p>
+                  </li>
+                ) : (
+                  registry.map((server) => {
+                    const enabled = Boolean(profile?.servers?.[server.serverId]?.enabled)
+                    const desc = server.description.trim() || `Server id: ${server.serverId}`
+                    return (
+                      <li key={server.serverId} className={styles.infoExtensionItem}>
+                        <div className={styles.infoExtensionCopy}>
+                          <div className={styles.infoExtensionTitleRow}>
+                            <span className={styles.infoExtensionName}>{server.name}</span>
+                            <span className={styles.infoExtensionBadge}>{mcpTransportBadge(server.transport)}</span>
+                          </div>
+                          <p className={styles.infoExtensionDescription}>{desc}</p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled}
+                          disabled={!profile}
+                          className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                          onClick={() => toggleServer(role, state, server.serverId)}
+                        >
+                          <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                            <span className={styles.infoExtensionToggleThumb} />
+                          </span>
+                          <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
+                        </button>
+                      </li>
+                    )
+                  })
+                )}
+              </ul>
+
+            </section>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -185,9 +508,11 @@ type Props = {
   node: NodeRecord
   projectId: string
   detailState?: DetailState | null
+  workflowContextMarkdown?: string | null
   onResetToBefore?: () => void | Promise<void>
   onResetToResult?: () => void | Promise<void>
   isResetting?: boolean
+  mcpRoleBlocks?: readonly InfoTabMcpRoleBlock[]
 }
 
 function displaySha(value: string | null | undefined): string {
@@ -230,17 +555,16 @@ export function NodeDescribePanel({
   node,
   projectId,
   detailState,
+  workflowContextMarkdown = null,
   onResetToBefore,
   onResetToResult,
   isResetting = false,
+  mcpRoleBlocks = INFO_TAB_MCP_ROLE_BLOCKS,
 }: Props) {
   const [openInfoPath, setOpenInfoPath] = useState<{
     variant: 'docs' | 'skills'
     path: string
   } | null>(null)
-  const [enabledExtensionIds, setEnabledExtensionIds] = useState<ReadonlySet<string>>(
-    () => new Set(['context-sync', 'handoff-pack']),
-  )
 
   const initialSha = displaySha(detailState?.initial_sha)
   const headSha = displaySha(detailState?.head_sha)
@@ -252,15 +576,62 @@ export function NodeDescribePanel({
 
   const present = detailState?.task_present_in_current_workspace
   const taskMissing = present === false
+  const displayIndex = formatNodeDisplayIndex(node)
 
   if (openInfoPath) {
-    const workspacePath = infoTabListPathToWorkspaceRelative(openInfoPath.variant, openInfoPath.path)
+    if (openInfoPath.variant === 'docs' && openInfoPath.path === INFO_TAB_CONTEXT_PATH) {
+      const content = workflowContextMarkdown?.trim() ? workflowContextMarkdown : INFO_TAB_CONTEXT_FALLBACK
+      return (
+        <div className={styles.describeDocumentRoot}>
+          <div className={styles.describeDocumentSheet}>
+            <div className={`${styles.describeInfoEditorHost} ${styles.documentPanel}`}>
+              <div className={styles.infoWorkspaceEditorToolbar}>
+                <button type="button" className={styles.describeWorkspaceButtonOutline} onClick={() => setOpenInfoPath(null)}>
+                  {'<- Back to info'}
+                </button>
+                <div className={styles.documentFileLabelCell}>
+                  <span className={styles.documentFileLabelIcon} aria-hidden="true">
+                    <svg
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      width="13"
+                      height="13"
+                    >
+                      <path d="M4 2h6l3 3v9a1 1 0 01-1 1H4a1 1 0 01-1-1V3a1 1 0 011-1z" />
+                      <path d="M10 2v4h3" />
+                    </svg>
+                  </span>
+                  <span className={styles.documentFileLabel}>{INFO_TAB_CONTEXT_PATH}</span>
+                </div>
+              </div>
+              <div className={styles.editorSurface}>
+                <div className={`${styles.editorSurfaceHeader} ${styles.contextEditorSurfaceHeader}`} />
+                <div className={styles.editorSurfaceBody}>
+                  <DocumentRichViewContent
+                    content={content}
+                    testId="info-context-rich-view"
+                    className={`${styles.richViewSurface} ${styles.contextRichViewSurface}`}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    const workspaceTarget = infoTabListPathToWorkspaceTarget(openInfoPath.variant, openInfoPath.path)
     return (
       <div className={styles.describeDocumentRoot}>
         <div className={styles.describeDocumentSheet}>
           <InfoWorkspaceMarkdownEditor
             projectId={projectId}
-            workspaceRelativePath={workspacePath}
+            workspaceRelativePath={workspaceTarget.relativePath}
+            workspaceScope={workspaceTarget.scope}
+            nodeId={workspaceTarget.scope === 'node' ? node.node_id : null}
             displayPath={openInfoPath.path}
             onClose={() => setOpenInfoPath(null)}
           />
@@ -275,7 +646,7 @@ export function NodeDescribePanel({
         <div className={styles.describePanel}>
           <div className={styles.describeDocHero}>
             <p className={styles.eyebrow}>
-              {node.hierarchical_number ? `${node.hierarchical_number} - Node` : 'Node'}
+              {displayIndex ? `${displayIndex} - Node` : 'Node'}
             </p>
             <h1 className={styles.describeDocH1}>{node.title}</h1>
             <p className={styles.body}>{node.description.trim() || 'No description yet.'}</p>
@@ -306,33 +677,14 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <InfoPathList
-                variant="skills"
-                paths={INFO_TAB_SKILLS_PATHS}
-                data-testid="info-tab-skills-paths"
-                onSelectPath={(path) => setOpenInfoPath({ variant: 'skills', path })}
-              />
+              <ThreadSkillsPanel />
             </div>
           </div>
 
           <div className={styles.describeDocSection}>
             <div className={styles.describeExtensionsSection}>
               <h2 className={styles.describeSectionTitle}>Extensions</h2>
-              <InfoExtensionList
-                extensions={INFO_TAB_DUMMY_EXTENSIONS}
-                enabledExtensionIds={enabledExtensionIds}
-                onToggleExtension={(extensionId) => {
-                  setEnabledExtensionIds((current) => {
-                    const next = new Set(current)
-                    if (next.has(extensionId)) {
-                      next.delete(extensionId)
-                    } else {
-                      next.add(extensionId)
-                    }
-                    return next
-                  })
-                }}
-              />
+              <ThreadMcpExtensionsPanel projectId={projectId} nodeId={node.node_id} roleBlocks={mcpRoleBlocks} />
             </div>
           </div>
 

@@ -97,6 +97,24 @@ function normalizeRawKind(value: unknown): string | null {
   return text.length > 0 ? text : null
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object'
+}
+
+function isWorkflowContextMetadata(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false
+  }
+  return value.workflowContext === true
+}
+
+function shouldRetainUnknownItemPayload(payload: Record<string, unknown>): boolean {
+  if (isWorkflowContextMetadata(payload.metadata)) {
+    return true
+  }
+  return false
+}
+
 function normalizeItemStatus(value: unknown): ItemStatus {
   if (value === 'inProgress' || value === 'completed' || value === 'failed') {
     return value
@@ -284,7 +302,7 @@ function extractContentText(content: unknown): string {
 function payloadSignature(item: SessionItem): string {
   const payload = item.payload && typeof item.payload === 'object' ? (item.payload as Record<string, unknown>) : {}
   const type = normalizeText(payload.type)
-  const kind = type || item.normalizedKind || item.kind
+  const kind = item.normalizedKind || normalizeKnownItemKind(type) || type || item.kind
   const directText = normalizeText(payload.text)
   const contentText = extractContentText(payload.content)
   const outputText = normalizeText(payload.aggregatedOutput ?? payload.output)
@@ -297,7 +315,22 @@ function payloadSignature(item: SessionItem): string {
 }
 
 function isHydratedFallbackItemId(turnId: string, itemId: string): boolean {
-  return itemId.startsWith(`${turnId}:item-`)
+  return itemId.startsWith(`${turnId}:item-`) || /^item-\d+$/.test(itemId)
+}
+
+function isSemanticMessageItem(item: SessionItem): boolean {
+  return item.normalizedKind === 'userMessage' || item.normalizedKind === 'agentMessage'
+}
+
+function findSemanticMessageMatchIndex(list: SessionItem[], item: SessionItem): number {
+  if (!isSemanticMessageItem(item)) {
+    return -1
+  }
+  const incomingSignature = payloadSignature(item)
+  if (!incomingSignature) {
+    return -1
+  }
+  return list.findIndex((entry) => isSemanticMessageItem(entry) && payloadSignature(entry) === incomingSignature)
 }
 
 function findHydratedFallbackMatchIndex(
@@ -422,11 +455,13 @@ function upsertItem(
       status: method === 'item/completed' ? 'completed' : item.status,
     }
   } else {
-    const fallbackIndex = isDelta ? -1 : findHydratedFallbackMatchIndex(list, turnId, item)
-    if (fallbackIndex >= 0) {
-      const existing = list[fallbackIndex]
+    const semanticIndex = isDelta ? -1 : findSemanticMessageMatchIndex(list, item)
+    const fallbackIndex = semanticIndex >= 0 || isDelta ? -1 : findHydratedFallbackMatchIndex(list, turnId, item)
+    const mergeIndex = semanticIndex >= 0 ? semanticIndex : fallbackIndex
+    if (mergeIndex >= 0) {
+      const existing = list[mergeIndex]
       nextList = [...list]
-      nextList[fallbackIndex] = {
+      nextList[mergeIndex] = {
         ...existing,
         ...item,
         createdAtMs: existing.createdAtMs,
@@ -504,6 +539,41 @@ function resolveItemKindFromRecord(itemRecord: Record<string, unknown>): { kind:
   }
 }
 
+function normalizeLegacyMessageItem(
+  threadId: string,
+  turnId: string | null,
+  method: string,
+  params: Record<string, unknown>,
+  fallbackItemId: string,
+): SessionItem | null {
+  const itemId = String(params.itemId ?? params.item_id ?? params.id ?? fallbackItemId).trim()
+  if (!itemId) {
+    return null
+  }
+  const normalizedKind: ItemKind = method === 'user/message' || method === 'user_message' ? 'userMessage' : 'agentMessage'
+  const role = normalizedKind === 'userMessage' ? 'user' : 'assistant'
+  const text = normalizeText(params.text ?? params.delta) || extractContentText(params.content)
+  const payload: Record<string, unknown> = {
+    ...params,
+    type: 'message',
+    role,
+  }
+  if (text) {
+    payload.text = text
+  }
+  return {
+    id: itemId,
+    threadId,
+    turnId,
+    kind: 'message',
+    normalizedKind,
+    status: 'inProgress',
+    createdAtMs: typeof params.createdAtMs === 'number' ? params.createdAtMs : Date.now(),
+    updatedAtMs: Date.now(),
+    payload,
+  }
+}
+
 function normalizeItemFromParams(
   threadId: string,
   turnId: string | null,
@@ -533,6 +603,9 @@ function normalizeItemFromParams(
     if (normalizedKind === null) {
       item.rawItem = itemRecord
     }
+    if (normalizedKind === null && !shouldRetainUnknownItemPayload(item.payload)) {
+      return null
+    }
     return item
   }
 
@@ -554,6 +627,9 @@ function normalizeItemFromParams(
   }
   if (normalizedKind === null) {
     item.rawParams = { ...params }
+  }
+  if (normalizedKind === null && !shouldRetainUnknownItemPayload(item.payload)) {
+    return null
   }
   return item
 }
@@ -593,6 +669,19 @@ export function applySessionEvent(
   const ensuredThread = ensureThread(state, threadId)
 
   switch (envelope.method) {
+    case 'user/message':
+    case 'user_message':
+    case 'assistant/message':
+    case 'assistant_message':
+    case 'agent/message': {
+      const resolvedTurnId = String(envelope.turnId ?? params.turnId ?? '').trim()
+      const item = normalizeLegacyMessageItem(threadId, resolvedTurnId || null, envelope.method, params, envelope.eventId)
+      if (item) {
+        upsertItem(state, threadId, item.turnId, item, envelope.method)
+        markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      }
+      break
+    }
     case 'thread/started': {
       const threadPayload = params.thread
       if (threadPayload && typeof threadPayload === 'object') {
@@ -778,6 +867,10 @@ export function applySessionEvent(
     case 'serverRequest/created':
     case 'serverRequest/updated':
     case 'serverRequest/resolved': {
+      markThreadActivityAt(state, threadId, envelope.occurredAtMs)
+      break
+    }
+    case 'warning': {
       markThreadActivityAt(state, threadId, envelope.occurredAtMs)
       break
     }

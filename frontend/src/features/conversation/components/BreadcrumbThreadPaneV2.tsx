@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
 import { ApprovalOverlay } from '../../session_v2/components/ApprovalOverlay'
-import type { PendingServerRequest, SessionItem, SessionTurn } from '../../session_v2/contracts'
+import type { PendingServerRequest, SessionItem, SessionTurn, VisibleTranscriptRow } from '../../session_v2/contracts'
 import { ComposerPane } from '../../session_v2/components/ComposerPane'
 import { McpElicitationOverlay } from '../../session_v2/components/McpElicitationOverlay'
 import { RequestUserInputOverlay } from '../../session_v2/components/RequestUserInputOverlay'
-import { TranscriptPanel, WorkflowContextCard } from '../../session_v2/components/TranscriptPanel'
+import { TranscriptPanel } from '../../session_v2/components/TranscriptPanel'
 import sessionShellStyles from '../../session_v2/shell/SessionConsoleV2.module.css'
 import type { NodeRecord } from '../../../api/types'
 import type { ComposerSubmitPayload } from '../../session_v2/components/ComposerPane'
@@ -20,12 +20,14 @@ export type BreadcrumbThreadFrameContextProps = {
   nodeId: string | undefined
   nodeRegistry: NodeRecord[] | null
   specConfirmed: boolean
+  showThreadTabs?: boolean
 }
 
 export type BreadcrumbThreadTranscriptProps = {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  visibleRows: VisibleTranscriptRow[]
   workflowContextItem?: SessionItem | null
 }
 
@@ -75,7 +77,7 @@ export function BreadcrumbThreadPaneV2({
   composerProps,
   debugPanelProps,
 }: BreadcrumbThreadPaneV2Props) {
-  const { threadTab, onThreadTabChange, combinedError } = frameContextProps
+  const { threadTab, onThreadTabChange, combinedError, showThreadTabs = true } = frameContextProps
   const isExecutionTab = threadTab === 'execution'
   const debugPayloadText = debugPanelProps?.payload
     ? JSON.stringify(debugPanelProps.payload, null, 2)
@@ -88,10 +90,12 @@ export function BreadcrumbThreadPaneV2({
         data-testid="breadcrumb-thread-pane"
       >
         <div className={sessionShellStyles.threadSurface}>
-          <BreadcrumbThreadTabsV2
-            threadTab={threadTab}
-            onThreadTabChange={onThreadTabChange}
-          />
+          {showThreadTabs ? (
+            <BreadcrumbThreadTabsV2
+              threadTab={threadTab}
+              onThreadTabChange={onThreadTabChange}
+            />
+          ) : null}
 
           <div className={sessionShellStyles.threadTabBody} data-testid="breadcrumb-thread-body">
             <div className={sessionShellStyles.threadBodyNoticeRow}>
@@ -154,15 +158,11 @@ export function BreadcrumbThreadPaneV2({
                 isExecutionTab ? ` ${sessionShellStyles.threadWhiteCanvas}` : ''
               }`}
             >
-              {transcriptProps.workflowContextItem ? (
-                <div className={sessionShellStyles.threadWorkflowContextSlot}>
-                  <WorkflowContextCard item={transcriptProps.workflowContextItem} />
-                </div>
-              ) : null}
               <TranscriptPanel
                 threadId={transcriptProps.threadId}
                 turns={transcriptProps.turns}
                 itemsByTurn={transcriptProps.itemsByTurn}
+                visibleRows={transcriptProps.visibleRows}
                 showWorkflowContext={false}
               />
             </div>

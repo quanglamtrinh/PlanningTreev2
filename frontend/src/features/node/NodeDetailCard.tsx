@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
-import { NodeDescribePanel } from './NodeDescribePanel'
+import { NodeDescribePanel, ROOT_INFO_TAB_MCP_ROLE_BLOCKS } from './NodeDescribePanel'
 import { NodeDocumentEditor, type FramePostUpdateBranch } from './NodeDocumentEditor'
 import { SplitPanel } from './SplitPanel'
 import { NodeStatusBadge } from './NodeStatusBadge'
@@ -10,6 +10,7 @@ import { ReviewDetailPanel } from './ReviewDetailPanel'
 import { BreadcrumbDetailTabs, breadcrumbActiveTabLabelId } from './BreadcrumbDetailTabs'
 import { WorkflowStepper } from './WorkflowStepper'
 import type { WorkflowTab } from './WorkflowStepper'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './NodeDetailCard.module.css'
 
 type DetailTab = WorkflowTab
@@ -24,6 +25,7 @@ type Props = {
   onClose?: () => void
   state?: NodeDetailCardState
   message?: string | null
+  workflowContextMarkdown?: string | null
 }
 
 function deriveDetailTab(activeStep: 'frame' | 'clarify' | 'spec', frameBranchReady?: boolean): DetailTab {
@@ -47,22 +49,6 @@ function resolveRequestedDetailTab(
     return 'frame_updated'
   }
   return detailState?.active_step ?? 'frame'
-}
-
-function normalizeDetailNodeNumber(rawNumber: string | null | undefined, isInitNode: boolean): string | null {
-  const value = String(rawNumber ?? '').trim()
-  if (!value) {
-    return null
-  }
-  if (isInitNode) {
-    return value
-  }
-  const dotIndex = value.indexOf('.')
-  if (dotIndex <= -1 || dotIndex >= value.length - 1) {
-    return value
-  }
-  const normalized = value.slice(dotIndex + 1).trim()
-  return normalized || null
 }
 
 const FRAME_POST_UPDATE_STORAGE = 'planningtree:framePostUpdate:'
@@ -89,10 +75,12 @@ export function NodeDetailCard({
   onClose,
   state = 'ready',
   message = null,
+  workflowContextMarkdown = null,
 }: Props) {
   const [detailTab, setDetailTab] = useState<DetailTab>('frame')
   const [framePostUpdateBranch, setFramePostUpdateBranch] = useState<FramePostUpdateBranch>('none')
   const isReviewNode = node?.node_kind === 'review'
+  const isRootNode = variant === 'breadcrumb' && (node?.node_kind === 'root' || node?.is_init_node === true)
 
   const detailStateKey = projectId && node ? `${projectId}::${node.node_id}` : ''
   const detailState = useDetailStateStore((s) => (detailStateKey ? s.entries[detailStateKey] : undefined))
@@ -156,8 +144,23 @@ export function NodeDetailCard({
     }
   }, [detailState?.active_step, detailState?.frame_branch_ready, framePostUpdateBranch])
 
+  const splitConfirmed =
+    detailState?.split_confirmed === true ||
+    node?.workflow?.split_confirmed === true ||
+    Boolean(node?.review_node_id)
+  const effectiveDetailState = useMemo(() => {
+    if (!detailState || !splitConfirmed || detailState.split_confirmed === true) {
+      return detailState
+    }
+    return {
+      ...detailState,
+      split_confirmed: true,
+      workflow: detailState.workflow ? { ...detailState.workflow, split_confirmed: true } : null,
+    }
+  }, [detailState, splitConfirmed])
+
   const splitTabBlocked = framePostUpdateBranch === 'spec'
-  const specTabBlocked = framePostUpdateBranch === 'split'
+  const specTabBlocked = framePostUpdateBranch === 'split' || splitConfirmed
 
   const commitFramePostUpdate = useCallback(
     (branch: 'spec' | 'split') => {
@@ -202,11 +205,17 @@ export function NodeDetailCard({
 
   /** Graph side panel: task summary only (breadcrumb/chat carries frame/spec/clarify workflow). */
   const graphInfoOnly = variant === 'graph' && !isReviewNode
+  const infoOnly = graphInfoOnly || isRootNode
 
   const rootClassName = useMemo(
     () =>
       `${styles.card} ${variant === 'breadcrumb' ? styles.cardBreadcrumb : styles.cardGraph}`,
     [variant],
+  )
+
+  const displayNodeNumber = useMemo(
+    () => formatNodeDisplayIndex(node),
+    [node?.hierarchical_number, node?.is_init_node, node?.node_kind],
   )
 
   if (state !== 'ready' || !node || !projectId) {
@@ -234,11 +243,6 @@ export function NodeDetailCard({
     )
   }
 
-  const displayNodeNumber = useMemo(
-    () => normalizeDetailNodeNumber(node.hierarchical_number, node.is_init_node === true),
-    [node.hierarchical_number, node.is_init_node],
-  )
-
   const breadcrumbPanelId = 'breadcrumb-node-detail-panel'
 
   const breadcrumbTabsEmbedded =
@@ -246,7 +250,7 @@ export function NodeDetailCard({
       <BreadcrumbDetailTabs
         embedded
         detailTab={detailTab}
-        detailState={detailState}
+        detailState={effectiveDetailState}
         onTabChange={handleTabChange}
         tabDisabled={workflowTabDisabled}
         panelId={breadcrumbPanelId}
@@ -262,7 +266,8 @@ export function NodeDetailCard({
               <NodeDescribePanel
                 node={node}
                 projectId={projectId}
-                detailState={detailState}
+                detailState={effectiveDetailState}
+                workflowContextMarkdown={workflowContextMarkdown}
                 isResetting={isResettingWorkspace}
                 onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
                 onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
@@ -274,7 +279,8 @@ export function NodeDetailCard({
             <NodeDescribePanel
               node={node}
               projectId={projectId}
-              detailState={detailState}
+              detailState={effectiveDetailState}
+              workflowContextMarkdown={workflowContextMarkdown}
               isResetting={isResettingWorkspace}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
@@ -292,8 +298,9 @@ export function NodeDetailCard({
             workflowTab={detailTab}
             onWorkflowTabChange={handleTabChange}
             onConfirm="workflow"
-            readOnly={detailState?.frame_read_only}
+            readOnly={effectiveDetailState?.frame_read_only}
             framePostUpdateBranch={framePostUpdateBranch}
+            splitConfirmed={splitConfirmed}
             onFramePostUpdateCommit={commitFramePostUpdate}
             documentToolbarTabs={breadcrumbTabsEmbedded ?? undefined}
           />
@@ -306,14 +313,14 @@ export function NodeDetailCard({
             <ClarifyPanel
               projectId={projectId}
               node={node}
-              readOnly={detailState?.clarify_read_only}
+              readOnly={effectiveDetailState?.clarify_read_only}
             />
           </BreadcrumbNonDocToolbar>
         ) : (
           <ClarifyPanel
             projectId={projectId}
             node={node}
-            readOnly={detailState?.clarify_read_only}
+            readOnly={effectiveDetailState?.clarify_read_only}
           />
         )
       ) : null}
@@ -322,19 +329,19 @@ export function NodeDetailCard({
         breadcrumbTabsEmbedded ? (
           <BreadcrumbNonDocToolbar tabs={breadcrumbTabsEmbedded}>
             <div className={styles.cardBodyAux}>
-              <SplitPanel projectId={projectId} node={node} detailState={detailState} />
+              <SplitPanel projectId={projectId} node={node} detailState={effectiveDetailState} />
             </div>
           </BreadcrumbNonDocToolbar>
         ) : (
           <div className={styles.cardBodyAux}>
-            <SplitPanel projectId={projectId} node={node} detailState={detailState} />
+            <SplitPanel projectId={projectId} node={node} detailState={effectiveDetailState} />
           </div>
         )
       ) : null}
 
       {detailTab === 'spec' ? (
         <div className={styles.documentTabStack}>
-          {detailState?.spec_stale ? (
+          {effectiveDetailState?.spec_stale ? (
             <div className={styles.staleBanner} data-testid="stale-banner-spec" role="status">
               Frame was updated since spec was last reviewed.
             </div>
@@ -345,7 +352,7 @@ export function NodeDetailCard({
             kind="spec"
             workflowTab="spec"
             onConfirm="workflow"
-            readOnly={detailState?.spec_read_only}
+            readOnly={effectiveDetailState?.spec_read_only}
             documentToolbarTabs={breadcrumbTabsEmbedded ?? undefined}
           />
         </div>
@@ -382,11 +389,11 @@ export function NodeDetailCard({
           </div>
         </div>
 
-        {!isReviewNode && !graphInfoOnly ? (
+        {!isReviewNode && !infoOnly ? (
           <div className={styles.explorationRegion} role="region" aria-label="Task exploration steps">
             <WorkflowStepper
               detailTab={detailTab}
-              detailState={detailState}
+              detailState={effectiveDetailState}
               onTabChange={handleTabChange}
               tabDisabled={workflowTabDisabled}
               readOnly={variant === 'breadcrumb'}
@@ -411,13 +418,13 @@ export function NodeDetailCard({
           </div>
         ) : null}
 
-        {!graphInfoOnly && detailState?.workflow_notice ? (
+        {!infoOnly && detailState?.workflow_notice ? (
           <div className={styles.workflowNoticeBanner} data-testid="workflow-notice" role="status">
             {detailState.workflow_notice}
           </div>
         ) : null}
 
-        {!graphInfoOnly && !isReviewNode && detailState?.package_audit_ready ? (
+        {!infoOnly && !isReviewNode && detailState?.package_audit_ready ? (
           <div
             className={styles.packageAuditReadyBanner}
             data-testid="package-audit-ready-banner"
@@ -436,20 +443,22 @@ export function NodeDetailCard({
 
         {isReviewNode ? <ReviewDetailPanel projectId={projectId} node={node} /> : null}
 
-        {graphInfoOnly ? (
+        {infoOnly ? (
           <div className={`${styles.cardBodyAux} ${styles.cardBodyAuxDescribe}`}>
             <NodeDescribePanel
               node={node}
               projectId={projectId}
-              detailState={detailState}
+              detailState={effectiveDetailState}
+              workflowContextMarkdown={workflowContextMarkdown}
               isResetting={isResettingWorkspace}
+              mcpRoleBlocks={isRootNode ? ROOT_INFO_TAB_MCP_ROLE_BLOCKS : undefined}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
             />
           </div>
         ) : null}
 
-        {!isReviewNode && variant === 'breadcrumb' ? (
+        {!isReviewNode && variant === 'breadcrumb' && !isRootNode ? (
           <div
             id={breadcrumbPanelId}
             role="tabpanel"

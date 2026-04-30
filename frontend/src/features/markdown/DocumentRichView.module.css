@@ -1,0 +1,139 @@
+.documentPanel {
+  --drv-editor-bg: var(--color-bg-input, var(--session-v2-surface-subtle, #f8fafc));
+  --drv-editor-border: var(--color-border-subtle, var(--session-v2-border, #e5e7eb));
+  --drv-editor-text: var(--color-text-primary, var(--session-v2-fg, #0d0d0d));
+  --drv-editor-muted: var(--color-text-secondary, var(--session-v2-fg-muted, #6b7280));
+  --drv-text-tertiary: var(--color-text-tertiary, var(--session-v2-fg-muted, #6b7280));
+  --drv-radius-md: var(--radius-md, 8px);
+  --drv-font-sans: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  --drv-bg-surface: var(--bg-surface, var(--session-v2-bg, #ffffff));
+  --drv-border-default: var(--border-default, var(--session-v2-border, #e5e7eb));
+  --drv-text-primary: var(--text-primary, var(--session-v2-fg, #0d0d0d));
+  --drv-text-secondary: var(--text-secondary, var(--session-v2-fg-muted, #6b7280));
+  --drv-accent-primary: var(--accent-primary, var(--session-v2-accent, #0169cc));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.documentFileLabel {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--drv-editor-muted, var(--color-text-secondary, var(--session-v2-fg-muted, #6b7280)));
+}
+
+.editorSurface {
+  flex: 1;
+  min-height: 0;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--drv-editor-border);
+  border-radius: var(--drv-radius-md);
+  background: var(--drv-editor-bg);
+  box-sizing: border-box;
+  padding: 0;
+  /* Subtle inner highlight for depth, not a heavy code-editor frame */
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--drv-editor-text) 3%, transparent);
+}
+
+.editorSurfaceHeader {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--drv-editor-border);
+  background: color-mix(in srgb, var(--drv-editor-bg) 72%, var(--drv-editor-text) 5%);
+  box-sizing: border-box;
+}
+
+.editorSurfaceHeaderMain {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.editorSurfaceTitle {
+  font-family: var(--drv-font-sans, system-ui, sans-serif);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--drv-editor-text) 58%, var(--drv-text-tertiary));
+  line-height: 1.2;
+  user-select: none;
+}
+
+.editorModeToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--drv-editor-text) 18%, transparent);
+  background: color-mix(in srgb, var(--drv-editor-bg) 84%, var(--drv-editor-text) 4%);
+}
+
+.editorModeToggleButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--drv-editor-text) 66%, var(--drv-text-tertiary));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.editorModeToggleButtonActive {
+  background: color-mix(in srgb, var(--drv-editor-text) 12%, transparent);
+  color: var(--drv-editor-text);
+}
+
+.editorSurfaceHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.editorSurfaceBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Rich view reading padding: top/bottom breathing room, asymmetric left-right for visual rhythm */
+  padding: 14px 12px 20px 16px;
+  background: var(--drv-editor-bg);
+  box-sizing: border-box;
+}
+
+.richViewSurface {
+  --bg-surface: var(--drv-bg-surface);
+  --border-default: var(--drv-border-default);
+  --text-primary: var(--drv-text-primary);
+  --text-secondary: var(--drv-text-secondary);
+  --accent-primary: var(--drv-accent-primary);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.richViewEmpty {
+  margin: 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--drv-editor-muted, var(--color-text-secondary, var(--session-v2-fg-muted, #6b7280)));
+}

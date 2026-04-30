@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import threading
@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Any, TypedDict
 from uuid import uuid4
 
-from backend.ai.codex_client import CodexAppClient, CodexTransportError
-from backend.ai.review_rollup_prompt_builder import build_review_rollup_base_instructions
 from backend.ai.split_context_builder import build_split_context
+from backend.business.workflow_v2.artifact_turn_runner import WorkflowArtifactTurnRunnerV2
 from backend.ai.split_prompt_builder import (
     build_hidden_retry_feedback,
     build_split_attempt_prompt,
@@ -29,7 +28,6 @@ from backend.services.node_detail_service import (
     _load_frame_meta_from_node_dir,
     derive_workflow_summary_from_node_dir,
 )
-from backend.services.thread_lineage_service import ThreadLineageService
 from backend.services.tree_service import TreeService
 from backend.split_contract import FlatSubtaskPayload, ServiceSplitMode
 from backend.storage.file_utils import iso_now, new_id
@@ -52,16 +50,12 @@ class SplitService:
         self,
         storage: Storage,
         tree_service: TreeService,
-        codex_client: CodexAppClient,
-        thread_lineage_service: ThreadLineageService,
         split_timeout: int,
+        artifact_turn_runner: WorkflowArtifactTurnRunnerV2,
         git_checkpoint_service: Any = None,
-        artifact_turn_runner: Any | None = None,
     ) -> None:
         self._storage = storage
         self._tree_service = tree_service
-        self._codex_client = codex_client
-        self._thread_lineage_service = thread_lineage_service
         self._split_timeout = int(split_timeout)
         self._git_checkpoint_service = git_checkpoint_service
         self._artifact_turn_runner = artifact_turn_runner
@@ -77,7 +71,7 @@ class SplitService:
                 raise NodeNotFound(node_id)
             require_shaping_not_frozen(self._storage, project_id, node_id, "split")
             self._validate_split_eligibility(snapshot, node, node_by_id)
-            split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
+            split_state = self._reconcile_stale_job_locked(project_id, self._storage.workflow_domain_store.read_split_jobs(project_id))
             if split_state.get("active_job"):
                 raise SplitNotAllowed("A split is already active for this project.")
             workspace_root = self._workspace_root_from_snapshot(snapshot)
@@ -92,7 +86,7 @@ class SplitService:
             if node is None:
                 raise NodeNotFound(node_id)
             self._validate_split_eligibility(snapshot, node, node_by_id)
-            split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
+            split_state = self._reconcile_stale_job_locked(project_id, self._storage.workflow_domain_store.read_split_jobs(project_id))
             if split_state.get("active_job"):
                 raise SplitNotAllowed("A split is already active for this project.")
             split_state["active_job"] = {
@@ -102,7 +96,7 @@ class SplitService:
                 "started_at": started_at,
             }
             split_state["last_error"] = None
-            self._storage.split_state_store.write_state(project_id, split_state)
+            self._storage.workflow_domain_store.write_split_jobs(project_id, split_state)
             self._mark_live_job(project_id, job_id)
 
         threading.Thread(
@@ -127,7 +121,7 @@ class SplitService:
     def get_split_status(self, project_id: str) -> dict[str, Any]:
         with self._storage.project_lock(project_id):
             self._storage.project_store.load_snapshot(project_id)
-            split_state = self._reconcile_stale_job_locked(project_id, self._storage.split_state_store.read_state(project_id))
+            split_state = self._reconcile_stale_job_locked(project_id, self._storage.workflow_domain_store.read_split_jobs(project_id))
             return self._status_payload(split_state)
 
     def _run_background_split(
@@ -185,23 +179,15 @@ class SplitService:
         last_issues = ["No valid split_result payload was captured."]
         for attempt in range(_RETRY_LIMIT + 1):
             prompt = build_split_attempt_prompt(mode, task_context, retry_feedback)
-            if self._artifact_turn_runner is not None:
-                result = self._artifact_turn_runner.run_prompt(
-                    project_id=project_id,
-                    node_id=node_id,
-                    thread_id=thread_id,
-                    prompt=prompt,
-                    artifact_kind="split",
-                    cwd=workspace_root,
-                    timeout_sec=self._split_timeout,
-                )
-            else:
-                result = self._codex_client.run_turn_streaming(
-                    prompt,
-                    thread_id=thread_id,
-                    timeout_sec=self._split_timeout,
-                    cwd=workspace_root,
-                )
+            result = self._artifact_turn_runner.run_prompt(
+                project_id=project_id,
+                node_id=node_id,
+                thread_id=thread_id,
+                prompt=prompt,
+                artifact_kind="split",
+                cwd=workspace_root,
+                timeout_sec=self._split_timeout,
+            )
             tool_calls = result.get("tool_calls", [])
             payload = self._extract_split_payload(
                 tool_calls,
@@ -240,7 +226,7 @@ class SplitService:
             parent_hnum = str(parent.get("hierarchical_number") or "1")
             parent_depth = int(parent.get("depth", 0) or 0)
 
-            # ── Create only the first child ──────────────────────────
+            # â”€â”€ Create only the first child â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             first_subtask = subtasks[0]
             first_child_id = uuid4().hex
             first_child = {
@@ -260,7 +246,7 @@ class SplitService:
             snapshot["tree_state"]["node_index"][first_child_id] = first_child
             node_by_id[first_child_id] = first_child
 
-            # ── Create real review node ──────────────────────────────
+            # â”€â”€ Create real review node â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             review_node_id = uuid4().hex
             parent_title = str(parent.get("title") or "")
             review_node = {
@@ -276,12 +262,12 @@ class SplitService:
                 "hierarchical_number": f"{parent_hnum}.R",
                 "created_at": now,
             }
-            # Review node is NOT in parent.child_ids — stored via review_node_id
+            # Review node is NOT in parent.child_ids â€” stored via review_node_id
             snapshot["tree_state"]["node_index"][review_node_id] = review_node
             node_by_id[review_node_id] = review_node
             parent["review_node_id"] = review_node_id
 
-            # ── Compute K0 baseline SHA ──────────────────────────────
+            # â”€â”€ Compute K0 baseline SHA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             workspace_root = self._workspace_root_from_snapshot(snapshot)
             if workspace_root:
                 from backend.services.workspace_sha import compute_workspace_sha
@@ -289,7 +275,7 @@ class SplitService:
             else:
                 k0_sha = "sha256:" + "0" * 64
 
-            # ── Build pending siblings manifest ──────────────────────
+            # â”€â”€ Build pending siblings manifest â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             pending_siblings = []
             for index, subtask in enumerate(subtasks[1:], start=2):
                 pending_siblings.append({
@@ -299,7 +285,7 @@ class SplitService:
                     "materialized_node_id": None,
                 })
 
-            # ── Capture git HEAD for first-sibling baseline ─────────
+            # â”€â”€ Capture git HEAD for first-sibling baseline â”€â”€â”€â”€â”€â”€â”€â”€â”€
             k0_git_head_sha: str | None = None
             if self._git_checkpoint_service is not None and workspace_root:
                 try:
@@ -310,7 +296,7 @@ class SplitService:
                 except Exception:
                     logger.warning("Failed to capture k0_git_head_sha at split time")
 
-            # ── Write review_state.json ──────────────────────────────
+            # â”€â”€ Write review_state.json â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             review_state: dict[str, Any] = {
                 "checkpoints": [
                     {
@@ -330,11 +316,11 @@ class SplitService:
                 "pending_siblings": pending_siblings,
                 "k0_git_head_sha": k0_git_head_sha,
             }
-            self._storage.review_state_store.write_state(
+            self._storage.workflow_domain_store.write_review(
                 project_id, review_node_id, review_state
             )
 
-            # ── Update parent and snapshot ───────────────────────────
+            # â”€â”€ Update parent and snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if parent.get("status") in {"ready", "in_progress"}:
                 parent["status"] = "draft"
 
@@ -349,24 +335,11 @@ class SplitService:
                 parent_title=parent_title,
             )
             split_commit_sha: str | None = None
-            if split_commit is not None:
-                workflow_state = self._storage.workflow_state_store.read_state(project_id, node_id)
-                if workflow_state is None:
-                    workflow_state = self._storage.workflow_state_store.default_state(node_id)
-                workflow_state["latestCommit"] = {
-                    "sourceAction": "split",
-                    "initialSha": split_commit["initialSha"],
-                    "headSha": split_commit["headSha"],
-                    "commitMessage": split_commit["commitMessage"],
-                    "committed": split_commit["committed"],
-                    "recordedAt": iso_now(),
-                }
-                self._storage.workflow_state_store.write_state(project_id, node_id, workflow_state)
-                if split_commit["committed"]:
-                    split_commit_sha = split_commit["headSha"]
-                    review_state["k0_git_head_sha"] = split_commit_sha
+            if split_commit is not None and split_commit["committed"]:
+                split_commit_sha = split_commit["headSha"]
+                review_state["k0_git_head_sha"] = split_commit_sha
             if split_commit_sha:
-                self._storage.review_state_store.write_state(
+                self._storage.workflow_domain_store.write_review(
                     project_id, review_node_id, review_state
                 )
             return {
@@ -377,28 +350,14 @@ class SplitService:
             }
 
     def _ensure_split_thread(self, project_id: str, node_id: str, workspace_root: str | None) -> str:
-        if self._artifact_turn_runner is not None:
-            return str(
-                self._artifact_turn_runner.ensure_ask_thread(
-                    project_id=project_id,
-                    node_id=node_id,
-                    workspace_root=workspace_root,
-                    artifact_kind="split",
-                )
+        return str(
+            self._artifact_turn_runner.ensure_ask_thread(
+                project_id=project_id,
+                node_id=node_id,
+                workspace_root=workspace_root,
+                artifact_kind="split",
             )
-        try:
-            session = self._thread_lineage_service.resume_or_rebuild_session(
-                project_id,
-                node_id,
-                "audit",
-                workspace_root,
-            )
-        except CodexTransportError as exc:
-            raise SplitBackendUnavailable(str(exc)) from exc
-        thread_id = str(session.get("thread_id") or "").strip()
-        if not thread_id:
-            raise SplitBackendUnavailable("Parent audit thread is unavailable for split.")
-        return thread_id
+        )
 
     def _status_payload(self, split_state: dict[str, Any]) -> dict[str, Any]:
         active_job = split_state.get("active_job")
@@ -454,7 +413,7 @@ class SplitService:
         job_id = active_job.get("job_id")
         if not isinstance(job_id, str) or not job_id.strip():
             split_state["active_job"] = None
-            self._storage.split_state_store.write_state(project_id, split_state)
+            self._storage.workflow_domain_store.write_split_jobs(project_id, split_state)
             return split_state
         if self._is_live_job(project_id, job_id):
             return split_state
@@ -467,12 +426,12 @@ class SplitService:
             "completed_at": iso_now(),
             "error": _STALE_JOB_MESSAGE,
         }
-        return self._storage.split_state_store.write_state(project_id, split_state)
+        return self._storage.workflow_domain_store.write_split_jobs(project_id, split_state)
 
     def _mark_job_completed(self, project_id: str, job_id: str) -> None:
         try:
             with self._storage.project_lock(project_id):
-                split_state = self._storage.split_state_store.read_state(project_id)
+                split_state = self._storage.workflow_domain_store.read_split_jobs(project_id)
                 active_job = split_state.get("active_job")
                 if isinstance(active_job, dict) and active_job.get("job_id") == job_id:
                     split_state["active_job"] = None
@@ -484,7 +443,7 @@ class SplitService:
                         "started_at": active_job.get("started_at"),
                         "completed_at": iso_now(),
                     }
-                    self._storage.split_state_store.write_state(project_id, split_state)
+                    self._storage.workflow_domain_store.write_split_jobs(project_id, split_state)
         finally:
             self._clear_live_job(project_id, job_id)
 
@@ -499,7 +458,7 @@ class SplitService:
     ) -> None:
         try:
             with self._storage.project_lock(project_id):
-                split_state = self._storage.split_state_store.read_state(project_id)
+                split_state = self._storage.workflow_domain_store.read_split_jobs(project_id)
                 active_job = split_state.get("active_job")
                 if isinstance(active_job, dict) and active_job.get("job_id") == job_id:
                     split_state["active_job"] = None
@@ -511,7 +470,7 @@ class SplitService:
                     "completed_at": iso_now(),
                     "error": message,
                 }
-                self._storage.split_state_store.write_state(project_id, split_state)
+                self._storage.workflow_domain_store.write_split_jobs(project_id, split_state)
         except ProjectNotFound:
             pass
         finally:
@@ -601,45 +560,9 @@ class SplitService:
         parent_node_id: str,
         lineage_targets: dict[str, str | None],
     ) -> None:
-        workspace_root = lineage_targets.get("workspace_root")
-        review_node_id = str(lineage_targets.get("review_node_id") or "").strip()
-        first_child_id = str(lineage_targets.get("first_child_id") or "").strip()
-        if not workspace_root or not review_node_id or not first_child_id:
-            return
-        if self._artifact_turn_runner is not None:
-            return
-        try:
-            self._thread_lineage_service.ensure_forked_thread(
-                project_id,
-                review_node_id,
-                "audit",
-                source_node_id=parent_node_id,
-                source_role="audit",
-                fork_reason="review_bootstrap",
-                workspace_root=workspace_root,
-                base_instructions=build_review_rollup_base_instructions(),
-            )
-            self._thread_lineage_service.ensure_forked_thread(
-                project_id,
-                first_child_id,
-                "audit",
-                source_node_id=review_node_id,
-                source_role="audit",
-                fork_reason="child_activation",
-                workspace_root=workspace_root,
-            )
-        except Exception:
-            # Tree/review persistence is canonical; lineage bootstrap heals on later access.
-            logger.debug(
-                "Failed to eager-bootstrap split lineage for %s/%s",
-                project_id,
-                parent_node_id,
-                exc_info=True,
-            )
+        del project_id, parent_node_id, lineage_targets
 
     def _refresh_ask_context(self, project_id: str, node_id: str) -> None:
-        if self._artifact_turn_runner is None:
-            return
         self._artifact_turn_runner.refresh_ask_context(
             project_id=project_id,
             node_id=node_id,
@@ -703,10 +626,6 @@ class SplitService:
                 exc_info=True,
             )
             return None
-
-    def _is_missing_thread_error(self, exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "no rollout found for thread id" in message or "thread not found" in message
 
     def _mark_live_job(self, project_id: str, job_id: str) -> None:
         with self._live_jobs_lock:

@@ -1,7 +1,7 @@
 import type {
-  ThreadExecutionFollowupQueueActions,
-  ThreadExecutionFollowupQueueState,
-} from '../state/threadByIdStoreV3'
+  ExecutionFollowupQueueActions,
+  ExecutionFollowupQueueState,
+} from './followupQueueTypes'
 import {
   renderExecutionQueuePauseReasonLabel,
   renderQueueStatusLabel,
@@ -9,9 +9,9 @@ import {
 import styles from '../../breadcrumb/BreadcrumbChatView.module.css'
 
 type ExecutionFollowupQueuePanelV2Props = {
-  executionQueueState: ThreadExecutionFollowupQueueState
+  executionQueueState: ExecutionFollowupQueueState
   executionQueueActions: Pick<
-    ThreadExecutionFollowupQueueActions,
+    ExecutionFollowupQueueActions,
     'removeQueued' | 'reorderQueued' | 'sendQueuedNow' | 'confirmQueued' | 'retryQueued' | 'setOperatorPause'
   >
 }

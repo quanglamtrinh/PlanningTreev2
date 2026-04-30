@@ -34,6 +34,31 @@ function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
   }
 }
 
+function makeTaskContext(taskOverrides: Partial<NodeRecord> = {}) {
+  const taskId = taskOverrides.node_id ?? 'task-1'
+  const initNode = makeNode({
+    node_id: 'init',
+    title: 'Workspace Init',
+    node_kind: 'root',
+    is_init_node: true,
+    parent_id: null,
+    child_ids: [taskId],
+    hierarchical_number: '1',
+  })
+  const taskNode = makeNode({
+    node_id: taskId,
+    title: 'Root task',
+    node_kind: 'original',
+    is_init_node: false,
+    parent_id: 'init',
+    child_ids: [],
+    hierarchical_number: '1.1',
+    depth: 1,
+    ...taskOverrides,
+  })
+  return { initNode, taskNode }
+}
+
 function seedDocumentStore(
   nodeId = 'root',
   {
@@ -120,14 +145,15 @@ describe('FrameContextFeedBlock', () => {
   })
 
   it('shows frame and clarify context even when shaping is not frozen', async () => {
-    const loadDocument = seedDocumentStore()
-    const loadClarify = seedClarifyStore()
+    const { initNode, taskNode } = makeTaskContext()
+    const loadDocument = seedDocumentStore(taskNode.node_id)
+    const loadClarify = seedClarifyStore(taskNode.node_id)
 
     render(
       <FrameContextFeedBlock
         projectId="project-1"
-        nodeId="root"
-        nodeRegistry={[makeNode()]}
+        nodeId={taskNode.node_id}
+        nodeRegistry={[initNode, taskNode]}
         variant="ask"
       />,
     )
@@ -138,26 +164,23 @@ describe('FrameContextFeedBlock', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clarify' }))
     await waitFor(() => {
-      expect(
-        screen.getByText(/^1\.\s*What auth provider\?$/i, {
-          selector: 'span',
-        }),
-      ).toBeInTheDocument()
+      expect(screen.getByRole('heading', { level: 2, name: /^1\.\s*What auth provider\?$/i })).toBeInTheDocument()
     })
 
     await waitFor(() => {
-      expect(loadDocument).toHaveBeenCalledWith('project-1', 'root', 'frame')
+      expect(loadDocument).toHaveBeenCalledWith('project-1', taskNode.node_id, 'frame')
     })
     await waitFor(() => {
-      expect(loadClarify).toHaveBeenCalledWith('project-1', 'root')
+      expect(loadClarify).toHaveBeenCalledWith('project-1', taskNode.node_id)
     })
   })
 
   it('renders action status chips from shared action state', () => {
-    seedDocumentStore()
-    seedClarifyStore()
+    const { initNode, taskNode } = makeTaskContext()
+    seedDocumentStore(taskNode.node_id)
+    seedClarifyStore(taskNode.node_id)
 
-    const key = askShellNodeActionStateKey('project-1', 'root')
+    const key = askShellNodeActionStateKey('project-1', taskNode.node_id)
     useAskShellActionStore.setState({
       entries: {
         [key]: {
@@ -180,8 +203,8 @@ describe('FrameContextFeedBlock', () => {
     render(
       <FrameContextFeedBlock
         projectId="project-1"
-        nodeId="root"
-        nodeRegistry={[makeNode()]}
+        nodeId={taskNode.node_id}
+        nodeRegistry={[initNode, taskNode]}
         variant="ask"
       />,
     )
@@ -241,11 +264,12 @@ describe('FrameContextFeedBlock', () => {
   })
 
   it('renders local links in frame/spec context using filename line labels', async () => {
-    const loadDocument = seedDocumentStore('root', {
+    const { initNode, taskNode } = makeTaskContext()
+    const loadDocument = seedDocumentStore(taskNode.node_id, {
       frameContent: '[Frame Doc](file:///C:/workspace/project/frame.md#L74C3)',
       specContent: '[Spec Doc](file:///C:/workspace/project/spec.md#L12C8)',
     })
-    const loadClarify = seedClarifyStore('root')
+    const loadClarify = seedClarifyStore(taskNode.node_id)
 
     useProjectStore.setState({
       snapshot: {
@@ -259,20 +283,20 @@ describe('FrameContextFeedBlock', () => {
           updated_at: '2026-04-03T00:00:00Z',
         },
         tree_state: {
-          root_node_id: 'root',
-          active_node_id: 'root',
-          node_registry: [makeNode()],
+          root_node_id: initNode.node_id,
+          active_node_id: taskNode.node_id,
+          node_registry: [initNode, taskNode],
         },
         updated_at: '2026-04-03T00:00:00Z',
       },
-      selectedNodeId: 'root',
+      selectedNodeId: taskNode.node_id,
     })
 
     render(
       <FrameContextFeedBlock
         projectId="project-1"
-        nodeId="root"
-        nodeRegistry={[makeNode()]}
+        nodeId={taskNode.node_id}
+        nodeRegistry={[initNode, taskNode]}
         variant="audit"
         specConfirmed
       />,
@@ -287,25 +311,26 @@ describe('FrameContextFeedBlock', () => {
     expect(screen.queryByText('Spec Doc')).not.toBeInTheDocument()
 
     await waitFor(() => {
-      expect(loadDocument).toHaveBeenCalledWith('project-1', 'root', 'frame')
+      expect(loadDocument).toHaveBeenCalledWith('project-1', taskNode.node_id, 'frame')
     })
     await waitFor(() => {
-      expect(loadClarify).toHaveBeenCalledWith('project-1', 'root')
+      expect(loadClarify).toHaveBeenCalledWith('project-1', taskNode.node_id)
     })
   })
 
   it('uses the same document chrome for frame, clarify, and spec panels', async () => {
-    seedDocumentStore('root', {
+    const { initNode, taskNode } = makeTaskContext()
+    seedDocumentStore(taskNode.node_id, {
       frameContent: '# Frame\nContent',
       specContent: '# Spec\nContent',
     })
-    seedClarifyStore('root')
+    seedClarifyStore(taskNode.node_id)
 
     render(
       <FrameContextFeedBlock
         projectId="project-1"
-        nodeId="root"
-        nodeRegistry={[makeNode()]}
+        nodeId={taskNode.node_id}
+        nodeRegistry={[initNode, taskNode]}
         variant="audit"
         specConfirmed
       />,
@@ -326,7 +351,7 @@ describe('FrameContextFeedBlock', () => {
       ...useNodeDocumentStore.getState(),
       loadDocument,
       entries: {
-        'project-1::root::frame': {
+        'project-1::parent::frame': {
           content: '# Root Frame\nParent',
           savedContent: '# Root Frame\nParent',
           updatedAt: '2026-04-03T00:00:00Z',
@@ -352,7 +377,7 @@ describe('FrameContextFeedBlock', () => {
       ...useClarifyStore.getState(),
       loadClarify,
       entries: {
-        'project-1::root': {
+        'project-1::parent': {
           clarify: {
             schema_version: 2,
             source_frame_revision: 1,
@@ -387,27 +412,41 @@ describe('FrameContextFeedBlock', () => {
       },
     } as Partial<ReturnType<typeof useClarifyStore.getState>>)
 
-    const rootNode = makeNode({
-      node_id: 'root',
-      title: 'Root task',
+    const initNode = makeNode({
+      node_id: 'init',
+      title: 'Workspace Init',
+      node_kind: 'root',
+      is_init_node: true,
       parent_id: null,
-      child_ids: ['child'],
+      child_ids: ['parent'],
       hierarchical_number: '1',
+    })
+    const parentNode = makeNode({
+      node_id: 'parent',
+      title: 'Parent task',
+      node_kind: 'original',
+      is_init_node: false,
+      parent_id: 'init',
+      child_ids: ['child'],
+      hierarchical_number: '1.1',
+      depth: 1,
     })
     const childNode = makeNode({
       node_id: 'child',
       title: 'Child task',
-      parent_id: 'root',
+      node_kind: 'original',
+      is_init_node: false,
+      parent_id: 'parent',
       child_ids: [],
-      hierarchical_number: '1.1',
-      depth: 1,
+      hierarchical_number: '1.1.1',
+      depth: 2,
     })
 
     render(
       <FrameContextFeedBlock
         projectId="project-1"
         nodeId="child"
-        nodeRegistry={[rootNode, childNode]}
+        nodeRegistry={[initNode, parentNode, childNode]}
         variant="ask"
       />,
     )
@@ -415,6 +454,7 @@ describe('FrameContextFeedBlock', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Split' }))
 
     expect(await screen.findByTestId('frame-context-panel-body-split')).toHaveAttribute('data-panel-chrome', 'document')
+    expect(screen.getByRole('heading', { level: 2, name: /child task/i })).toBeInTheDocument()
     expect(screen.getByTestId('frame-context-panel-body-split')).toHaveTextContent('Child task')
   })
 })

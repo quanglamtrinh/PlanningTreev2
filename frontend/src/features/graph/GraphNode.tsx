@@ -6,6 +6,7 @@ import { NodeStatusBadge } from '../node/NodeStatusBadge'
 import { AgentSpinner, SPINNER_WORDS_SPLITTING } from '../../components/AgentSpinner'
 import { useGraphNodeActions } from './graphNodeActionsContext'
 import { GRAPH_SPLIT_OPTIONS } from './splitModes'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './GraphNode.module.css'
 
 const CONTROL_CLASS_NAME = 'nodrag nopan'
@@ -274,8 +275,6 @@ export type GraphNodeData = {
   isSplitDisabled: boolean
   executionStatus: ExecutionStatus | null
   graphViewRootId: string | null
-  /** 1-based order among siblings on the same layer (not hierarchical). */
-  siblingLayerIndex: number
 }
 
 function childIdsEqual(a: string[], b: string[]): boolean {
@@ -303,7 +302,6 @@ function graphNodePropsAreEqual(prev: NodeProps, next: NodeProps): boolean {
     a.isSplitting === b.isSplitting &&
     a.isSplitDisabled === b.isSplitDisabled &&
     a.executionStatus === b.executionStatus &&
-    a.siblingLayerIndex === b.siblingLayerIndex &&
     a.node.node_id === b.node.node_id &&
     a.node.title === b.node.title &&
     a.node.description === b.node.description &&
@@ -324,6 +322,7 @@ function GraphNodeComponent({ data }: NodeProps) {
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   const d = data as GraphNodeData
   const descriptionText = d.node.description.trim()
+  const displayIndex = formatNodeDisplayIndex(d.node)
   const hasDescription = descriptionText.length > 0
 
   useEffect(() => {
@@ -370,9 +369,11 @@ function GraphNodeComponent({ data }: NodeProps) {
         }}
       >
         <aside className={styles.nodeRail} aria-label="Node controls">
-          <span className={styles.railLayerIndex} aria-hidden="true">
-            {d.siblingLayerIndex}
-          </span>
+          {displayIndex ? (
+            <span className={styles.railLayerIndex} aria-hidden="true">
+              {displayIndex}
+            </span>
+          ) : null}
           <button
             type="button"
             className={`${styles.infoBtn} ${CONTROL_CLASS_NAME}`}

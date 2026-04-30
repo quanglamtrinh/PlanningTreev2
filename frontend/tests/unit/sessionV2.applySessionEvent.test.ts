@@ -36,6 +36,33 @@ function event(partial: Partial<SessionEventEnvelope>): SessionEventEnvelope {
 }
 
 describe('applySessionEvent', () => {
+  it('materializes legacy semantic assistant messages while streaming', () => {
+    const next = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        method: 'assistant/message',
+        turnId: 'turn-1',
+        params: { itemId: 'msg-1', text: 'hello while streaming' },
+      }),
+    )
+
+    expect(next.itemsByTurn['thread-1:turn-1']).toEqual([
+      expect.objectContaining({
+        id: 'msg-1',
+        kind: 'message',
+        normalizedKind: 'agentMessage',
+        status: 'inProgress',
+        payload: expect.objectContaining({
+          text: 'hello while streaming',
+          type: 'message',
+          role: 'assistant',
+        }),
+      }),
+    ])
+  })
+
   it('deduplicates older events by eventSeq', () => {
     const initial = applySessionEvent(
       baseState(),
@@ -77,6 +104,50 @@ describe('applySessionEvent', () => {
     expect(withGap.gapDetectedByThread['thread-1']).toBe(true)
     expect(withGap.lastEventSeqByThread['thread-1']).toBe(1)
     expect(withGap.itemsByTurn['thread-1:turn-1']).toBeUndefined()
+  })
+
+  it('accepts warning events between deltas without triggering a false gap', () => {
+    const afterFirstDelta = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:1',
+        eventSeq: 1,
+        method: 'item/agentMessage/delta',
+        turnId: 'turn-1',
+        params: { itemId: 'item-1', delta: 'hello ' },
+      }),
+    )
+    const afterWarning = applySessionEvent(
+      afterFirstDelta,
+      event({
+        eventId: 'thread-1:2',
+        eventSeq: 2,
+        method: 'warning',
+        params: { message: 'slow model response' },
+      }),
+    )
+    const afterSecondDelta = applySessionEvent(
+      afterWarning,
+      event({
+        eventId: 'thread-1:3',
+        eventSeq: 3,
+        method: 'item/agentMessage/delta',
+        turnId: 'turn-1',
+        params: { itemId: 'item-1', delta: 'world' },
+      }),
+    )
+
+    expect(afterSecondDelta.gapDetectedByThread['thread-1']).not.toBe(true)
+    expect(afterSecondDelta.lastEventSeqByThread['thread-1']).toBe(3)
+    expect(afterSecondDelta.itemsByTurn['thread-1:turn-1']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'item-1',
+          normalizedKind: 'agentMessage',
+          status: 'inProgress',
+        }),
+      ]),
+    )
   })
 
   it('does not bump thread ordering timestamp for status-only events', () => {
@@ -191,7 +262,86 @@ describe('applySessionEvent', () => {
     expect(list[0].payload.text).toBe('final')
   })
 
-  it('preserves unknown native item kind without coercing to agent message', () => {
+  it('deduplicates final assistant summary materialized by multiple event sources', () => {
+    const semanticMessage = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:12',
+        eventSeq: 12,
+        method: 'assistant/message',
+        turnId: 'turn-1',
+        params: { text: 'Final summary' },
+      }),
+    )
+
+    const completedItem = applySessionEvent(
+      semanticMessage,
+      event({
+        eventId: 'thread-1:13',
+        eventSeq: 13,
+        method: 'item/completed',
+        turnId: 'turn-1',
+        params: {
+          item: {
+            id: 'response-output-1',
+            kind: 'agentMessage',
+            status: 'completed',
+            text: 'Final summary',
+          },
+        },
+      }),
+    )
+
+    const list = completedItem.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('response-output-1')
+    expect(list[0].normalizedKind).toBe('agentMessage')
+    expect(list[0].payload.text).toBe('Final summary')
+  })
+
+  it('deduplicates turn completion assistant items against existing semantic messages', () => {
+    const semanticMessage = applySessionEvent(
+      baseState(),
+      event({
+        eventId: 'thread-1:14',
+        eventSeq: 14,
+        method: 'agent/message',
+        turnId: 'turn-1',
+        params: { text: 'Done from turn completion' },
+      }),
+    )
+
+    const completedTurn = applySessionEvent(
+      semanticMessage,
+      event({
+        eventId: 'thread-1:15',
+        eventSeq: 15,
+        method: 'turn/completed',
+        turnId: 'turn-1',
+        params: {
+          turn: {
+            id: 'turn-1',
+            status: 'completed',
+            items: [
+              {
+                id: 'turn-final-message',
+                kind: 'agentMessage',
+                status: 'completed',
+                text: 'Done from turn completion',
+              },
+            ],
+          },
+        },
+      }),
+    )
+
+    const list = completedTurn.itemsByTurn['thread-1:turn-1']
+    expect(list).toHaveLength(1)
+    expect(list[0].id).toBe('turn-final-message')
+    expect(list[0].payload.text).toBe('Done from turn completion')
+  })
+
+  it('drops unknown native item kinds from stream events', () => {
     const next = applySessionEvent(
       baseState(),
       event({
@@ -210,12 +360,8 @@ describe('applySessionEvent', () => {
       }),
     )
 
-    const list = next.itemsByTurn['thread-1:turn-1']
-    expect(list).toHaveLength(1)
-    expect(list[0].kind).toBe('browserScreenshot')
-    expect(list[0].normalizedKind).toBeNull()
-    expect(list[0].rawItem?.kind).toBe('browserScreenshot')
-    expect(list[0].payload.imageUrl).toBe('https://example.test/screenshot.png')
+    const list = next.itemsByTurn['thread-1:turn-1'] ?? []
+    expect(list).toHaveLength(0)
   })
 
   it('ignores replayed delta for already completed item', () => {
@@ -311,7 +457,7 @@ describe('applySessionEvent', () => {
     const preloaded = baseState()
     preloaded.itemsByTurn['thread-1:turn-1'] = [
       {
-        id: 'turn-1:item-0',
+        id: 'item-1',
         threadId: 'thread-1',
         turnId: 'turn-1',
         kind: 'userMessage',

@@ -27,7 +27,14 @@ def test_public_response_uses_v4_camel_case_shape() -> None:
         node_id="node-1",
         phase="execution_completed",
         state_version=7,
-        execution_thread_id="thread-exec",
+        thread_bindings={
+            "execution": ThreadBinding(
+                projectId="project-1",
+                nodeId="node-1",
+                role="execution",
+                threadId="thread-exec",
+            )
+        },
         current_execution_decision=ExecutionDecisionV2(
             sourceExecutionRunId="run-1",
             executionTurnId="turn-1",

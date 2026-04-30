@@ -38,7 +38,9 @@ export function BreadcrumbDetailTabs({
   panelId,
   embedded = false,
 }: Props) {
-  const showSplit = Boolean(detailState?.frame_branch_ready || detailTab === 'split')
+  const showSplit = Boolean(
+    detailState?.frame_branch_ready || detailState?.split_confirmed || detailTab === 'split',
+  )
   const specDisabled = tabDisabled?.spec === true
   const splitDisabled = tabDisabled?.split === true
 

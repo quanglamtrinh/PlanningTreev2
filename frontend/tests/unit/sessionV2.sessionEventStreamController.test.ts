@@ -358,6 +358,97 @@ describe('sessionEventStreamController', () => {
     ])
   })
 
+  it('listens for legacy semantic assistant message events', async () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1')
+
+    const semanticMessage = envelope({
+      method: 'assistant/message',
+      eventId: 'thread-1:13',
+      eventSeq: 13,
+      params: { itemId: 'msg-1', text: 'streamed semantic text' },
+    })
+    sources[0].emit('assistant/message', semanticMessage)
+
+    await vi.advanceTimersByTimeAsync(20)
+
+    expect(applyEventsBatch).toHaveBeenCalledTimes(1)
+    expect(applyEventsBatch.mock.calls[0]?.[0]).toEqual([semanticMessage])
+  })
+
+  it('includes warning events in-order so eventSeq stays contiguous', async () => {
+    const sources: FakeEventSource[] = []
+    const applyEventsBatch = vi.fn()
+
+    const controller = createSessionEventStreamController({
+      openEventSource: () => {
+        const source = new FakeEventSource()
+        sources.push(source)
+        return source as unknown as EventSource
+      },
+      applyEventsBatch,
+      markStreamConnected: vi.fn(),
+      markStreamDisconnected: vi.fn(),
+      markStreamReconnect: vi.fn(),
+      clearGapDetected: vi.fn(),
+      getLastEventId: () => null,
+      getGapDetected: () => false,
+      onRuntimeError: vi.fn(),
+    })
+
+    controller.open('thread-1')
+
+    const delta1 = envelope({
+      method: 'item/agentMessage/delta',
+      eventId: 'thread-1:21',
+      eventSeq: 21,
+      params: { itemId: 'msg-1', delta: 'hello ' },
+    })
+    const warning = envelope({
+      method: 'warning',
+      eventId: 'thread-1:22',
+      eventSeq: 22,
+      params: { message: 'slow model response' },
+    })
+    const delta2 = envelope({
+      method: 'item/agentMessage/delta',
+      eventId: 'thread-1:23',
+      eventSeq: 23,
+      params: { itemId: 'msg-1', delta: 'world' },
+    })
+    sources[0].emit('item/agentMessage/delta', delta1)
+    sources[0].emit('warning', warning)
+    sources[0].emit('item/agentMessage/delta', delta2)
+
+    await vi.advanceTimersByTimeAsync(20)
+
+    const received = applyEventsBatch.mock.calls.flatMap((call) => call[0] as SessionEventEnvelope[])
+    expect(received.map((entry) => entry.eventSeq)).toEqual([21, 22, 23])
+    expect(received.map((entry) => entry.method)).toEqual([
+      'item/agentMessage/delta',
+      'warning',
+      'item/agentMessage/delta',
+    ])
+  })
+
   it('force flushes request events to thread and pending request stores in the same ordered batch', () => {
     const sources: FakeEventSource[] = []
     const applyEventsBatch = vi.fn()

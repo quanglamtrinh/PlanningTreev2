@@ -45,12 +45,12 @@ class WorkspaceFileNotFound(AppError):
         super().__init__("workspace_file_not_found", message, 404)
 
 
-class LegacyProjectUnsupported(AppError):
+class UnsupportedProjectLayout(AppError):
     def __init__(self, project_id: str) -> None:
         super().__init__(
-            "legacy_project_unsupported",
+            "unsupported_project_layout",
             (
-                f"Project {project_id!r} uses removed legacy planning/thread content storage. "
+                f"Project {project_id!r} uses an unsupported PlanningTree project layout. "
                 "Delete or recreate the project before using this build."
             ),
             409,
@@ -201,25 +201,11 @@ class ChatBackendUnavailable(AppError):
         super().__init__("chat_backend_unavailable", reason, 503)
 
 
-class ChatNotAllowed(AppError):
-    def __init__(self, reason: str) -> None:
-        super().__init__("chat_not_allowed", reason, 409)
-
-
 class ConversationStreamMismatch(AppError):
     def __init__(self, message: str | None = None) -> None:
         super().__init__(
             "conversation_stream_mismatch",
             message or "The requested stream is no longer the active live stream for this conversation.",
-            409,
-        )
-
-
-class ConversationV3Missing(AppError):
-    def __init__(self) -> None:
-        super().__init__(
-            "conversation_v3_missing",
-            "Conversation V3 snapshot is missing for this thread.",
             409,
         )
 
@@ -315,15 +301,6 @@ class AskThreadReadOnly(AppError):
         super().__init__(
             "ask_thread_read_only",
             "Ask thread is read-only because this node is no longer mutable.",
-            409,
-        )
-
-
-class AskV3Disabled(AppError):
-    def __init__(self) -> None:
-        super().__init__(
-            "ask_v3_disabled",
-            "Ask V3 APIs are disabled by server configuration.",
             409,
         )
 

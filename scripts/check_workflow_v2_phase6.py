@@ -95,7 +95,8 @@ def main() -> int:
         "frontend/src/features/conversation/useBreadcrumbConversationControllerV2.tsx": controller,
     }
     for relative_path, source in scoped_sources.items():
-        if "/v3/projects/" in source and "/workflow" in source:
+        removed_projects_prefix = "/v" + "3/projects/"
+        if removed_projects_prefix in source and "/workflow" in source:
             errors.append(f"{relative_path} must not call V3 workflow endpoints in Phase 6.")
 
     session_v4 = _read("backend/routes/session_v4.py")

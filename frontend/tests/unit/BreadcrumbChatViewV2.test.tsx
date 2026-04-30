@@ -2,14 +2,27 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockUseSessionFacadeV2 = vi.hoisted(() => vi.fn())
+const { mockUseSessionFacadeV2, apiMock } = vi.hoisted(() => ({
+  mockUseSessionFacadeV2: vi.fn(),
+  apiMock: {
+    ensureRootThread: vi.fn(),
+  },
+}))
+
+vi.mock('../../src/api/client', () => ({
+  api: apiMock,
+  appendAuthToken: (url: string) => url,
+  initAuthToken: vi.fn().mockResolvedValue(undefined),
+}))
 
 vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
   ComposerPane: ({
+    isTurnRunning,
     disabled,
     onSubmit,
     onInterrupt,
   }: {
+    isTurnRunning?: boolean
     disabled?: boolean
     onSubmit: (payload: {
       input: Array<Record<string, unknown>>
@@ -23,7 +36,11 @@ vi.mock('../../src/features/session_v2/components/ComposerPane', () => ({
     }) => Promise<void>
     onInterrupt: () => Promise<void>
   }) => (
-    <div data-testid="composer-pane" data-disabled={String(Boolean(disabled))}>
+    <div
+      data-testid="composer-pane"
+      data-disabled={String(Boolean(disabled))}
+      data-running={String(Boolean(isTurnRunning))}
+    >
       <button
         type="button"
         data-testid="composer-submit-mock"
@@ -160,7 +177,7 @@ import { useDetailStateStore } from '../../src/stores/detail-state-store'
 import { useProjectStore } from '../../src/stores/project-store'
 import { useUIStore } from '../../src/stores/ui-store'
 
-function makeProjectSnapshot(nodeKind: 'original' | 'review' = 'original'): Snapshot {
+function makeProjectSnapshot(nodeKind: 'root' | 'original' | 'review' = 'original'): Snapshot {
   return {
     schema_version: 6,
     project: {
@@ -265,6 +282,20 @@ function makeThread(id: string): SessionThread {
   }
 }
 
+function makeRunningTurn(metadata: Record<string, unknown> = {}): SessionTurn {
+  return {
+    id: 'turn-running',
+    threadId: 'ask-thread-1',
+    status: 'inProgress',
+    lastCodexStatus: 'inProgress',
+    startedAtMs: 1,
+    completedAtMs: null,
+    items: [],
+    error: null,
+    metadata,
+  }
+}
+
 function makePendingRequest(partial: Partial<PendingServerRequest>): PendingServerRequest {
   return {
     requestId: partial.requestId ?? 'req-1',
@@ -332,6 +363,7 @@ function makeFacade(
       interrupt: vi.fn().mockResolvedValue(undefined),
       resolveRequest: vi.fn().mockResolvedValue(undefined),
       rejectRequest: vi.fn().mockResolvedValue(undefined),
+      resyncThreadTranscript: vi.fn().mockResolvedValue(undefined),
     },
   }
 }
@@ -342,7 +374,7 @@ function LocationProbe() {
 }
 
 function seedStores(options: {
-  nodeKind?: 'original' | 'review'
+  nodeKind?: 'root' | 'original' | 'review'
   workflowState?: WorkflowStateV2
   workflowError?: string | null
 }) {
@@ -459,22 +491,13 @@ function seedStores(options: {
       reviewThreadId: null,
       reviewCommitSha: null,
     }),
-    startPackageReview: vi.fn().mockResolvedValue({
-      workflowState,
-      threadId: workflowState.threads.packageReview,
-      turnId: null,
-      executionRunId: null,
-      auditRunId: null,
-      reviewCycleId: null,
-      reviewThreadId: null,
-      reviewCommitSha: null,
-    }),
   } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
 }
 
 describe('BreadcrumbViewV2', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    apiMock.ensureRootThread.mockResolvedValue({ threadId: 'root-thread-1', role: 'root' })
     useThreadSessionStore.getState().clear()
     useProjectStore.setState(useProjectStore.getInitialState())
     useDetailStateStore.setState(useDetailStateStore.getInitialState())
@@ -680,6 +703,40 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
   })
 
+  it.each([
+    ['frame', { workflowInternal: true, artifactKind: 'frame' }],
+    ['spec', { workflowKind: 'generate_spec' }],
+    ['clarify', { workflowAction: 'generate_clarify' }],
+    ['split', { step: 'split' }],
+    ['execute', { primedByWorkflowAction: true, targetLane: 'execution' }],
+    ['review', { action: 'review_in_audit' }],
+  ])('disables composer instead of exposing steer while %s workflow turn is running', (_label, metadata) => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        threads: { askPlanning: 'ask-thread-1' },
+      }),
+    })
+    mockUseSessionFacadeV2.mockReturnValue(
+      makeFacade({
+        activeThreadId: 'ask-thread-1',
+        activeThread: makeThread('ask-thread-1'),
+        activeRunningTurn: makeRunningTurn(metadata),
+        isActiveThreadReady: true,
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=ask']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-running', 'true')
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'true')
+  })
+
   it('submits ask lane via facade command and refreshes workflow state', async () => {
     const facade = makeFacade({
       activeThreadId: 'ask-thread-1',
@@ -716,11 +773,291 @@ describe('BreadcrumbViewV2', () => {
           effort: 'xhigh',
           summary: null,
         }),
+        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'ask_planning' } },
       )
     })
     await waitFor(() => {
       expect(useWorkflowStateStoreV2.getState().loadWorkflowState).toHaveBeenCalledWith('project-1', 'root')
     })
+  })
+
+  it('ensures root thread, hides workflow tabs, and submits with root MCP context', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'root-thread-1',
+      activeThread: makeThread('root-thread-1'),
+      isActiveThreadReady: true,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    const workflowState = makeWorkflowState()
+    seedStores({ nodeKind: 'root', workflowState })
+    const loadWorkflowState = vi.fn().mockResolvedValue(undefined)
+    useWorkflowStateStoreV2.setState({
+      loadWorkflowState,
+    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+          modelProvider: 'openai',
+        }),
+      )
+    })
+    expect(screen.queryByRole('tab', { name: 'Ask' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Review' })).not.toBeInTheDocument()
+    expect(facade.commands.selectThread).not.toHaveBeenCalled()
+    expect(facade.commands.resyncThreadTranscript).toHaveBeenCalledWith('root-thread-1')
+
+    fireEvent.click(screen.getByTestId('composer-submit-mock'))
+
+    await waitFor(() => {
+      expect(facade.commands.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'queued from composer mock',
+        }),
+        undefined,
+        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' } },
+      )
+    })
+    expect(loadWorkflowState).not.toHaveBeenCalled()
+  })
+
+  it('keeps root composer enabled once the root thread is selected while metadata hydrates', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'root-thread-1',
+      activeThread: null,
+      isActiveThreadReady: false,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({ nodeKind: 'root' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+        }),
+      )
+    })
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('enables root composer after ensure even before the facade selection catches up', async () => {
+    const facade = makeFacade({
+      activeThreadId: null,
+      activeThread: null,
+      isActiveThreadReady: false,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({ nodeKind: 'root' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.objectContaining({
+          model: 'gpt-5.4',
+        }),
+      )
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+    })
+
+    fireEvent.click(screen.getByTestId('composer-submit-mock'))
+
+    await waitFor(() => {
+      expect(facade.commands.selectThread).toHaveBeenCalledWith('root-thread-1')
+    })
+    await waitFor(() => {
+      expect(facade.commands.submit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'queued from composer mock',
+        }),
+        undefined,
+        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' } },
+      )
+    })
+  })
+
+  it('keeps root composer editable while the root thread ensure request is still pending', () => {
+    apiMock.ensureRootThread.mockImplementation(
+      () =>
+        new Promise(() => {
+          // Keep the ensure request pending to verify the composer does not wait on it.
+        }),
+    )
+    const facade = makeFacade({
+      activeThreadId: null,
+      activeThread: null,
+      isActiveThreadReady: false,
+      selectedModel: 'gpt-5.4',
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    seedStores({ nodeKind: 'root' })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
+  })
+
+  it('preserves requested root thread while the project snapshot is loading', async () => {
+    const facade = makeFacade({
+      activeThreadId: 'root-thread-1',
+      activeThread: makeThread('root-thread-1'),
+      isActiveThreadReady: true,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    const loadedSnapshot = makeProjectSnapshot('root')
+    useProjectStore.setState({
+      activeProjectId: 'project-1',
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+        ask_followup_queue_enabled: true,
+      },
+      snapshot: null,
+      selectedNodeId: null,
+      isLoadingSnapshot: false,
+      error: null,
+      loadProject: vi.fn().mockImplementation(async () => {
+        useProjectStore.setState({
+          snapshot: loadedSnapshot,
+          selectedNodeId: 'root',
+          isLoadingSnapshot: false,
+        } as Partial<ReturnType<typeof useProjectStore.getState>>)
+      }),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+    useDetailStateStore.setState({
+      entries: {
+        'project-1::root': {
+          node_id: 'root',
+          workflow: null,
+          frame_confirmed: true,
+          frame_confirmed_revision: 1,
+          frame_revision: 1,
+          active_step: 'spec',
+          workflow_notice: null,
+          frame_needs_reconfirm: false,
+          frame_read_only: true,
+          clarify_read_only: true,
+          clarify_confirmed: true,
+          spec_read_only: true,
+          spec_stale: false,
+          spec_confirmed: true,
+        },
+      },
+      loadDetailState: vi.fn().mockResolvedValue(undefined),
+    } as Partial<ReturnType<typeof useDetailStateStore.getState>>)
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route
+            path="/projects/:projectId/nodes/:nodeId/chat-v2"
+            element={
+              <>
+                <BreadcrumbViewV2 />
+                <LocationProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTestId('location-probe')).toHaveTextContent(
+      '/projects/project-1/nodes/root/chat-v2?thread=root',
+    )
+    await waitFor(() => {
+      expect(apiMock.ensureRootThread).toHaveBeenCalledWith(
+        'project-1',
+        'root',
+        expect.any(Object),
+      )
+    })
+    expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
+  })
+
+  it('keeps requested root mode editable while the project snapshot request is pending', () => {
+    const facade = makeFacade({
+      activeThreadId: null,
+      activeThread: null,
+      isActiveThreadReady: false,
+    })
+    mockUseSessionFacadeV2.mockReturnValue(facade)
+    useProjectStore.setState({
+      activeProjectId: 'project-1',
+      bootstrap: {
+        ready: true,
+        workspace_configured: true,
+        codex_available: true,
+        codex_path: 'codex',
+        ask_followup_queue_enabled: true,
+      },
+      snapshot: null,
+      selectedNodeId: null,
+      isLoadingSnapshot: true,
+      error: null,
+      loadProject: vi.fn().mockImplementation(
+        () =>
+          new Promise(() => {
+            // Keep snapshot hydration pending so the route itself must preserve root mode.
+          }),
+      ),
+      selectNode: vi.fn().mockResolvedValue(undefined),
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=root']}>
+        <Routes>
+          <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByRole('tab', { name: 'Execution' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('composer-pane')).toHaveAttribute('data-disabled', 'false')
   })
 
   it('shows overlay only when pending request belongs to active lane thread', async () => {
@@ -870,64 +1207,33 @@ describe('BreadcrumbViewV2', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Workflow failed first')
   })
 
-  it('starts package review through Workflow V2 action path', async () => {
-    const workflowState = makeWorkflowState({
-      phase: 'done',
-      threads: {
-        packageReview: null,
-      },
-      allowedActions: ['start_package_review'],
+  it('does not expose package review action from Breadcrumb', () => {
+    seedStores({
+      workflowState: makeWorkflowState({
+        phase: 'done',
+        allowedActions: ['start_package_review'],
+      }),
     })
-    seedStores({ workflowState })
-    const startPackageReview = vi.fn().mockResolvedValue(
-      {
-        workflowState: makeWorkflowState({
-          phase: 'done',
-          threads: { packageReview: 'package-thread-1' },
-          allowedActions: [],
-        }),
-        threadId: 'package-thread-1',
-        turnId: null,
-        executionRunId: null,
-        auditRunId: null,
-        reviewCycleId: null,
-        reviewThreadId: null,
-        reviewCommitSha: null,
-      },
-    )
-    useWorkflowStateStoreV2.setState({
-      startPackageReview,
-    } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
     mockUseSessionFacadeV2.mockReturnValue(
       makeFacade({
-        selectedModel: 'gpt-5.4',
-        activeThread: makeThread('model-source-thread'),
+        activeThreadId: 'exec-thread-1',
+        activeThread: makeThread('exec-thread-1'),
+        isActiveThreadReady: true,
       }),
     )
 
     render(
-      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=package']}>
+      <MemoryRouter initialEntries={['/projects/project-1/nodes/root/chat-v2?thread=execution']}>
         <Routes>
           <Route path="/projects/:projectId/nodes/:nodeId/chat-v2" element={<BreadcrumbViewV2 />} />
         </Routes>
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('workflow-start-package-review'))
-
-    await waitFor(() => {
-      expect(startPackageReview).toHaveBeenCalledWith(
-        'project-1',
-        'root',
-        expect.objectContaining({
-          model: 'gpt-5.4',
-          modelProvider: 'openai',
-        }),
-      )
-    })
+    expect(screen.queryByTestId('workflow-start-package-review')).not.toBeInTheDocument()
   })
 
-  it('primes execution turn into session projection when workflow action returns turnId', async () => {
+  it('does not expose start execution action from the execution lane', () => {
     const workflowState = makeWorkflowState({
       phase: 'ready_for_execution',
       threads: {
@@ -936,20 +1242,7 @@ describe('BreadcrumbViewV2', () => {
       allowedActions: ['start_execution'],
     })
     seedStores({ workflowState })
-    const startExecution = vi.fn().mockResolvedValue({
-      workflowState: makeWorkflowState({
-        phase: 'executing',
-        threads: { execution: 'exec-thread-1' },
-        allowedActions: [],
-      }),
-      threadId: 'exec-thread-1',
-      turnId: 'turn-exec-1',
-      executionRunId: 'exec-run-1',
-      auditRunId: null,
-      reviewCycleId: null,
-      reviewThreadId: null,
-      reviewCommitSha: null,
-    })
+    const startExecution = vi.fn()
     useWorkflowStateStoreV2.setState({
       startExecution,
     } as Partial<ReturnType<typeof useWorkflowStateStoreV2.getState>>)
@@ -969,19 +1262,8 @@ describe('BreadcrumbViewV2', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByTestId('workflow-start-execution'))
-
-    await waitFor(() => {
-      expect(startExecution).toHaveBeenCalledWith(
-        'project-1',
-        'root',
-        expect.any(Object),
-      )
-    })
-    await waitFor(() => {
-      const turns = useThreadSessionStore.getState().turnsByThread['exec-thread-1'] ?? []
-      expect(turns.map((turn) => turn.id)).toContain('turn-exec-1')
-    })
+    expect(screen.queryByTestId('workflow-start-execution')).not.toBeInTheDocument()
+    expect(startExecution).not.toHaveBeenCalled()
   })
 
   it('shows debug panel when debugSession query flag is enabled', async () => {

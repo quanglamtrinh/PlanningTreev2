@@ -66,7 +66,7 @@ def main() -> int:
                 errors.append(f"missing phase4 frontend file: {path.relative_to(ROOT)}")
 
         forbidden_import_fragments = [
-            "threadByIdStoreV3",
+            "threadByIdStore" + "V3",
             "workflowStateStoreV3",
             "workflowEventBridgeV3",
             "BreadcrumbChatViewV2",
@@ -92,4 +92,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

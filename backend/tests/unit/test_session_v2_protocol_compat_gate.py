@@ -127,7 +127,6 @@ def test_session_runtime_request_models_reject_workflow_only_fields() -> None:
         ),
         (session_v4.TurnInterruptRequest, {}),
         (session_v4.InjectItemsRequest, {"items": [{"type": "message", "role": "developer"}]}),
-        (session_v4.ThreadRecoverRequest, {}),
     ]
 
     for model, base_payload in cases:
@@ -135,13 +134,5 @@ def test_session_runtime_request_models_reject_workflow_only_fields() -> None:
             model.model_validate({**base_payload, **planningtree_only_fields})
 
 
-def test_recover_request_no_longer_allows_workflow_field_exception() -> None:
-    payload = {
-        "projectId": "project-1",
-        "nodeId": "node-1",
-        "role": "execution",
-        "idempotencyKey": "workflow-only",
-    }
-
-    with pytest.raises(ValidationError):
-        session_v4.ThreadRecoverRequest.model_validate(payload)
+def test_thread_recover_request_is_not_exposed() -> None:
+    assert not hasattr(session_v4, "ThreadRecoverRequest")

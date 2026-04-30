@@ -1,11 +1,10 @@
-# Bootstrap Settings
+﻿# Bootstrap Settings
 
 ## Behavior
 
-- `GET /v1/bootstrap/status` returns `{ ready, workspace_configured }`.
-- `ready` is equivalent to `workspace_configured` in Phase 3 because auth remains stubbed.
-- `GET /v1/settings/workspace` returns `{ base_workspace_root }`.
-- `PATCH /v1/settings/workspace` persists the selected base workspace root in `config/app.json`.
+- `GET /v4/bootstrap/status` returns server readiness plus Codex path and feature status.
+- Project folders are attached directly with `POST /v4/projects/attach`.
+- The previous settings workspace route family is no longer part of the active public API.
 
 ## Validation
 
@@ -17,5 +16,5 @@
 ## Frontend
 
 - On first load, the app checks bootstrap status.
-- If the workspace is missing, render `WorkspaceSetup`.
-- If the workspace exists, render the graph shell.
+- The app renders the graph shell and uses the project attach flow to add folders.
+

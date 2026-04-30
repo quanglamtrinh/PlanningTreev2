@@ -13,7 +13,6 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { NodeRecord, Snapshot, SplitJobStatus, SplitMode } from '../../api/types'
 import { NodeDetailCard } from '../node/NodeDetailCard'
-import { indexToReviewLetter } from '../../utils/reviewSiblingLabels'
 import {
   GraphNodeActionsProvider,
   type GraphNodeActions,
@@ -151,6 +150,7 @@ type Props = {
   selectedNodeId: string | null
   splitStatus: SplitJobStatus
   splittingNodeId: string | null
+  revealSplitNodeId?: string | null
   isCreatingNode: boolean
   isResettingProject: boolean
   isResetDisabled: boolean
@@ -165,35 +165,6 @@ type Props = {
 
 function defaultCollapsedForStatus(status: NodeRecord['status']): boolean {
   return status === 'locked' || status === 'done'
-}
-
-/**
- * 1-based index among visible siblings under the same parent (same "layer" in the graph).
- * Top-level roots use `effectiveRootIds` order when the full forest is shown; subtree mode uses a single root.
- */
-function siblingLayerIndex1Based(
-  nodeId: string,
-  visibleNodeIds: Set<string>,
-  parentById: Map<string, string | null>,
-  visibleChildrenById: Map<string, string[]>,
-  effectiveRootIds: string[],
-  graphViewRootId: string | null,
-): number {
-  const parentId = parentById.get(nodeId) ?? null
-  const parentVisible = parentId !== null && visibleNodeIds.has(parentId)
-
-  if (parentVisible) {
-    const siblings = visibleChildrenById.get(parentId) ?? []
-    const idx = siblings.indexOf(nodeId)
-    return idx >= 0 ? idx + 1 : 1
-  }
-
-  const roots =
-    graphViewRootId !== null && visibleNodeIds.has(graphViewRootId)
-      ? [graphViewRootId]
-      : effectiveRootIds.filter((id) => visibleNodeIds.has(id))
-  const idx = roots.indexOf(nodeId)
-  return idx >= 0 ? idx + 1 : 1
 }
 
 function findVisibleSelectionFallback(
@@ -228,6 +199,7 @@ export function TreeGraph({
   selectedNodeId,
   splitStatus,
   splittingNodeId,
+  revealSplitNodeId = null,
   isCreatingNode: _isCreatingNode,
   isResettingProject,
   isResetDisabled,
@@ -258,6 +230,9 @@ export function TreeGraph({
   const graphViewRootUnsetFitPendingRef = useRef(false)
   /** While `performance.now()` is below this, skip full-graph fitView (after closing details). */
   const suppressFullGraphFitUntilRef = useRef(0)
+  const previousSplitStatusRef = useRef<SplitJobStatus>(splitStatus)
+  const lastSplitNodeIdRef = useRef<string | null>(splittingNodeId)
+  const lastRevealedSplitNodeIdRef = useRef<string | null>(null)
   const handlerRef = useRef({
     onSelectNode,
     onCreateChild,
@@ -510,30 +485,6 @@ export function TreeGraph({
     visibleChildrenById,
   ])
 
-  const siblingLayerIndexByNodeId = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const id of visibleNodeIds) {
-      map.set(
-        id,
-        siblingLayerIndex1Based(
-          id,
-          visibleNodeIds,
-          parentById,
-          visibleChildrenById,
-          effectiveRootIds,
-          graphViewRootId,
-        ),
-      )
-    }
-    return map
-  }, [
-    effectiveRootIds,
-    graphViewRootId,
-    parentById,
-    visibleChildrenById,
-    visibleNodeIds,
-  ])
-
   const selectedNode = useMemo(() => {
     if (!rootNode) {
       return null
@@ -571,6 +522,62 @@ export function TreeGraph({
       setFocusedNodeId(null)
     }
   }, [focusedNodeId, nodeById])
+
+  useEffect(() => {
+    if (splitStatus === 'active' && splittingNodeId) {
+      lastSplitNodeIdRef.current = splittingNodeId
+    }
+  }, [splittingNodeId, splitStatus])
+
+  useEffect(() => {
+    if (!revealSplitNodeId || lastRevealedSplitNodeIdRef.current === revealSplitNodeId) {
+      return
+    }
+    lastRevealedSplitNodeIdRef.current = revealSplitNodeId
+    setGraphViewRootId(null)
+    graphViewRootUnsetFitPendingRef.current = true
+    setFocusedNodeId(null)
+    setCreateTaskParentId(null)
+    setCreateTaskError(null)
+    setCollapseOverrides((current) =>
+      current[revealSplitNodeId] === false ? current : { ...current, [revealSplitNodeId]: false },
+    )
+    suppressFullGraphFitUntilRef.current = 0
+  }, [revealSplitNodeId])
+
+  useEffect(() => {
+    const previousStatus = previousSplitStatusRef.current
+    previousSplitStatusRef.current = splitStatus
+
+    if (previousStatus !== 'active') {
+      return
+    }
+
+    if (splitStatus === 'idle') {
+      const completedSplitNodeId = lastSplitNodeIdRef.current
+      lastSplitNodeIdRef.current = null
+      if (!completedSplitNodeId) {
+        return
+      }
+
+      setCreateTaskParentId(null)
+      setCreateTaskError(null)
+      setGraphViewRootId(null)
+      graphViewRootUnsetFitPendingRef.current = true
+      setFocusedNodeId(null)
+      setCollapseOverrides((current) =>
+        current[completedSplitNodeId] === false
+          ? current
+          : { ...current, [completedSplitNodeId]: false },
+      )
+      suppressFullGraphFitUntilRef.current = 0
+      return
+    }
+
+    if (splitStatus === 'failed') {
+      lastSplitNodeIdRef.current = null
+    }
+  }, [splitStatus])
 
   useEffect(() => {
     if (!isFullscreen) {
@@ -644,7 +651,6 @@ export function TreeGraph({
         data: {
           node,
           isInitNode: Boolean(node.is_init_node),
-          siblingLayerIndex: siblingLayerIndexByNodeId.get(node.node_id) ?? 1,
           isCurrent: snapshot.tree_state.active_node_id === node.node_id,
           isSelected: selectedNode?.node_id === node.node_id,
           isCollapsed: collapsedById.get(node.node_id) ?? false,
@@ -663,7 +669,7 @@ export function TreeGraph({
             (activeChildrenById.get(node.node_id) ?? []).length === 0 &&
             (node.workflow?.frame_confirmed ?? false) &&
             node.workflow?.active_step === 'spec',
-          canOpenBreadcrumb: !node.is_init_node,
+          canOpenBreadcrumb: true,
           isSplitting: splitStatus === 'active' && splittingNodeId === node.node_id,
           isSplitDisabled: splitStatus === 'active',
           executionStatus: node.workflow?.execution_status ?? null,
@@ -678,7 +684,6 @@ export function TreeGraph({
     graphViewRootId,
     nodePositions,
     selectedNode?.node_id,
-    siblingLayerIndexByNodeId,
     splitStatus,
     splittingNodeId,
     snapshot.tree_state.active_node_id,
@@ -704,7 +709,6 @@ export function TreeGraph({
       const siblingEntries = (summary?.sibling_manifest ?? []).map((sibling) => ({
         index: sibling.index,
         title: sibling.title,
-        letter: indexToReviewLetter(sibling.index),
         status: sibling.status,
       }))
 

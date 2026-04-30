@@ -947,27 +947,35 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
 }
 
 .infoExtensionItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 16px;
+  width: 100%;
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--color-border-subtle) 85%, var(--color-text-primary) 15%);
-  border-radius: 0;
-  background: color-mix(in srgb, var(--color-text-primary) 3.5%, var(--color-bg-panel));
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-panel);
   box-sizing: border-box;
+}
+
+.infoExtensionItem:last-child {
+  border-bottom: none;
 }
 
 .infoExtensionCopy {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -979,28 +987,29 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 }
 
 .infoExtensionName {
-  font-size: var(--font-size-sm);
+  font-size: 12px;
   font-weight: 700;
-  line-height: var(--line-height-ui);
+  line-height: 1.45;
   color: var(--color-text-primary);
 }
 
 .infoExtensionBadge {
   padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 18%, var(--color-border-subtle));
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-panel));
+  border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
+  border-radius: 999px;
+  background: transparent;
   font-size: 10px;
   font-weight: 700;
   line-height: 1.35;
-  color: color-mix(in srgb, var(--color-accent) 82%, var(--color-text-secondary));
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
 }
 
 .infoExtensionDescription {
   margin: 0;
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-relaxed);
-  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
 }
 
 .infoExtensionToggle,
@@ -1062,6 +1071,33 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   font-size: var(--font-size-xs);
   font-weight: 700;
   line-height: var(--line-height-ui);
+}
+
+.infoSkillAddButton {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 24%, var(--color-border-subtle));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-panel));
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: var(--line-height-ui);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.infoSkillAddButton:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent) 11%, var(--color-bg-panel));
+}
+
+.infoSkillAddButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .shaFieldRow {
@@ -1563,6 +1599,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-sizing: border-box;
 }
 
+.contextEditorSurfaceHeader {
+  min-height: 0;
+  padding: 0;
+  border-bottom: none;
+  background: transparent;
+}
+
 .editorSurfaceHeaderMain {
   display: flex;
   align-items: center;
@@ -1671,6 +1714,35 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+}
+
+.contextRichViewSurface {
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-primary, var(--color-text-primary));
+}
+
+.contextRichViewSurface :global(h2) {
+  margin: 22px 0 10px;
+  font-size: 1.05rem;
+  line-height: 1.34;
+  font-weight: 760;
+  color: var(--text-primary, var(--color-text-primary));
+}
+
+.contextRichViewSurface :global(p) {
+  margin: 0 0 12px;
+}
+
+.contextRichViewSurface :global(ul),
+.contextRichViewSurface :global(ol) {
+  margin: 6px 0 12px;
+  padding-left: 20px;
+}
+
+.contextRichViewSurface :global(li) {
+  margin: 6px 0;
 }
 
 .richViewEmpty {
@@ -1837,16 +1909,6 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 16%, transparent);
 }
 
-.finishTaskDisabledHint {
-  margin: 0;
-  max-width: 360px;
-  text-align: right;
-  font-size: 11px;
-  line-height: 1.4;
-  font-weight: 500;
-  color: color-mix(in srgb, var(--warning) 66%, var(--color-text-secondary));
-}
-
 .splitPanel {
   display: flex;
   flex-direction: column;
@@ -1857,6 +1919,13 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 .splitPanel.documentPanel {
   gap: 12px;
   margin-top: 8px;
+}
+
+.splitGeneratingBody {
+  min-height: 220px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
 }
 
 .splitPanelIntro {
@@ -1893,13 +1962,17 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   gap: 10px;
 }
 
+.splitOptionShell {
+  position: relative;
+}
+
 .splitOptionCard {
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 100%;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 14px 52px 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-bg-panel) 96%, transparent);
@@ -1926,6 +1999,43 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
   border-color: var(--color-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 16%, transparent);
   background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-panel));
+}
+
+.splitOptionInfoButton {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-bg-panel);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.splitOptionInfoButton:hover,
+.splitOptionInfoButton:focus-visible {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-panel));
+  color: var(--color-accent);
+}
+
+.splitOptionInfoButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
+  outline-offset: 2px;
 }
 
 .splitOptionHeader {
@@ -1973,6 +2083,113 @@ section[data-variant='breadcrumb'] .breadcrumbTabPanel {
 
 .splitPanel .tabConfirmRow {
   padding-top: 8px;
+}
+
+.splitInfoOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000000 42%, transparent);
+}
+
+.splitInfoDialog {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  box-shadow: 0 24px 80px color-mix(in srgb, #000000 24%, transparent);
+}
+
+.splitInfoHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.splitInfoCloseButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.splitInfoCloseButton:hover,
+.splitInfoCloseButton:focus-visible {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.splitInfoBody {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.splitInfoSection {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.splitInfoSection h4,
+.splitInfoSection p {
+  margin: 0;
+}
+
+.splitInfoSection h4 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+}
+
+.splitInfoSection p,
+.splitInfoSubtaskList {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.splitInfoSubtaskList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.splitInfoSubtaskList li {
+  padding-left: 4px;
+}
+
+.splitInfoSubtaskList strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-text-primary);
 }
 
 .eyebrow,
@@ -2231,4 +2448,125 @@ section[data-variant='breadcrumb'] .editorSurface :global(.cm-activeLineGutter) 
 section[data-variant='breadcrumb'] .editorSurface :global(.cm-line:has(.pt-sx-code)) {
   margin: 1px 0;
   padding: 4px 10px;
+}
+
+.infoMcpPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  box-shadow: 0 12px 36px color-mix(in srgb, #000000 8%, transparent);
+}
+
+.infoMcpHeaderRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.infoMcpRoleGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 0 18px 18px;
+}
+
+.infoMcpRoleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-panel);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.infoMcpRoleHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.infoMcpMasterRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.infoMcpListHeading {
+  margin: 0;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+}
+
+.infoMcpTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-primary);
+}
+
+.infoMcpSelect {
+  min-height: 32px;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 10%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.infoMcpError {
+  margin: 0;
+  color: var(--error, #b91c1c);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-relaxed);
+}
+
+.infoMcpServerList {
+  display: grid;
+  gap: 8px;
+}
+
+.infoMcpServer,
+.infoMcpServerEnabled {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 9px 10px;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  text-align: left;
+}
+
+.infoMcpServerEnabled {
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface-container-lowest));
 }

@@ -99,14 +99,6 @@ def get_execution_timeout() -> int:
     return max(10, min(3600, timeout))
 
 
-def is_ask_v3_backend_enabled() -> bool:
-    return _bool_env("PLANNINGTREE_ASK_V3_BACKEND_ENABLED", default=True)
-
-
-def is_ask_v3_frontend_enabled() -> bool:
-    return _bool_env("PLANNINGTREE_ASK_V3_FRONTEND_ENABLED", default=True)
-
-
 def is_ask_followup_queue_enabled() -> bool:
     return _bool_env("PLANNINGTREE_ASK_FOLLOWUP_QUEUE_ENABLED", default=False)
 
@@ -125,27 +117,6 @@ def get_max_chat_message_chars() -> int:
     except (TypeError, ValueError):
         limit = 10000
     return max(1, limit)
-
-
-def get_conversation_v3_bridge_mode() -> str:
-    raw = str(os.environ.get("PLANNINGTREE_CONVERSATION_V3_BRIDGE_MODE", "") or "").strip().lower()
-    if raw in {"enabled", "allowlist", "disabled"}:
-        return raw
-    return "enabled"
-
-
-def get_conversation_v3_bridge_allowlist() -> set[str]:
-    raw = str(os.environ.get("PLANNINGTREE_CONVERSATION_V3_BRIDGE_ALLOWLIST", "") or "").strip()
-    if not raw:
-        return set()
-    return {entry.strip() for entry in raw.split(",") if entry.strip()}
-
-
-def get_thread_actor_mode() -> str:
-    raw = str(os.environ.get("PLANNINGTREE_THREAD_ACTOR_MODE", "") or "").strip().lower()
-    if raw in {"off", "shadow", "on"}:
-        return raw
-    return "off"
 
 
 def get_sse_subscriber_queue_max() -> int:
@@ -257,15 +228,6 @@ def get_thread_raw_event_coalesce_ms() -> int:
         "high": 20,
     }
     return profile_defaults.get(profile, 25)
-
-
-def is_conversation_v3_bridge_allowed_for_project(project_id: str) -> bool:
-    mode = get_conversation_v3_bridge_mode()
-    if mode == "enabled":
-        return True
-    if mode == "disabled":
-        return False
-    return str(project_id or "").strip() in get_conversation_v3_bridge_allowlist()
 
 
 def get_split_model() -> str:

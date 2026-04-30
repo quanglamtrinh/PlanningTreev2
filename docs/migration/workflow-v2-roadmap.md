@@ -1,22 +1,20 @@
 # Workflow V2 Roadmap
 
-This roadmap turns the current hybrid stack into a Workflow Core V2 stack while
-keeping the product runnable at every gate.
+This roadmap is retained as the historical implementation plan that led to the
+current Workflow Core V2 stack.
 
 ## Goal
 
-Move execution/audit business ownership out of the V3 workflow service and into
-`backend/business/workflow_v2`, then cut the Breadcrumb V2 UI over to V4
-workflow routes while continuing to use Session Core V2 for all conversation
-runtime behavior.
+Keep execution/audit business ownership in `backend/business/workflow_v2`, expose
+workflow routes under V4, and use Session Core V2 for all conversation runtime
+behavior.
 
 ## Non-goals
 
 - Do not replace `/v4/session/*`; it remains the session runtime API.
 - Do not migrate all project, node-detail, or artifact APIs just to unblock the
   workflow cutover.
-- Do not delete V3 routes until they are compatibility adapters over Workflow
-  Core V2 and the new UI path no longer imports V3 workflow modules.
+- Do not reintroduce removed compatibility routes or runtime modules.
 
 ## Phase 0 - Contract Alignment and Guardrails
 
@@ -29,9 +27,9 @@ Deliverables:
 - Freeze public/internal naming:
   - Public V4 workflow responses use camelCase and `phase`/`version`.
   - Internal Python models use snake_case and `state_version`.
-  - Legacy V3 compatibility views may continue returning `workflowPhase` and
-    legacy thread id field names.
-- Freeze the V3-to-V2 phase mapping used by read-through converters:
+  - Historical compatibility views returned `workflowPhase` and old thread id
+    field names.
+- Freeze the historical phase-name mapping used by archival converters:
   - `idle` -> `ready_for_execution`
   - `execution_running` -> `executing`
   - `execution_decision_pending` -> `execution_completed`
@@ -40,7 +38,7 @@ Deliverables:
   - `done` -> `done`
   - `failed` -> `blocked`
 - Freeze action semantics:
-  - Existing V3 `improve-in-execution` maps to V4
+  - The old `improve-in-execution` action maps to V4
     `POST /v4/projects/{projectId}/nodes/{nodeId}/execution/improve`.
   - V4 `audit/request-changes` is a separate audit decision action and is not
     the direct replacement for the current Breadcrumb improve button.
@@ -324,17 +322,13 @@ Detailed plan:
 
 - `docs/migration/phase-10-v3-compatibility-deprecation-removal-plan-v1.md`
 
-Convert V3 workflow routes into compatibility adapters:
-
-- `/v3/projects/.../workflow-state` reads V2 state and returns the old V3 view.
-- `/v3/projects/.../workflow/*` calls V2 orchestrator methods and converts
-  responses.
+Remove compatibility workflow routes after the V4 workflow path is proven.
 
 Done when:
 
 - New UI path is V2-only for workflow state, events, and mutations.
-- Legacy V3 tests cover adapter compatibility.
-- V3 workflow routes can be marked deprecated or kept read-only.
-- V3-only workflow business logic is removed after telemetry and tests confirm
+- Historical adapter tests are removed or archived.
+- Removed workflow routes stay absent from backend and frontend code.
+- Old workflow business logic is removed after telemetry and tests confirm
   no active dependency.
 - `python scripts/check_workflow_v2_phase10.py` passes.

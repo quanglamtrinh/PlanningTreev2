@@ -12,6 +12,10 @@ function readFrontendSource(relativePath: string): string {
   }
 }
 
+const removedThreadStore = `useThreadByIdStore${'V3'}`
+const removedMessages = `Messages${'V3'}`
+const removedCodexStoreFile = `codex-${'store'}`
+
 describe('BreadcrumbChatViewV2 shell gate', () => {
   it('uses Session V2 and Workflow V2 runtime paths in the controller', () => {
     const source = readFrontendSource('features/conversation/useBreadcrumbConversationControllerV2.tsx')
@@ -22,7 +26,12 @@ describe('BreadcrumbChatViewV2 shell gate', () => {
     expect(source).toContain('useWorkflowEventBridgeV2')
     expect(source).toContain('buildWorkflowProjectionV2')
     expect(source).not.toContain('breadcrumbV3SessionUiAdapter')
-    expect(source).not.toContain('useThreadByIdStoreV3')
+    expect(source).not.toContain(removedThreadStore)
+    expect(source).not.toContain(removedMessages)
+    expect(source).not.toContain('useCodexStore')
+    expect(source).not.toContain(removedCodexStoreFile)
+    expect(source).not.toContain('getChatSession')
+    expect(source).not.toContain('sendMessage')
     expect(source).not.toContain('useWorkflowStateStoreV3')
     expect(source).not.toContain('useWorkflowEventBridgeV3')
     expect(source).not.toContain('resolveWorkflowProjection')
@@ -40,6 +49,6 @@ describe('BreadcrumbChatViewV2 shell gate', () => {
     expect(source).not.toContain('useSessionFacadeV2')
     expect(source).not.toContain('useWorkflowStateV2')
     expect(source).not.toContain('breadcrumbV3SessionUiAdapter')
-    expect(source).not.toContain('useThreadByIdStoreV3')
+    expect(source).not.toContain(removedThreadStore)
   })
 })

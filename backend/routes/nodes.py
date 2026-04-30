@@ -1,27 +1,14 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["nodes"])
-
-
-def _record_ask_shaping_action_started(request: Request) -> None:
-    metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
-    if metrics is None:
-        return
-    metrics.record_shaping_action_started()
-
-
-def _record_ask_shaping_action_failed(request: Request) -> None:
-    metrics = getattr(request.app.state, "ask_rollout_metrics_service", None)
-    if metrics is None:
-        return
-    metrics.record_shaping_action_failed()
 
 
 class CreateChildRequest(BaseModel):
@@ -107,29 +94,39 @@ async def get_detail_state(request: Request, project_id: str, node_id: str) -> d
 
 @router.get("/projects/{project_id}/nodes/{node_id}/review-state")
 async def get_review_state(request: Request, project_id: str, node_id: str) -> dict:
-    return request.app.state.review_service.get_review_state(project_id, node_id)
+    storage = request.app.state.storage
+    tree_service = request.app.state.tree_service
+    with storage.project_lock(project_id):
+        snapshot = storage.project_store.load_snapshot(project_id)
+        node_by_id = tree_service.node_index(snapshot)
+        node = node_by_id.get(node_id)
+        if node is None:
+            from backend.errors.app_errors import NodeNotFound
+
+            raise NodeNotFound(node_id)
+        review_state = storage.workflow_domain_store.read_review(project_id, node_id)
+        return review_state if isinstance(review_state, dict) else storage.workflow_domain_store.default_review()
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/finish-task")
 async def finish_task(request: Request, project_id: str, node_id: str) -> dict:
-    return request.app.state.finish_task_service.finish_task(project_id, node_id)
+    return request.app.state.execution_audit_orchestrator_v2.start_execution(
+        project_id,
+        node_id,
+        idempotency_key=f"v4-finish-task:{uuid4().hex}",
+    )
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-frame")
 async def confirm_frame(request: Request, project_id: str, node_id: str) -> dict:
-    _record_ask_shaping_action_started(request)
-    try:
-        detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)
-        if detail_state["active_step"] == "clarify":
-            # Non-fatal: deterministic seed already created by confirm_frame.
-            try:
-                request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
-            except Exception:
-                pass
-        return detail_state
-    except Exception:
-        _record_ask_shaping_action_failed(request)
-        raise
+    detail_state = request.app.state.node_detail_service.confirm_frame(project_id, node_id)
+    if detail_state["active_step"] == "clarify":
+        # Non-fatal: deterministic seed already created by confirm_frame.
+        try:
+            request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
+        except Exception:
+            pass
+    return detail_state
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/clarify")
@@ -148,44 +145,24 @@ async def update_clarify(
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-clarify")
 async def confirm_clarify(request: Request, project_id: str, node_id: str) -> dict:
-    _record_ask_shaping_action_started(request)
-    try:
-        return request.app.state.node_detail_service.apply_clarify_to_frame(project_id, node_id)
-    except Exception:
-        _record_ask_shaping_action_failed(request)
-        raise
+    return request.app.state.node_detail_service.apply_clarify_to_frame(project_id, node_id)
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/confirm-spec")
 async def confirm_spec(request: Request, project_id: str, node_id: str) -> dict:
-    _record_ask_shaping_action_started(request)
-    try:
-        return request.app.state.node_detail_service.confirm_spec(project_id, node_id)
-    except Exception:
-        _record_ask_shaping_action_failed(request)
-        raise
+    return request.app.state.node_detail_service.confirm_spec(project_id, node_id)
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/generate-frame")
 async def generate_frame(request: Request, project_id: str, node_id: str) -> JSONResponse:
-    _record_ask_shaping_action_started(request)
-    try:
-        payload = request.app.state.frame_generation_service.generate_frame(project_id, node_id)
-        return JSONResponse(status_code=202, content=payload)
-    except Exception:
-        _record_ask_shaping_action_failed(request)
-        raise
+    payload = request.app.state.frame_generation_service.generate_frame(project_id, node_id)
+    return JSONResponse(status_code=202, content=payload)
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/generate-clarify")
 async def generate_clarify(request: Request, project_id: str, node_id: str) -> JSONResponse:
-    _record_ask_shaping_action_started(request)
-    try:
-        payload = request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
-        return JSONResponse(status_code=202, content=payload)
-    except Exception:
-        _record_ask_shaping_action_failed(request)
-        raise
+    payload = request.app.state.clarify_generation_service.generate_clarify(project_id, node_id)
+    return JSONResponse(status_code=202, content=payload)
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/clarify-generation-status")
@@ -200,13 +177,8 @@ async def get_frame_generation_status(request: Request, project_id: str, node_id
 
 @router.post("/projects/{project_id}/nodes/{node_id}/generate-spec")
 async def generate_spec(request: Request, project_id: str, node_id: str) -> JSONResponse:
-    _record_ask_shaping_action_started(request)
-    try:
-        payload = request.app.state.spec_generation_service.generate_spec(project_id, node_id)
-        return JSONResponse(status_code=202, content=payload)
-    except Exception:
-        _record_ask_shaping_action_failed(request)
-        raise
+    payload = request.app.state.spec_generation_service.generate_spec(project_id, node_id)
+    return JSONResponse(status_code=202, content=payload)
 
 
 @router.get("/projects/{project_id}/nodes/{node_id}/spec-generation-status")
@@ -222,12 +194,21 @@ class AcceptLocalReviewRequest(BaseModel):
 async def accept_local_review(
     request: Request, project_id: str, node_id: str, body: AcceptLocalReviewRequest
 ) -> dict:
-    return request.app.state.review_service.accept_local_review(project_id, node_id, body.summary)
+    del body
+    return request.app.state.execution_audit_orchestrator_v2.mark_done_from_execution(
+        project_id,
+        node_id,
+        idempotency_key=f"v4-accept-local-review:{uuid4().hex}",
+        expected_workspace_hash=request.app.state.workflow_state_repository_v2.read_state(project_id, node_id).workspace_hash or "",
+    )
 
 
 @router.post("/projects/{project_id}/nodes/{node_id}/accept-rollup-review")
 async def accept_rollup_review(request: Request, project_id: str, node_id: str) -> dict:
-    return request.app.state.review_service.accept_rollup_review(project_id, node_id)
+    from backend.errors.app_errors import ReviewNotAllowed
+
+    del request, project_id, node_id
+    raise ReviewNotAllowed("Rollup review acceptance is available through Workflow V4 audit APIs.")
 
 
 class ResetWorkspaceRequest(BaseModel):
@@ -242,41 +223,22 @@ async def reset_workspace(
 
     storage = request.app.state.storage
     git_svc = request.app.state.git_checkpoint_service
-    chat_svc = request.app.state.chat_service
+    workflow_state = request.app.state.workflow_state_repository_v2.read_state(project_id, node_id)
+    if workflow_state.phase in {"executing", "audit_running"}:
+        raise ResetWorkspaceNotAllowed("Cannot reset workspace while a workflow turn is active.")
 
-    # Load execution state
-    exec_state = storage.execution_state_store.read_state(project_id, node_id)
-    if exec_state is None:
-        raise ResetWorkspaceNotAllowed("No execution state exists for this node.")
-
-    # Resolve target SHA
-    if body.target == "initial":
-        target_sha = exec_state.get("initial_sha")
-    else:
-        target_sha = exec_state.get("head_sha")
-
+    target_sha = workflow_state.base_commit_sha if body.target == "initial" else workflow_state.head_commit_sha
     if not target_sha:
-        raise ResetWorkspaceNotAllowed(
-            f"No {body.target} SHA recorded for this node's execution."
-        )
+        raise ResetWorkspaceNotAllowed(f"No {body.target} SHA recorded for this node's workflow.")
 
-    # Block if active work in this project
-    if chat_svc is not None and chat_svc.has_live_turns_for_project(project_id):
-        raise ResetWorkspaceNotAllowed(
-            "Cannot reset workspace while an execution or chat turn is active."
-        )
-
-    # Perform reset
     project_path = Path(storage.workspace_store.get_folder_path(project_id))
     git_svc.hard_reset(project_path, target_sha)
-
-    # Return refreshed detail state
     detail_state = request.app.state.node_detail_service.get_detail_state(project_id, node_id)
     current_head = git_svc.get_head_sha(project_path)
     return {
         "status": "reset",
         "target_sha": target_sha,
         "current_head_sha": current_head,
-        "task_present_in_current_workspace": current_head == exec_state.get("head_sha"),
+        "task_present_in_current_workspace": current_head == workflow_state.head_commit_sha,
         "detail_state": detail_state,
     }

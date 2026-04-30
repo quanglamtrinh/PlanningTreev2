@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -119,7 +120,6 @@ class RuntimeStoreV2:
         self._pending_requests: dict[str, dict[str, Any]] = {}
         self._pending_request_by_raw: dict[tuple[str, str], str] = {}
         self._idempotency_mem: dict[tuple[str, str], dict[str, Any]] = {}
-        self._legacy_migration_markers: dict[str, dict[str, Any]] = {}
         self._event_observers: list[EventObserver] = []
         self._pre_event_observers: list[EventObserver] = []
 
@@ -368,76 +368,6 @@ class RuntimeStoreV2:
         with self._lock:
             self._idempotency_mem[(normalized_action, normalized_key)] = record
             self._persist_idempotency_record(normalized_action, normalized_key, record)
-
-    # ------------------------------------------------------------------
-    # Legacy migration markers
-    # ------------------------------------------------------------------
-    def has_legacy_migration_marker(self, *, thread_id: str) -> bool:
-        normalized_thread_id = str(thread_id or "").strip()
-        if not normalized_thread_id:
-            return False
-        with self._lock:
-            if normalized_thread_id in self._legacy_migration_markers:
-                return True
-            record = self._load_legacy_migration_marker_from_db(normalized_thread_id)
-            if record is not None:
-                self._legacy_migration_markers[normalized_thread_id] = record
-                return True
-            return False
-
-    def read_legacy_migration_marker(self, *, thread_id: str) -> dict[str, Any] | None:
-        normalized_thread_id = str(thread_id or "").strip()
-        if not normalized_thread_id:
-            return None
-        with self._lock:
-            record = self._legacy_migration_markers.get(normalized_thread_id)
-            if record is not None:
-                return dict(record)
-            loaded = self._load_legacy_migration_marker_from_db(normalized_thread_id)
-            if loaded is None:
-                return None
-            self._legacy_migration_markers[normalized_thread_id] = loaded
-            return dict(loaded)
-
-    def mark_legacy_thread_migrated(
-        self,
-        *,
-        thread_id: str,
-        source_project_id: str | None = None,
-        source_node_id: str | None = None,
-        source_role: str | None = None,
-        source_snapshot_version: int | None = None,
-        source_item_count: int | None = None,
-        source_pending_request_count: int | None = None,
-        source_hash: str | None = None,
-    ) -> dict[str, Any]:
-        normalized_thread_id = self._normalize_non_empty(thread_id, "threadId")
-        record = {
-            "threadId": normalized_thread_id,
-            "migratedAtMs": self._now_ms(),
-            "sourceProjectId": str(source_project_id or "").strip() or None,
-            "sourceNodeId": str(source_node_id or "").strip() or None,
-            "sourceRole": str(source_role or "").strip() or None,
-            "sourceSnapshotVersion": int(source_snapshot_version) if source_snapshot_version is not None else None,
-            "sourceItemCount": int(source_item_count) if source_item_count is not None else None,
-            "sourcePendingRequestCount": (
-                int(source_pending_request_count)
-                if source_pending_request_count is not None
-                else None
-            ),
-            "sourceHash": str(source_hash or "").strip() or None,
-        }
-        with self._lock:
-            existing = self._legacy_migration_markers.get(normalized_thread_id)
-            if existing is not None:
-                return dict(existing)
-            from_db = self._load_legacy_migration_marker_from_db(normalized_thread_id)
-            if from_db is not None:
-                self._legacy_migration_markers[normalized_thread_id] = from_db
-                return dict(from_db)
-            self._legacy_migration_markers[normalized_thread_id] = record
-            self._persist_legacy_migration_marker(record)
-            return dict(record)
 
     # ------------------------------------------------------------------
     # Pending server requests
@@ -1213,6 +1143,357 @@ class RuntimeStoreV2:
         turn["items"] = merged
         self._persist_turn(thread_id, turn)
 
+    def _normalize_non_empty(self, value: Any, field_name: str) -> str:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+        raise SessionCoreError(
+            code="ERR_INTERNAL",
+            message=f"{field_name} is required.",
+            status_code=500,
+            details={field_name: value},
+        )
+
+    @staticmethod
+    def _serialize_raw_request_id(raw_request_id: Any) -> str:
+        return json.dumps(raw_request_id, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _deserialize_raw_request_id(raw_request_json: str) -> Any:
+        try:
+            return json.loads(raw_request_json)
+        except json.JSONDecodeError:
+            return raw_request_json
+
+    @staticmethod
+    def _pending_request_public(record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "requestId": record.get("requestId"),
+            "rawRequestId": RuntimeStoreV2._deserialize_raw_request_id(str(record.get("rawRequestIdJson") or "null")),
+            "method": record.get("method"),
+            "threadId": record.get("threadId"),
+            "turnId": record.get("turnId"),
+            "itemId": record.get("itemId"),
+            "status": record.get("status"),
+            "submissionKind": record.get("submissionKind"),
+            "createdAtMs": record.get("createdAtMs"),
+            "submittedAtMs": record.get("submittedAtMs"),
+            "resolvedAtMs": record.get("resolvedAtMs"),
+            "payload": copy.deepcopy(record.get("payload") or {}),
+        }
+
+    def _append_pending_request_event_locked(self, *, method: str, record: dict[str, Any]) -> None:
+        thread_id = str(record.get("threadId") or "").strip()
+        if not thread_id:
+            return
+        self.append_event(
+            thread_id=thread_id,
+            method=method,
+            params={"request": self._pending_request_public(record)},
+            turn_id=self._optional_non_empty(record.get("turnId")),
+            source="journal",
+            replayable=True,
+            tier="tier0",
+        )
+
+    def _resume_turn_if_no_unresolved_requests(self, *, thread_id: str, turn_id: str) -> None:
+        for record in self._pending_requests.values():
+            if (
+                str(record.get("threadId") or "").strip() == thread_id
+                and str(record.get("turnId") or "").strip() == turn_id
+                and str(record.get("status") or "") in _PENDING_REQUEST_ACTIVE_STATUSES
+            ):
+                return
+        turn = self._turns.get(thread_id, {}).get(turn_id)
+        if isinstance(turn, dict) and str(turn.get("status") or "") == "waitingUserInput":
+            self.transition_turn(thread_id=thread_id, turn_id=turn_id, next_status="inProgress", allow_same=True)
+
+    def _record_thread_state_from_notification(self, *, thread_id: str, method: str, params: dict[str, Any]) -> None:
+        now_ms = self._now_ms()
+        with self._lock:
+            if method == "thread/started":
+                payload = params.get("thread") if isinstance(params.get("thread"), dict) else params
+                current = dict(self._thread_state.get(thread_id) or {})
+                current.update(payload if isinstance(payload, dict) else {})
+                current.setdefault("id", thread_id)
+                current["status"] = current.get("status") or "active"
+                current["updatedAtMs"] = now_ms
+                self._thread_state[thread_id] = current
+                return
+            if method == "thread/status/changed":
+                current = dict(self._thread_state.get(thread_id) or {"id": thread_id})
+                status = params.get("status")
+                if status is not None:
+                    current["status"] = status
+                current["updatedAtMs"] = now_ms
+                self._thread_state[thread_id] = current
+                return
+            if method == "thread/closed":
+                current = dict(self._thread_state.get(thread_id) or {"id": thread_id})
+                current["status"] = "closed"
+                current["updatedAtMs"] = now_ms
+                self._thread_state[thread_id] = current
+                return
+            self._touch_thread_state_locked(thread_id, now_ms)
+
+    def _touch_thread_state_locked(self, thread_id: str, now_ms: int) -> None:
+        state = dict(self._thread_state.get(thread_id) or {})
+        state.setdefault("id", thread_id)
+        state.setdefault("status", "active" if self._active_turn_by_thread.get(thread_id) else "idle")
+        state["updatedAtMs"] = now_ms
+        self._thread_state[thread_id] = state
+
+    def _maybe_update_snapshot(self, *, thread_id: str, event_seq: int, now_ms: int, tier: str) -> int:
+        current_version = int(self._snapshot_versions.get(thread_id) or 0)
+        should_snapshot = False
+        if thread_id not in self._snapshot_payloads:
+            should_snapshot = True
+        elif tier == "tier0":
+            self._tier0_events_since_snapshot[thread_id] += 1
+            should_snapshot = self._tier0_events_since_snapshot[thread_id] >= _SNAPSHOT_TIER0_EVENT_INTERVAL
+        if now_ms - int(self._snapshot_last_ms.get(thread_id) or 0) >= _SNAPSHOT_TIME_INTERVAL_MS:
+            should_snapshot = True
+        if not should_snapshot:
+            return current_version
+        next_version = current_version + 1
+        turns = {
+            turn_id: self._copy_turn(turn)
+            for turn_id, turn in self._turns.get(thread_id, {}).items()
+            if isinstance(turn, dict)
+        }
+        item_index: dict[str, dict[str, Any]] = {}
+        for turn in turns.values():
+            for item in turn.get("items") if isinstance(turn.get("items"), list) else []:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("id") or "").strip()
+                if item_id:
+                    item_index[item_id] = copy.deepcopy(item)
+        pending_index = {
+            str(record.get("requestId") or ""): self._pending_request_public(record)
+            for record in self._pending_requests.values()
+            if str(record.get("requestId") or "").strip()
+            and str(record.get("threadId") or "").strip() == thread_id
+            and str(record.get("status") or "") in _PENDING_REQUEST_ACTIVE_STATUSES
+        }
+        payload = {
+            "schemaVersion": 1,
+            "thread": copy.deepcopy(self._thread_state.get(thread_id) or {"id": thread_id}),
+            "turnIndex": turns,
+            "itemIndex": item_index,
+            "pendingRequestIndex": pending_index,
+            "lastEventSeq": event_seq,
+            "turns": list(turns.values()),
+            "pendingRequests": list(pending_index.values()),
+        }
+        self._snapshot_versions[thread_id] = next_version
+        self._snapshot_last_ms[thread_id] = now_ms
+        self._snapshot_payloads[thread_id] = payload
+        self._snapshot_last_event_seq[thread_id] = event_seq
+        self._tier0_events_since_snapshot[thread_id] = 0
+        self._persist_snapshot(thread_id=thread_id, version=next_version, event_seq=event_seq, now_ms=now_ms, payload=payload)
+        return next_version
+
+    def _persist_snapshot(
+        self,
+        *,
+        thread_id: str,
+        version: int,
+        event_seq: int,
+        now_ms: int,
+        payload: dict[str, Any],
+    ) -> None:
+        if self._db is None:
+            return
+        self._db.execute(
+            """
+            INSERT OR REPLACE INTO session_v2_snapshots(
+                thread_id,
+                snapshot_version,
+                last_event_seq,
+                updated_at_ms,
+                snapshot_json
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (thread_id, version, event_seq, now_ms, json.dumps(payload, ensure_ascii=True, sort_keys=True)),
+        )
+        self._db.commit()
+
+    def _resolve_event_tier(self, method: str) -> str:
+        if method in _TIER0_METHODS:
+            return "tier0"
+        if method in _TIER1_METHODS:
+            return "tier1"
+        return "tier2"
+
+    def _find_event_by_method_and_turn_locked(
+        self,
+        *,
+        thread_id: str,
+        method: str,
+        turn_id: str,
+    ) -> dict[str, Any] | None:
+        for event in reversed(self._read_journal_events_locked(thread_id, after_event_seq=0)):
+            if str(event.get("method") or "") != method:
+                continue
+            if str(event.get("turnId") or "").strip() == turn_id:
+                return dict(event)
+        return None
+
+    def _read_journal_events_locked(self, thread_id: str, after_event_seq: int) -> list[dict[str, Any]]:
+        if self._db is not None:
+            rows = self._db.execute(
+                """
+                SELECT event_json FROM session_v2_journal
+                WHERE thread_id = ? AND event_seq > ?
+                ORDER BY event_seq ASC
+                """,
+                (thread_id, int(after_event_seq)),
+            ).fetchall()
+            events: list[dict[str, Any]] = []
+            for row in rows:
+                try:
+                    event = json.loads(str(row["event_json"] or "{}"))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+            return events
+        return [dict(event) for event in self._journal.get(thread_id, []) if int(event.get("eventSeq") or 0) > after_event_seq]
+
+    def _read_first_last_seq(self, thread_id: str) -> tuple[int | None, int | None]:
+        if self._db is not None:
+            row = self._db.execute(
+                "SELECT MIN(event_seq) AS first_seq, MAX(event_seq) AS last_seq FROM session_v2_journal WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            if row is None or row["last_seq"] is None:
+                return None, None
+            return int(row["first_seq"]), int(row["last_seq"])
+        events = self._journal.get(thread_id, [])
+        if not events:
+            return None, None
+        return int(events[0].get("eventSeq") or 0), int(events[-1].get("eventSeq") or 0)
+
+    def _assert_cursor_available(self, *, thread_id: str, cursor_value: int) -> None:
+        first_seq, last_seq = self._read_first_last_seq(thread_id)
+        if last_seq is None or cursor_value == 0:
+            return
+        if first_seq is not None and cursor_value < first_seq - 1:
+            self._cursor_expired_count += 1
+            raise SessionCoreError(
+                code="ERR_CURSOR_EXPIRED",
+                message="Cursor is older than the retained journal window.",
+                status_code=409,
+                details={
+                    "threadId": thread_id,
+                    "cursor": cursor_value,
+                    "firstEventSeq": first_seq,
+                    "snapshotPointer": self._snapshot_pointer(thread_id),
+                },
+            )
+
+    def _fanout_event(self, event: dict[str, Any]) -> None:
+        thread_id = str(event.get("threadId") or "").strip()
+        for subscriber in list(self._subscribers.values()):
+            if subscriber.thread_id != thread_id:
+                continue
+            try:
+                subscriber.events.put_nowait(dict(event))
+            except queue.Full:
+                self._lagged_reset_count += 1
+                subscriber.lagged = True
+                skipped = 0
+                while True:
+                    try:
+                        subscriber.events.get_nowait()
+                        skipped += 1
+                    except queue.Empty:
+                        break
+                subscriber.events.put_nowait({"__control": "lagged", "skipped": skipped})
+
+    def _subscriber_count_for_thread_locked(self, thread_id: str) -> int:
+        return sum(1 for subscriber in self._subscribers.values() if subscriber.thread_id == thread_id)
+
+    def _snapshot_pointer(self, thread_id: str) -> dict[str, Any] | None:
+        version = int(self._snapshot_versions.get(thread_id) or 0)
+        if version <= 0:
+            return None
+        return {
+            "snapshotVersion": version,
+            "lastEventSeq": int(self._snapshot_last_event_seq.get(thread_id) or 0),
+            "updatedAtMs": int(self._snapshot_last_ms.get(thread_id) or 0),
+        }
+
+    def _trim_memory_journal(self, thread_id: str, *, now_ms: int) -> None:
+        events = self._journal.get(thread_id)
+        if not events or len(events) <= self._retention_max_events:
+            return
+        min_ms = now_ms - self._retention_window_ms
+        candidates = events[: -self._retention_max_events]
+        drop_count = 0
+        for event in candidates:
+            if int(event.get("occurredAtMs") or now_ms) >= min_ms:
+                break
+            self._drop_counts_by_tier[str(event.get("tier") or "tier2")] += 1
+            drop_count += 1
+        if drop_count:
+            self._journal[thread_id] = events[drop_count:]
+
+    def _trim_db_journal(self, thread_id: str, *, now_ms: int) -> None:
+        if self._db is None:
+            return
+        rows = self._db.execute(
+            """
+            SELECT event_seq, occurred_at_ms, event_json FROM session_v2_journal
+            WHERE thread_id = ?
+            ORDER BY event_seq ASC
+            """,
+            (thread_id,),
+        ).fetchall()
+        if len(rows) <= self._retention_max_events:
+            return
+        min_ms = now_ms - self._retention_window_ms
+        candidates = rows[: -self._retention_max_events]
+        drop: list[int] = []
+        for row in candidates:
+            if int(row["occurred_at_ms"] or now_ms) >= min_ms:
+                break
+            drop.append(int(row["event_seq"] or 0))
+        if not drop:
+            return
+        placeholders = ",".join("?" for _ in drop)
+        self._db.execute(
+            f"DELETE FROM session_v2_journal WHERE thread_id = ? AND event_seq IN ({placeholders})",
+            (thread_id, *drop),
+        )
+        self._db.commit()
+
+    @staticmethod
+    def _extract_thread_id(payload: dict[str, Any]) -> str | None:
+        for key in ("threadId", "thread_id"):
+            value = RuntimeStoreV2._optional_non_empty(payload.get(key))
+            if value:
+                return value
+        thread = payload.get("thread")
+        if isinstance(thread, dict):
+            return RuntimeStoreV2._optional_non_empty(thread.get("id") or thread.get("threadId") or thread.get("thread_id"))
+        return None
+
+    @staticmethod
+    def _extract_turn_id(payload: dict[str, Any]) -> str | None:
+        for key in ("turnId", "turn_id"):
+            value = RuntimeStoreV2._optional_non_empty(payload.get(key))
+            if value:
+                return value
+        turn = payload.get("turn")
+        if isinstance(turn, dict):
+            return RuntimeStoreV2._optional_non_empty(turn.get("id") or turn.get("turnId") or turn.get("turn_id"))
+        item = payload.get("item")
+        if isinstance(item, dict):
+            return RuntimeStoreV2._optional_non_empty(item.get("turnId") or item.get("turn_id"))
+        return None
+
     # ------------------------------------------------------------------
     # Internal: DB + journal helpers
     # ------------------------------------------------------------------
@@ -1278,18 +1559,6 @@ class RuntimeStoreV2:
                 last_event_seq INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL,
                 snapshot_json TEXT NOT NULL DEFAULT '{}'
-            );
-
-            CREATE TABLE IF NOT EXISTS session_v2_legacy_migrations (
-                thread_id TEXT PRIMARY KEY,
-                migrated_at_ms INTEGER NOT NULL,
-                source_project_id TEXT,
-                source_node_id TEXT,
-                source_role TEXT,
-                source_snapshot_version INTEGER,
-                source_item_count INTEGER,
-                source_pending_request_count INTEGER,
-                source_hash TEXT
             );
             """
         )
@@ -1468,49 +1737,6 @@ class RuntimeStoreV2:
                 thread_payload = payload.get("thread")
                 if isinstance(thread_payload, dict):
                     self._thread_state[thread_id] = dict(thread_payload)
-
-        legacy_migration_rows = self._db.execute(
-            """
-            SELECT
-                thread_id,
-                migrated_at_ms,
-                source_project_id,
-                source_node_id,
-                source_role,
-                source_snapshot_version,
-                source_item_count,
-                source_pending_request_count,
-                source_hash
-            FROM session_v2_legacy_migrations
-            """
-        ).fetchall()
-        for row in legacy_migration_rows:
-            thread_id = str(row["thread_id"] or "").strip()
-            if not thread_id:
-                continue
-            self._legacy_migration_markers[thread_id] = {
-                "threadId": thread_id,
-                "migratedAtMs": int(row["migrated_at_ms"] or 0),
-                "sourceProjectId": str(row["source_project_id"] or "").strip() or None,
-                "sourceNodeId": str(row["source_node_id"] or "").strip() or None,
-                "sourceRole": str(row["source_role"] or "").strip() or None,
-                "sourceSnapshotVersion": (
-                    int(row["source_snapshot_version"])
-                    if row["source_snapshot_version"] is not None
-                    else None
-                ),
-                "sourceItemCount": (
-                    int(row["source_item_count"])
-                    if row["source_item_count"] is not None
-                    else None
-                ),
-                "sourcePendingRequestCount": (
-                    int(row["source_pending_request_count"])
-                    if row["source_pending_request_count"] is not None
-                    else None
-                ),
-                "sourceHash": str(row["source_hash"] or "").strip() or None,
-            }
 
         turn_rows = self._db.execute(
             "SELECT thread_id, turn_id, turn_json, is_active FROM session_v2_turns"
@@ -1694,37 +1920,6 @@ class RuntimeStoreV2:
         )
         self._db.commit()
 
-    def _persist_legacy_migration_marker(self, record: dict[str, Any]) -> None:
-        if self._db is None:
-            return
-        self._db.execute(
-            """
-            INSERT OR REPLACE INTO session_v2_legacy_migrations(
-                thread_id,
-                migrated_at_ms,
-                source_project_id,
-                source_node_id,
-                source_role,
-                source_snapshot_version,
-                source_item_count,
-                source_pending_request_count,
-                source_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(record.get("threadId") or ""),
-                int(record.get("migratedAtMs") or self._now_ms()),
-                record.get("sourceProjectId"),
-                record.get("sourceNodeId"),
-                record.get("sourceRole"),
-                record.get("sourceSnapshotVersion"),
-                record.get("sourceItemCount"),
-                record.get("sourcePendingRequestCount"),
-                record.get("sourceHash"),
-            ),
-        )
-        self._db.commit()
-
     def _load_idempotency_from_db(self, action_type: str, key: str) -> dict[str, Any] | None:
         if self._db is None:
             return None
@@ -1749,546 +1944,6 @@ class RuntimeStoreV2:
             "journal_event_seq": row["journal_event_seq"],
         }
 
-    def _load_legacy_migration_marker_from_db(self, thread_id: str) -> dict[str, Any] | None:
-        if self._db is None:
-            return None
-        row = self._db.execute(
-            """
-            SELECT
-                thread_id,
-                migrated_at_ms,
-                source_project_id,
-                source_node_id,
-                source_role,
-                source_snapshot_version,
-                source_item_count,
-                source_pending_request_count,
-                source_hash
-            FROM session_v2_legacy_migrations
-            WHERE thread_id = ?
-            """,
-            (thread_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "threadId": str(row["thread_id"] or ""),
-            "migratedAtMs": int(row["migrated_at_ms"] or 0),
-            "sourceProjectId": str(row["source_project_id"] or "").strip() or None,
-            "sourceNodeId": str(row["source_node_id"] or "").strip() or None,
-            "sourceRole": str(row["source_role"] or "").strip() or None,
-            "sourceSnapshotVersion": (
-                int(row["source_snapshot_version"])
-                if row["source_snapshot_version"] is not None
-                else None
-            ),
-            "sourceItemCount": (
-                int(row["source_item_count"])
-                if row["source_item_count"] is not None
-                else None
-            ),
-            "sourcePendingRequestCount": (
-                int(row["source_pending_request_count"])
-                if row["source_pending_request_count"] is not None
-                else None
-            ),
-            "sourceHash": str(row["source_hash"] or "").strip() or None,
-        }
-
-    def _trim_memory_journal(self, thread_id: str, *, now_ms: int) -> None:
-        events = self._journal.get(thread_id)
-        if not events:
-            return
-        min_occurred_ms = int(now_ms) - self._retention_window_ms
-        while len(events) > self._retention_max_events:
-            oldest = events[0]
-            oldest_occurred_ms = int(oldest.get("occurredAtMs") or 0)
-            if oldest_occurred_ms >= min_occurred_ms:
-                break
-            del events[0]
-
-    def _trim_db_journal(self, thread_id: str, *, now_ms: int) -> None:
-        if self._db is None:
-            return
-        row = self._db.execute(
-            "SELECT COUNT(1) AS count FROM session_v2_journal WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-        total = int(row["count"] or 0) if row is not None else 0
-        overflow = total - self._retention_max_events
-        if overflow <= 0:
-            return
-        min_occurred_ms = int(now_ms) - self._retention_window_ms
-        self._db.execute(
-            """
-            DELETE FROM session_v2_journal
-            WHERE thread_id = ?
-              AND event_seq IN (
-                SELECT event_seq
-                FROM session_v2_journal
-                WHERE thread_id = ?
-                  AND occurred_at_ms < ?
-                ORDER BY event_seq ASC
-                LIMIT ?
-              )
-            """,
-            (thread_id, thread_id, min_occurred_ms, overflow),
-        )
-        self._db.commit()
-
-    def _read_journal_events_locked(self, thread_id: str, *, after_event_seq: int) -> list[dict[str, Any]]:
-        if self._db is None:
-            source = self._journal.get(thread_id, [])
-            return [dict(event) for event in source if int(event.get("eventSeq") or 0) > after_event_seq]
-        rows = self._db.execute(
-            """
-            SELECT event_json
-            FROM session_v2_journal
-            WHERE thread_id = ? AND event_seq > ?
-            ORDER BY event_seq ASC
-            """,
-            (thread_id, int(after_event_seq)),
-        ).fetchall()
-        events: list[dict[str, Any]] = []
-        for row in rows:
-            try:
-                payload = json.loads(str(row["event_json"] or "{}"))
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                events.append(payload)
-        return events
-
-    def _find_event_by_method_and_turn_locked(
-        self,
-        *,
-        thread_id: str,
-        method: str,
-        turn_id: str,
-    ) -> dict[str, Any] | None:
-        events = self._read_journal_events_locked(thread_id, after_event_seq=0)
-        for event in reversed(events):
-            if str(event.get("method") or "") != method:
-                continue
-            event_turn_id = str(event.get("turnId") or "").strip()
-            if event_turn_id == turn_id:
-                return event
-            params = event.get("params")
-            nested_turn = params.get("turn") if isinstance(params, dict) else None
-            nested_turn_id = str(nested_turn.get("id") or "").strip() if isinstance(nested_turn, dict) else ""
-            if nested_turn_id == turn_id:
-                return event
-        return None
-
-    def _assert_cursor_available(self, *, thread_id: str, cursor_value: int) -> None:
-        first_seq, last_seq = self._read_first_last_seq(thread_id)
-        if first_seq is None or last_seq is None:
-            if cursor_value == 0:
-                return
-            raise SessionCoreError(
-                code="ERR_CURSOR_INVALID",
-                message="Cursor references an empty stream.",
-                status_code=409,
-                details={"threadId": thread_id, "cursor": cursor_value},
-            )
-        if cursor_value > last_seq:
-            raise SessionCoreError(
-                code="ERR_CURSOR_INVALID",
-                message="Cursor is ahead of stream tail.",
-                status_code=409,
-                details={"threadId": thread_id, "cursor": cursor_value, "lastEventSeq": last_seq},
-            )
-        if cursor_value < first_seq - 1:
-            self._cursor_expired_count += 1
-            snapshot_pointer = self._snapshot_pointer(thread_id=thread_id, last_event_seq=last_seq)
-            raise SessionCoreError(
-                code="ERR_CURSOR_EXPIRED",
-                message="Cursor is outside replay retention window.",
-                status_code=409,
-                details={
-                    "threadId": thread_id,
-                    "cursor": cursor_value,
-                    "firstRetainedEventSeq": first_seq,
-                    "lastEventSeq": last_seq,
-                    "snapshotPointer": snapshot_pointer,
-                },
-            )
-
-    def _read_first_last_seq(self, thread_id: str) -> tuple[int | None, int | None]:
-        if self._db is None:
-            events = self._journal.get(thread_id, [])
-            if not events:
-                return None, None
-            return int(events[0]["eventSeq"]), int(events[-1]["eventSeq"])
-        row = self._db.execute(
-            """
-            SELECT MIN(event_seq) AS first_seq, MAX(event_seq) AS last_seq
-            FROM session_v2_journal
-            WHERE thread_id = ?
-            """,
-            (thread_id,),
-        ).fetchone()
-        if row is None or row["first_seq"] is None or row["last_seq"] is None:
-            return None, None
-        return int(row["first_seq"]), int(row["last_seq"])
-
-    def _maybe_update_snapshot(self, *, thread_id: str, event_seq: int, now_ms: int, tier: str) -> int | None:
-        current_version = int(self._snapshot_versions.get(thread_id) or 0)
-        last_ms = int(self._snapshot_last_ms.get(thread_id) or 0)
-        if tier == "tier0":
-            self._tier0_events_since_snapshot[thread_id] += 1
-        tier0_count = int(self._tier0_events_since_snapshot.get(thread_id) or 0)
-        should_bump = (
-            last_ms == 0
-            or (now_ms - last_ms) >= _SNAPSHOT_TIME_INTERVAL_MS
-            or tier0_count >= _SNAPSHOT_TIER0_EVENT_INTERVAL
-        )
-        if not should_bump:
-            return current_version or None
-
-        current_version += 1
-        self._snapshot_versions[thread_id] = current_version
-        self._snapshot_last_ms[thread_id] = now_ms
-        self._snapshot_last_event_seq[thread_id] = event_seq
-        self._tier0_events_since_snapshot[thread_id] = 0
-        snapshot_payload = self._build_snapshot_payload(
-            thread_id=thread_id,
-            snapshot_version=current_version,
-            last_event_seq=event_seq,
-            updated_at_ms=now_ms,
-        )
-        self._snapshot_payloads[thread_id] = snapshot_payload
-        self._persist_snapshot(snapshot_payload)
-        return current_version
-
-    def _fanout_event(self, event: dict[str, Any]) -> None:
-        thread_id = str(event.get("threadId") or "")
-        tier = str(event.get("tier") or "tier2")
-        to_remove: list[str] = []
-        matched_subscriber_count = 0
-        max_queue_depth = 0
-        for subscriber_id, subscriber in self._subscribers.items():
-            if subscriber.thread_id != thread_id:
-                continue
-            matched_subscriber_count += 1
-            try:
-                subscriber.events.put_nowait(dict(event))
-                max_queue_depth = max(max_queue_depth, subscriber.events.qsize())
-            except queue.Full:
-                self._lagged_reset_count += 1
-                if tier == "tier2":
-                    self._drop_counts_by_tier[tier] += 1
-                subscriber.lagged = True
-                drained = self._drain_queue(subscriber.events)
-                skipped = max(1, drained + 1)
-                try:
-                    subscriber.events.put_nowait(
-                        {
-                            "__control": "lagged",
-                            "threadId": thread_id,
-                            "skipped": skipped,
-                        }
-                    )
-                except queue.Full:
-                    pass
-                logger.warning(
-                    "session_core_v2 lagged subscriber reset",
-                    extra={
-                        "threadId": thread_id,
-                        "eventSeq": event.get("eventSeq"),
-                        "errorCode": "ERR_SUBSCRIBER_LAGGED",
-                        "tier": tier,
-                        "skipped": skipped,
-                    },
-                )
-                to_remove.append(subscriber_id)
-        for subscriber_id in to_remove:
-            self._subscribers.pop(subscriber_id, None)
-        method = str(event.get("method") or "")
-        if method in _STREAM_TRACE_METHODS:
-            logger.info(
-                "session_core_v2 stream fanout",
-                extra={
-                    "threadId": thread_id,
-                    "eventSeq": event.get("eventSeq"),
-                    "method": method,
-                    "matchedSubscriberCount": matched_subscriber_count,
-                    "subscriberQueueDepthMax": max_queue_depth,
-                    "laggedSubscriberRemoved": len(to_remove),
-                },
-            )
-
-    def _subscriber_count_for_thread_locked(self, thread_id: str) -> int:
-        normalized_thread_id = str(thread_id or "").strip()
-        if not normalized_thread_id:
-            return 0
-        count = 0
-        for subscriber in self._subscribers.values():
-            if subscriber.thread_id == normalized_thread_id:
-                count += 1
-        return count
-
-    @staticmethod
-    def _drain_queue(event_queue: queue.Queue[dict[str, Any]]) -> int:
-        drained = 0
-        while True:
-            try:
-                event_queue.get_nowait()
-                drained += 1
-            except queue.Empty:
-                return drained
-
-    def _build_snapshot_payload(
-        self,
-        *,
-        thread_id: str,
-        snapshot_version: int,
-        last_event_seq: int,
-        updated_at_ms: int,
-    ) -> dict[str, Any]:
-        thread_state = dict(self._thread_state.get(thread_id) or {})
-        if not thread_state:
-            thread_state = {"id": thread_id}
-        thread_state["id"] = thread_id
-        thread_state["activeTurnId"] = self._active_turn_by_thread.get(thread_id)
-        thread_state["updatedAtMs"] = int(updated_at_ms)
-
-        turn_index: dict[str, dict[str, Any]] = {}
-        item_index: dict[str, list[dict[str, Any]]] = {}
-        for turn_id, turn in self._turns.get(thread_id, {}).items():
-            if not isinstance(turn, dict):
-                continue
-            turn_index[turn_id] = {
-                "status": turn.get("status"),
-                "lastCodexStatus": turn.get("lastCodexStatus"),
-                "startedAtMs": turn.get("startedAtMs"),
-                "completedAtMs": turn.get("completedAtMs"),
-                "error": turn.get("error"),
-            }
-            raw_items = turn.get("items")
-            serialized_items: list[dict[str, Any]] = []
-            if isinstance(raw_items, list):
-                for raw_item in raw_items:
-                    if isinstance(raw_item, dict):
-                        serialized_items.append(dict(raw_item))
-            item_index[turn_id] = serialized_items
-
-        pending_request_index: dict[str, dict[str, Any]] = {}
-        for request_id, request_record in self._pending_requests.items():
-            if str(request_record.get("threadId") or "").strip() != thread_id:
-                continue
-            pending_request_index[request_id] = self._pending_request_public(request_record)
-
-        return {
-            "snapshotVersion": int(snapshot_version),
-            "thread": thread_state,
-            "turnIndex": turn_index,
-            "itemIndex": item_index,
-            "pendingRequestIndex": pending_request_index,
-            "lastEventSeq": int(last_event_seq),
-            "updatedAtMs": int(updated_at_ms),
-        }
-
-    def _persist_snapshot(self, snapshot_payload: dict[str, Any]) -> None:
-        if self._db is None:
-            return
-        thread = snapshot_payload.get("thread")
-        if not isinstance(thread, dict):
-            return
-        thread_id = str(thread.get("id") or "").strip()
-        if not thread_id:
-            return
-        self._db.execute(
-            """
-            INSERT OR REPLACE INTO session_v2_snapshots(
-                thread_id,
-                snapshot_version,
-                last_event_seq,
-                updated_at_ms,
-                snapshot_json
-            ) VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                thread_id,
-                int(snapshot_payload.get("snapshotVersion") or 0),
-                int(snapshot_payload.get("lastEventSeq") or 0),
-                int(snapshot_payload.get("updatedAtMs") or 0),
-                json.dumps(snapshot_payload, ensure_ascii=True, sort_keys=True),
-            ),
-        )
-        self._db.commit()
-
-    def _snapshot_pointer(self, *, thread_id: str, last_event_seq: int) -> dict[str, Any]:
-        payload = self._snapshot_payloads.get(thread_id)
-        if isinstance(payload, dict):
-            pointer_last_event_seq = int(payload.get("lastEventSeq") or last_event_seq)
-            return {
-                "snapshotVersion": int(payload.get("snapshotVersion") or 0),
-                "lastEventSeq": pointer_last_event_seq,
-                "updatedAtMs": int(payload.get("updatedAtMs") or 0),
-            }
-        return {
-            "snapshotVersion": int(self._snapshot_versions.get(thread_id) or 0),
-            "lastEventSeq": int(last_event_seq),
-            "updatedAtMs": int(self._snapshot_last_ms.get(thread_id) or 0),
-        }
-
-    def _touch_thread_state_locked(self, thread_id: str, now_ms: int) -> None:
-        state = dict(self._thread_state.get(thread_id) or {})
-        state["id"] = thread_id
-        state["activeTurnId"] = self._active_turn_by_thread.get(thread_id)
-        state["updatedAtMs"] = int(now_ms)
-        self._thread_state[thread_id] = state
-
-    def _record_thread_state_from_notification(self, *, thread_id: str, method: str, params: dict[str, Any]) -> None:
-        if not method.startswith("thread/"):
-            return
-        now_ms = self._now_ms()
-        with self._lock:
-            state = dict(self._thread_state.get(thread_id) or {})
-            state["id"] = thread_id
-            if method == "thread/status/changed":
-                state["status"] = params.get("status")
-            elif method == "thread/closed":
-                state["status"] = {"type": "notLoaded"}
-            elif method == "thread/started":
-                if "status" not in state:
-                    state["status"] = {"type": "idle"}
-            state["activeTurnId"] = self._active_turn_by_thread.get(thread_id)
-            state["updatedAtMs"] = now_ms
-            self._thread_state[thread_id] = state
-
-    @staticmethod
-    def _resolve_event_tier(method: str) -> str:
-        if method in _TIER0_METHODS:
-            return "tier0"
-        if method in _TIER1_METHODS:
-            return "tier1"
-        return "tier2"
-
-    @staticmethod
-    def _extract_thread_id(params: dict[str, Any]) -> str:
-        value = params.get("threadId")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        nested = params.get("thread")
-        if isinstance(nested, dict):
-            nested_id = nested.get("id")
-            if isinstance(nested_id, str) and nested_id.strip():
-                return nested_id.strip()
-        return ""
-
-    @staticmethod
-    def _extract_turn_id(params: dict[str, Any]) -> str | None:
-        value = params.get("turnId")
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        nested = params.get("turn")
-        if isinstance(nested, dict):
-            nested_id = nested.get("id")
-            if isinstance(nested_id, str) and nested_id.strip():
-                return nested_id.strip()
-        return None
-
-    @staticmethod
-    def _serialize_raw_request_id(raw_request_id: Any) -> str:
-        try:
-            return json.dumps(raw_request_id, ensure_ascii=True, sort_keys=True)
-        except TypeError as exc:
-            raise SessionCoreError(
-                code="ERR_INTERNAL",
-                message="Server request id is not JSON serializable.",
-                status_code=500,
-                details={"reason": str(exc)},
-            ) from exc
-
-    @staticmethod
-    def _deserialize_raw_request_id(raw_request_id_json: str) -> Any:
-        try:
-            return json.loads(raw_request_id_json)
-        except json.JSONDecodeError as exc:
-            raise SessionCoreError(
-                code="ERR_INTERNAL",
-                message="Server request id payload is malformed.",
-                status_code=500,
-                details={"reason": str(exc)},
-            ) from exc
-
-    @staticmethod
-    def _pending_request_public(record: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "requestId": str(record.get("requestId") or ""),
-            "method": str(record.get("method") or ""),
-            "threadId": str(record.get("threadId") or ""),
-            "turnId": RuntimeStoreV2._optional_non_empty(record.get("turnId")),
-            "itemId": str(record.get("itemId") or "") or None,
-            "status": str(record.get("status") or "pending"),
-            "createdAtMs": int(record.get("createdAtMs") or 0),
-            "submittedAtMs": int(record.get("submittedAtMs") or 0) or None,
-            "resolvedAtMs": int(record.get("resolvedAtMs") or 0) or None,
-            "payload": dict(record.get("payload") or {}),
-        }
-
-    def _append_pending_request_event_locked(self, *, method: str, record: dict[str, Any]) -> dict[str, Any]:
-        public_record = self._pending_request_public(record)
-        return self.append_event(
-            thread_id=public_record["threadId"],
-            method=method,
-            params={"request": public_record},
-            turn_id=public_record["turnId"],
-            source="journal",
-            replayable=True,
-            tier="tier0",
-        )
-
-    def _resume_turn_if_no_unresolved_requests(self, *, thread_id: str, turn_id: str) -> None:
-        unresolved = False
-        for record in self._pending_requests.values():
-            if str(record.get("threadId") or "").strip() != thread_id:
-                continue
-            if str(record.get("turnId") or "").strip() != turn_id:
-                continue
-            if str(record.get("status") or "") in _PENDING_REQUEST_ACTIVE_STATUSES:
-                unresolved = True
-                break
-        if unresolved:
-            return
-        turn = self._turns.get(thread_id, {}).get(turn_id)
-        if not isinstance(turn, dict):
-            return
-        if str(turn.get("status") or "") != "waitingUserInput":
-            return
-        try:
-            self.transition_turn(
-                thread_id=thread_id,
-                turn_id=turn_id,
-                next_status="inProgress",
-                allow_same=True,
-            )
-        except SessionCoreError:
-            logger.debug("session_core_v2 failed to resume waiting turn", exc_info=True)
-
-    @staticmethod
-    def _normalize_non_empty(value: str, field_name: str) -> str:
-        normalized = str(value or "").strip()
-        if normalized:
-            return normalized
-        raise SessionCoreError(
-            code="ERR_INTERNAL",
-            message=f"{field_name} cannot be empty.",
-            status_code=500,
-            details={"field": field_name},
-        )
-
-    @staticmethod
-    def _optional_non_empty(value: Any) -> str | None:
-        if value is None:
-            return None
-        normalized = str(value).strip()
-        if normalized:
-            return normalized
-        return None
-
     @staticmethod
     def _payload_hash(payload: dict[str, Any]) -> str:
         payload_json = json.dumps(payload, ensure_ascii=True, sort_keys=True)
@@ -2301,6 +1956,11 @@ class RuntimeStoreV2:
         if isinstance(items, list):
             copied["items"] = [dict(item) if isinstance(item, dict) else item for item in items]
         return copied
+
+    @staticmethod
+    def _optional_non_empty(value: Any) -> str | None:
+        normalized = str(value or "").strip()
+        return normalized or None
 
     @staticmethod
     def _now_ms() -> int:

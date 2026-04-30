@@ -99,6 +99,12 @@ const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(()
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
     }),
+    listMcpRegistry: vi.fn(),
+    readMcpThreadProfile: vi.fn(),
+    previewMcpEffectiveConfig: vi.fn(),
+    updateMcpThreadProfile: vi.fn(),
+    getWorkspaceTextFile: vi.fn(),
+    putWorkspaceTextFile: vi.fn(),
   },
   workflowV2ApiMock: {
     getWorkflowStateV2: vi.fn(),
@@ -175,7 +181,7 @@ function makeNode(overrides: Partial<NodeRecord> = {}): NodeRecord {
     title: 'Root',
     description: 'Root node',
     status: 'draft',
-    node_kind: 'root',
+    node_kind: 'original',
     depth: 0,
     display_order: 0,
     hierarchical_number: '1',
@@ -333,6 +339,70 @@ describe('NodeDetailCard', () => {
       summary: 'Accepted rollup summary',
       sha: 'sha256:accepted',
     })
+    apiMock.listMcpRegistry.mockResolvedValue({ servers: [] })
+    apiMock.readMcpThreadProfile.mockImplementation((projectId: string, nodeId: string, role: string) =>
+      Promise.resolve({
+        profile: {
+          projectId,
+          nodeId,
+          role,
+          threadId: null,
+          mcpEnabled: false,
+          approvalMode: 'never',
+          servers: {},
+          updatedAt: '2026-03-21T00:00:00Z',
+        },
+      }),
+    )
+    apiMock.previewMcpEffectiveConfig.mockImplementation((projectId: string, nodeId: string, role: string) =>
+      Promise.resolve({
+        projectId,
+        nodeId,
+        role,
+        threadId: null,
+        profile: {
+          projectId,
+          nodeId,
+          role,
+          threadId: null,
+          mcpEnabled: false,
+          approvalMode: 'never',
+          servers: {},
+          updatedAt: '2026-03-21T00:00:00Z',
+        },
+        effectiveConfig: {},
+        mcpConfigHash: 'sha256:empty',
+        runtime: {
+          activeRuntimeMcpConfigHash: null,
+          conflict: false,
+          status: null,
+          lastStartedAt: null,
+          lastStoppedAt: null,
+        },
+      }),
+    )
+    apiMock.getWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'docs/overview.md',
+      content: '# Overview',
+      updated_at: null,
+    })
+    apiMock.putWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'docs/overview.md',
+      content: '# Overview',
+      updated_at: null,
+    })
+    apiMock.updateMcpThreadProfile.mockResolvedValue({
+      profile: {
+        projectId: 'project-1',
+        nodeId: 'root',
+        role: 'root',
+        threadId: null,
+        mcpEnabled: true,
+        approvalMode: 'never',
+        servers: {},
+        updatedAt: '2026-03-21T00:00:00Z',
+      },
+    })
     workflowV2ApiMock.startExecutionV2.mockResolvedValue({
       accepted: true,
       threadId: 'thread-execution-1',
@@ -369,6 +439,179 @@ describe('NodeDetailCard', () => {
     expect(screen.getByText('Root node')).toBeInTheDocument()
     expect(screen.queryByTestId('confirm-document-frame')).not.toBeInTheDocument()
     expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
+  })
+
+  it('renders thread skill toggles in the Info skills panel without MCP master state', async () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    const skillsPanel = screen.getByTestId('info-tab-skills-panel')
+    expect(within(skillsPanel).getByTestId('info-tab-skills-role-ask_planning')).toBeInTheDocument()
+    expect(within(skillsPanel).getByTestId('info-tab-skills-role-execution')).toBeInTheDocument()
+    expect(within(skillsPanel).getByTestId('info-tab-skills-role-audit')).toBeInTheDocument()
+    expect(within(skillsPanel).getByText('Planning brief')).toBeInTheDocument()
+    expect(within(skillsPanel).getByText('Implementation guardrails')).toBeInTheDocument()
+    expect(within(skillsPanel).getByText('Review checklist')).toBeInTheDocument()
+    expect(within(skillsPanel).queryByText('MCP off')).not.toBeInTheDocument()
+    expect(within(skillsPanel).getAllByRole('button', { name: 'Add skill' })).toHaveLength(3)
+
+    const auditRole = within(skillsPanel).getByTestId('info-tab-skills-role-audit')
+    const auditSwitch = within(auditRole).getByRole('switch')
+    expect(auditSwitch).toHaveAttribute('aria-checked', 'false')
+
+    fireEvent.click(auditSwitch)
+
+    expect(auditSwitch).toHaveAttribute('aria-checked', 'true')
+    expect(apiMock.updateMcpThreadProfile).not.toHaveBeenCalled()
+  })
+
+  it('renders task/context.md as read-only Rich View in Info tab', async () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode()}
+        variant="graph"
+        showClose={false}
+        workflowContextMarkdown={'# Context\n\nCurrent context from packet.'}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open task/context.md in markdown editor' }))
+
+    expect(screen.getByTestId('info-context-rich-view')).toBeInTheDocument()
+    expect(screen.getByText('Current context from packet.')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-codemirror')).not.toBeInTheDocument()
+  })
+
+
+  it('opens global docs from the root node scope and task docs from the current node scope', async () => {
+    apiMock.getWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'docs/overview.md',
+      content: '# Overview',
+      updated_at: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ node_id: 'task-1' })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'task-1')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open docs/overview.md in markdown editor' }))
+    await waitFor(() => {
+      expect(apiMock.getWorkspaceTextFile).toHaveBeenCalledWith('project-1', 'docs/overview.md', {
+        scope: 'root_node',
+        nodeId: null,
+      })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Back to info/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open task/handoff.md in markdown editor' }))
+    await waitFor(() => {
+      expect(apiMock.getWorkspaceTextFile).toHaveBeenCalledWith('project-1', 'handoff.md', {
+        scope: 'node',
+        nodeId: 'task-1',
+      })
+    })
+  })
+
+
+  it('opens missing task/handoff.md as an editable markdown document with Rich View', async () => {
+    apiMock.getWorkspaceTextFile.mockRejectedValue(
+      new MockApiError(404, { code: 'workspace_file_not_found', message: 'Not a file or missing: handoff.md' }),
+    )
+    apiMock.putWorkspaceTextFile.mockResolvedValue({
+      relative_path: 'handoff.md',
+      content: '# Handoff\n\nReady for review.',
+      updated_at: null,
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ node_id: 'task-1' })}
+        variant="graph"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'task-1')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open task/handoff.md in markdown editor' }))
+
+    const editor = await screen.findByTestId('mock-codemirror')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('info-workspace-view-edit')).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.change(editor, { target: { value: '# Handoff\n\nReady for review.' } })
+    fireEvent.click(screen.getByTestId('info-workspace-view-rich'))
+
+    expect(screen.getByTestId('info-workspace-rich-view')).toBeInTheDocument()
+    expect(screen.getByText('Ready for review.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('info-workspace-view-edit'))
+    fireEvent.blur(screen.getByTestId('mock-codemirror'))
+
+    await waitFor(() => {
+      expect(apiMock.putWorkspaceTextFile).toHaveBeenCalledWith(
+        'project-1',
+        'handoff.md',
+        '# Handoff\n\nReady for review.',
+        { scope: 'node', nodeId: 'task-1' },
+      )
+    })
+  })
+
+  it('breadcrumb root node renders Info only and loads only the root MCP profile', async () => {
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({ node_kind: 'root', is_init_node: true })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(apiMock.getDetailState).toHaveBeenCalledWith('project-1', 'root')
+    })
+    await waitFor(() => {
+      expect(apiMock.readMcpThreadProfile).toHaveBeenCalledWith('project-1', 'root', 'root')
+    })
+
+    expect(screen.queryByTestId('workflow-stepper')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tablist', { name: 'Task document sections' })).not.toBeInTheDocument()
+    expect(screen.getByText('Root node')).toBeInTheDocument()
+    expect(screen.getByTestId('info-tab-mcp-role-root')).toBeInTheDocument()
+    expect(screen.queryByTestId('info-tab-mcp-role-ask_planning')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Frame' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Clarify' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'Spec' })).not.toBeInTheDocument()
+    expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
+    expect(apiMock.readMcpThreadProfile.mock.calls.map((call) => call[2])).toEqual(['root'])
   })
 
   it('normalizes nodeMetaRow index by stripping init prefix for task nodes', () => {
@@ -1376,9 +1619,8 @@ describe('NodeDetailCard', () => {
       expect(finishButton).toBeDisabled()
     })
     expect(finishButton).toHaveTextContent('Confirm and Finish Task')
-    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
-      'Finish Task was already confirmed for this run.',
-    )
+    expect(screen.queryByTestId('finish-task-disabled-hint')).not.toBeInTheDocument()
+    expect(finishButton).toHaveAttribute('title', 'Finish Task was already confirmed for this run.')
   })
 
   it('does not refetch spec generation status on a stable rerender', async () => {
@@ -1520,7 +1762,9 @@ describe('NodeDetailCard', () => {
     await screen.findByDisplayValue('# Spec content')
     expect(screen.getByText('Workspace has uncommitted changes.')).toBeInTheDocument()
     expect(screen.getByTestId('confirm-and-finish-task-button')).toBeDisabled()
-    expect(screen.getByTestId('finish-task-disabled-hint')).toHaveTextContent(
+    expect(screen.queryByTestId('finish-task-disabled-hint')).not.toBeInTheDocument()
+    expect(screen.getByTestId('confirm-and-finish-task-button')).toHaveAttribute(
+      'title',
       'Finish Task is disabled. Resolve Git blocker to continue.',
     )
   })
@@ -1613,6 +1857,70 @@ describe('NodeDetailCard', () => {
     await waitFor(() => {
       expect(apiMock.splitNode).toHaveBeenCalledWith('project-1', 'root', 'phase_breakdown')
     })
+  })
+
+  it('disables frame and split actions when the parent node has already been split', async () => {
+    apiMock.getDetailState.mockResolvedValue({
+      node_id: 'root',
+      frame_confirmed: true,
+      frame_confirmed_revision: 3,
+      frame_revision: 3,
+      active_step: 'frame',
+      workflow_notice: null,
+      generation_error: null,
+      frame_branch_ready: true,
+      frame_needs_reconfirm: false,
+      frame_read_only: false,
+      clarify_read_only: true,
+      clarify_confirmed: true,
+      spec_read_only: true,
+      spec_stale: false,
+      spec_confirmed: false,
+      split_confirmed: true,
+    })
+    apiMock.getNodeDocument.mockResolvedValue({
+      node_id: 'root',
+      kind: 'frame',
+      content: '# Updated frame content',
+      updated_at: '2026-03-21T00:00:00Z',
+    })
+
+    render(
+      <NodeDetailCard
+        projectId="project-1"
+        node={makeNode({
+          review_node_id: 'review-1',
+          workflow: {
+            frame_confirmed: true,
+            active_step: 'spec',
+            spec_confirmed: false,
+            split_confirmed: true,
+          },
+        })}
+        variant="breadcrumb"
+        showClose={false}
+      />,
+    )
+
+    await screen.findByDisplayValue('# Updated frame content')
+
+    expect(screen.getByTestId('confirm-and-split-button')).toBeDisabled()
+    expect(screen.getByTestId('confirm-and-create-spec-button')).toBeDisabled()
+    expect(screen.getByRole('tab', { name: 'Spec' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Split' }))
+    expect(await screen.findByTestId('split-readiness-hint')).toHaveTextContent(
+      'This node has already been split.',
+    )
+    expect(screen.getByTestId('confirm-split-button')).toBeDisabled()
+    expect(screen.getByTestId('split-option-agent_breakdown')).toBeDisabled()
+
+    fireEvent.click(screen.getByTestId('split-option-info-agent_breakdown'))
+
+    expect(await screen.findByRole('dialog', { name: 'Agent Breakdown' })).toBeInTheDocument()
+    expect(screen.getByText('Original task')).toBeInTheDocument()
+    expect(screen.getByText(/Prepare the avatar storage foundation/i)).toBeInTheDocument()
+    expect(screen.getByText(/multiple technical parts and dependencies/i)).toBeInTheDocument()
   })
 
   it('shows both updated-frame actions when the frame-updated branch is ready', async () => {
@@ -2393,9 +2701,9 @@ describe('NodeDetailCard', () => {
     expect(await screen.findByTestId('review-detail-panel')).toBeInTheDocument()
     expect(screen.getByText('Child review accepted.')).toBeInTheDocument()
     expect(screen.getByText('Completed siblings')).toBeInTheDocument()
-    expect(screen.getByText('1.A Child 1')).toBeInTheDocument()
+    expect(screen.getByText('1 Child 1')).toBeInTheDocument()
     expect(screen.getByText('Current active sibling')).toBeInTheDocument()
-    expect(screen.getByText('1.B Child 2')).toBeInTheDocument()
+    expect(screen.getByText('2 Child 2')).toBeInTheDocument()
     expect(screen.getByText('Remaining pending siblings')).toBeInTheDocument()
     expect(screen.getByText('Rollup draft summary')).toBeInTheDocument()
 
@@ -2409,7 +2717,7 @@ describe('NodeDetailCard', () => {
 
   it('shows a package-audit-ready banner on parent task nodes', async () => {
     apiMock.getDetailState.mockResolvedValue({
-      node_id: 'root',
+      node_id: 'parent-1',
       frame_confirmed: true,
       frame_confirmed_revision: 1,
       frame_revision: 1,
@@ -2434,7 +2742,7 @@ describe('NodeDetailCard', () => {
       review_status: 'accepted' as const,
     })
     apiMock.getNodeDocument.mockResolvedValue({
-      node_id: 'root',
+      node_id: 'parent-1',
       kind: 'frame',
       content: '# Frame',
       updated_at: '2026-03-21T00:00:00Z',
@@ -2444,6 +2752,12 @@ describe('NodeDetailCard', () => {
       <NodeDetailCard
         projectId="project-1"
         node={makeNode({
+          node_id: 'parent-1',
+          parent_id: 'root',
+          node_kind: 'original',
+          is_init_node: false,
+          depth: 1,
+          hierarchical_number: '1.1',
           status: 'done',
           workflow: {
             frame_confirmed: true,

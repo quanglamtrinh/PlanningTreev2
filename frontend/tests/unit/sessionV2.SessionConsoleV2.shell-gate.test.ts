@@ -18,6 +18,7 @@ describe('SessionConsoleV2 shell-only guard', () => {
 
     expect(source).toContain('useSessionFacadeV2')
     expect(source).toContain('const { state, commands } = useSessionFacadeV2()')
+    expect(source).toContain('visibleRows={state.activeVisibleTranscriptRows}')
 
     expect(source).not.toContain('startThreadV2')
     expect(source).not.toContain('resumeThreadV2')

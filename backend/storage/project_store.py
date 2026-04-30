@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config.app_config import AppPaths
-from backend.errors.app_errors import LegacyProjectUnsupported, ProjectNotFound
+from backend.errors.app_errors import ProjectNotFound, UnsupportedProjectLayout
 from backend.storage.file_utils import atomic_write_json, ensure_dir, load_json
 from backend.storage.project_ids import normalize_project_id
 from backend.storage.project_locks import ProjectLockRegistry
@@ -120,11 +120,11 @@ class ProjectStore:
         project_dir = self.project_dir_for_folder(folder_path)
         meta = load_json(project_dir / "meta.json")
         if not isinstance(meta, dict):
-            raise LegacyProjectUnsupported("unattached-folder")
+            raise UnsupportedProjectLayout("unattached-folder")
         sanitized = self._sanitize_meta(meta)
         project_id = sanitized.get("id")
         if not isinstance(project_id, str) or not project_id:
-            raise LegacyProjectUnsupported("unattached-folder")
+            raise UnsupportedProjectLayout("unattached-folder")
         return self._runtime_meta(sanitized, str(Path(folder_path).expanduser().resolve()))
 
     def save_meta(self, project_id: str, meta: dict[str, Any]) -> None:
@@ -176,13 +176,13 @@ class ProjectStore:
         return sorted(item["project_id"] for item in self._workspace_store.list_entries())
 
     def _load_snapshot_from_dir(self, project_id: str, project_dir: Path) -> dict[str, Any]:
-        if self._has_legacy_artifacts(project_dir):
-            raise LegacyProjectUnsupported(project_id)
+        if self._has_unsupported_layout_artifacts(project_dir):
+            raise UnsupportedProjectLayout(project_id)
         tree = load_json(project_dir / "tree.json")
         if not isinstance(tree, dict):
             raise ProjectNotFound(project_id)
         if self._schema_version(tree) != CURRENT_SCHEMA_VERSION:
-            raise LegacyProjectUnsupported(project_id)
+            raise UnsupportedProjectLayout(project_id)
         normalized = self._normalize_snapshot_for_persistence(tree)
         normalized["project"] = self.load_meta(project_id)
         self._validate_snapshot(project_id, normalized)
@@ -194,7 +194,7 @@ class ProjectStore:
         except (TypeError, ValueError):
             return 0
 
-    def _has_legacy_artifacts(self, project_dir: Path) -> bool:
+    def _has_unsupported_layout_artifacts(self, project_dir: Path) -> bool:
         return any(
             (
                 (project_dir / "nodes").exists(),
@@ -277,7 +277,7 @@ class ProjectStore:
     def _runtime_meta(self, raw_meta: dict[str, Any], folder_path: str) -> dict[str, Any]:
         sanitized = self._sanitize_meta(raw_meta)
         if "id" not in sanitized or "name" not in sanitized:
-            raise LegacyProjectUnsupported(str(raw_meta.get("id") or "unattached-folder"))
+            raise UnsupportedProjectLayout(str(raw_meta.get("id") or "unattached-folder"))
         sanitized["root_goal"] = str(sanitized.get("root_goal") or sanitized["name"])
         sanitized["created_at"] = str(sanitized.get("created_at") or "")
         sanitized["updated_at"] = str(sanitized.get("updated_at") or "")
@@ -287,8 +287,8 @@ class ProjectStore:
     def _validate_snapshot(self, project_id: str, snapshot: dict[str, Any]) -> None:
         tree_state = snapshot.get("tree_state", {})
         if not isinstance(tree_state, dict):
-            raise LegacyProjectUnsupported(project_id)
+            raise UnsupportedProjectLayout(project_id)
         root_node_id = str(tree_state.get("root_node_id") or "").strip()
         node_index = tree_state.get("node_index")
         if not root_node_id or not isinstance(node_index, dict) or root_node_id not in node_index:
-            raise LegacyProjectUnsupported(project_id)
+            raise UnsupportedProjectLayout(project_id)

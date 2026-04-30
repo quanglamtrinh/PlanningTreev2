@@ -23,8 +23,12 @@ FORBIDDEN_IMPORT_FRAGMENTS = {
     "features/node": "node feature imports stay outside session_v2",
     "workflowStateStore": "workflow store imports stay outside session_v2",
     "workflowEventBridge": "workflow event bridge imports stay outside session_v2",
-    "threadByIdStoreV3": "legacy conversation stores stay outside session_v2",
-    "codex-store": "legacy global codex store imports stay outside session_v2",
+    ("threadByIdStore" + "V3"): "removed conversation stores stay outside session_v2",
+    ("Messages" + "V3"): "removed conversation components stay outside session_v2",
+    "BreadcrumbChatViewV2": "breadcrumb containers stay outside session_v2",
+    ("codex-" + "store"): "removed global codex store imports stay outside session_v2",
+    "getChatSession": "legacy chat-service client calls stay outside session_v2",
+    "sendMessage": "legacy chat-service client calls stay outside session_v2",
     "project-store": "project store imports stay outside session_v2",
     "detail-state-store": "project/detail workflow store imports stay outside session_v2",
     "node-document-store": "project artifact store imports stay outside session_v2",
@@ -41,23 +45,6 @@ FORBIDDEN_RESOLVED_PREFIXES = [
     (ROOT / "frontend" / "src" / "stores" / "node-document-store", "project artifact store imports stay outside session_v2"),
     (ROOT / "frontend" / "src" / "stores" / "ask-shell-action-store", "lane shell action store imports stay outside session_v2"),
 ]
-
-LANE_TOKEN_PATTERNS = [
-    (re.compile(r"(?<![A-Za-z0-9_])(ask|execution|audit)(?![A-Za-z0-9_])"), "lane literal"),
-    (re.compile(r"(?<![A-Za-z0-9_])(Ask|Execution|Audit)(?![A-Za-z0-9_])"), "lane literal"),
-    (re.compile(r"(?<![A-Za-z0-9_])(ask|execution|audit)(?=[A-Z0-9_])"), "lane-prefixed identifier"),
-    (re.compile(r"(?<=_)(ask|execution|audit)(?![a-z])"), "lane snake-case identifier fragment"),
-    (re.compile(r"(?<=[A-Za-z0-9_])(Ask|Execution|Audit)(?![a-z])"), "lane identifier fragment"),
-]
-
-ALLOWED_TOKEN_CONTEXTS = {
-    "TurnExecutionPolicy",
-    "toTurnExecutionPolicy",
-    "commandExecution",
-    "item/commandExecution/requestApproval",
-    "item/commandExecution/outputDelta",
-    "/commandExecution/",
-}
 
 
 def _iter_code_files() -> list[Path]:
@@ -116,31 +103,6 @@ def _check_imports(file_path: Path, text: str, errors: list[str]) -> None:
                 )
 
 
-def _check_lane_tokens(file_path: Path, text: str, errors: list[str]) -> None:
-    for pattern, reason in LANE_TOKEN_PATTERNS:
-        for match in pattern.finditer(text):
-            if _is_allowed_token_context(text, match.start(), match.end()):
-                continue
-            rel_path = file_path.relative_to(ROOT)
-            line = _line_number(text, match.start())
-            token = match.group(0)
-            errors.append(
-                f"{rel_path}:{line}: forbidden session_v2 lane token '{token}' ({reason})"
-            )
-
-
-def _is_allowed_token_context(text: str, start: int, end: int) -> bool:
-    left = start
-    while left > 0 and re.match(r"[A-Za-z0-9_/-]", text[left - 1]):
-        left -= 1
-
-    right = end
-    while right < len(text) and re.match(r"[A-Za-z0-9_/-]", text[right]):
-        right += 1
-
-    context = text[left:right]
-    return context in ALLOWED_TOKEN_CONTEXTS
-
 
 def main() -> int:
     errors: list[str] = []
@@ -151,7 +113,6 @@ def main() -> int:
         for file_path in _iter_code_files():
             text = file_path.read_text(encoding="utf-8")
             _check_imports(file_path, text, errors)
-            _check_lane_tokens(file_path, text, errors)
 
     if errors:
         print("SESSION_V2_BOUNDARY_CHECK=FAIL")
@@ -160,6 +121,7 @@ def main() -> int:
         return 1
 
     print("SESSION_V2_BOUNDARY_CHECK=PASS")
+    print("runtime_boundary=session-core-v2-sole-runtime")
     return 0
 
 

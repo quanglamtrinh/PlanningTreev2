@@ -1,6 +1,7 @@
 # Workflow V2 Cutover Checklist
 
-Use this checklist to keep the migration incremental and reversible.
+Use this checklist as the historical cutover record and as current guardrail
+context for the hard V4/Workflow Core V2 architecture.
 
 ## Backend Gates
 
@@ -8,7 +9,7 @@ Phase 0 contract gate:
 
 - `docs/migration/phase-0-gate-report-v1.md` exists.
 - `python scripts/check_workflow_v2_phase0.py` passes.
-- Public V4 workflow wire naming, V3-to-V2 phase mapping, route ownership, and
+- Public V4 workflow wire naming, historical phase mapping, route ownership, and
   `thread/inject_items` prerequisite are documented.
 - No runtime, route, or frontend behavior changes are required for Phase 0.
 
@@ -40,9 +41,7 @@ Workflow V4 route gate:
 Orchestrator gate:
 
 - V2 orchestrator owns one migrated mutation at a time.
-- V3 compatibility adapter calls the same V2 orchestrator path.
-- Existing V3 integration tests pass through the adapter or are intentionally
-  updated with compatibility assertions.
+- Compatibility adapters are removed; active tests target V4 behavior.
 
 ## Frontend Gates
 
@@ -64,8 +63,7 @@ Breadcrumb cutover gate:
 
 ## Grep Gates
 
-These gates are scoped to the new Breadcrumb workflow path. Project snapshot and
-node-detail APIs may still use `/v3` until they have their own migration plan.
+These gates apply to the active frontend/backend code paths.
 
 PowerShell examples:
 
@@ -74,13 +72,13 @@ rg -n "useWorkflowStateStoreV3" frontend/src/features/conversation
 rg -n "useWorkflowEventBridgeV3" frontend/src/features/conversation
 rg -n "resolveWorkflowProjection" frontend/src/features/conversation
 rg -n "reviewInAudit|markDoneFromExecution|improveInExecution|markDoneFromAudit" frontend/src/features/conversation
-rg -n "/v3/projects/.*/workflow" frontend/src
+python scripts/check_legacy_runtime_removed.py
 ```
 
 Done criteria:
 
 - No matches in the new Breadcrumb V2 path.
-- Any remaining matches are legacy-only, test-only, or explicitly documented.
+- Active code and tests are scan-clean for removed runtime tokens.
 
 ## Test Gates
 
@@ -92,7 +90,7 @@ Backend:
   changes.
 - Integration tests for V4 workflow state, ensure thread, and each migrated
   mutation.
-- Adapter tests proving V3 routes call V2 orchestrator behavior.
+- Integration tests for V4-only routes and removed-route absence where useful.
 - Session Core V2 tests for Codex-compatible `thread/inject_items` payloads.
 
 Frontend:

@@ -1,37 +1,35 @@
 import type {
   AcceptLocalReviewResponse,
   AcceptRollupReviewResponse,
-  AskRolloutMetricsSnapshot,
   BootstrapStatus,
   ClarifyGenAcceptedResponse,
   ClarifyGenStatusResponse,
   ClarifyState,
-  CodexSnapshot,
   DetailState,
   FrameGenAcceptedResponse,
   FrameGenStatusResponse,
   LocalUsageSnapshot,
+  McpEffectiveConfigResponse,
+  McpRegistryResponse,
+  McpRegistryServer,
+  McpThreadProfile,
+  McpThreadRole,
   NodeDocument,
   NodeDocumentKind,
-  ResetThreadV3Response,
   ProjectSummary,
   ReviewState,
   Snapshot,
-  StartTurnV2Response,
-  PlanActionV3,
-  PlanActionV3Response,
   SpecGenAcceptedResponse,
   SpecGenStatusResponse,
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
-  ConversationItemV3,
-  ResolveUserInputV3Response,
-  ThreadSnapshotV3,
   WorkspaceTextFile,
 } from './types'
 
 type JsonBody = Record<string, unknown> | undefined
+type WorkspaceTextFileScope = 'workspace' | 'root_node' | 'node'
+type WorkspaceTextFileOptions = { scope?: WorkspaceTextFileScope; nodeId?: string | null }
 
 interface ErrorPayload {
   code?: string
@@ -48,52 +46,7 @@ interface V2FailureEnvelope {
   error?: ErrorPayload
 }
 
-interface ThreadHistoryPageByIdV3Response {
-  items: ConversationItemV3[]
-  has_more: boolean
-  next_before_sequence: number | null
-  total_item_count: number
-}
-
 const DEFAULT_TIMEOUT_MS = 300_000
-
-function buildThreadByIdBasePathV3(projectId: string, threadId: string): string {
-  return `/v3/projects/${projectId}/threads/by-id/${threadId}`
-}
-
-function buildThreadByIdPathV3(
-  projectId: string,
-  threadId: string,
-  nodeId: string,
-  options?: { liveLimit?: number | null },
-): string {
-  const queryParts = [`node_id=${encodeURIComponent(nodeId)}`]
-  const liveLimit = options?.liveLimit
-  if (liveLimit != null && Number.isFinite(liveLimit) && liveLimit > 0) {
-    queryParts.push(`live_limit=${encodeURIComponent(String(Math.floor(liveLimit)))}`)
-  }
-  return `${buildThreadByIdBasePathV3(projectId, threadId)}?${queryParts.join('&')}`
-}
-
-function buildThreadByIdHistoryPathV3(
-  projectId: string,
-  threadId: string,
-  nodeId: string,
-  options?: { beforeSequence?: number | null; limit?: number | null },
-): string {
-  const queryParts = [`node_id=${encodeURIComponent(nodeId)}`]
-  if (options?.beforeSequence != null && Number.isFinite(options.beforeSequence)) {
-    queryParts.push(`before_sequence=${encodeURIComponent(String(Math.floor(options.beforeSequence)))}`)
-  }
-  if (options?.limit != null && Number.isFinite(options.limit) && options.limit > 0) {
-    queryParts.push(`limit=${encodeURIComponent(String(Math.floor(options.limit)))}`)
-  }
-  return `${buildThreadByIdBasePathV3(projectId, threadId)}/history?${queryParts.join('&')}`
-}
-
-function buildThreadByIdTurnPathV3(projectId: string, threadId: string, nodeId: string): string {
-  return `${buildThreadByIdBasePathV3(projectId, threadId)}/turns?node_id=${encodeURIComponent(nodeId)}`
-}
 
 function artifactNodePathV4(projectId: string, nodeId: string): string {
   return `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/artifacts`
@@ -117,25 +70,6 @@ type ArtifactConfirmResponse = {
 
 type ClarifyUpdateV4Response = {
   clarify: ClarifyState
-}
-
-export function buildThreadByIdEventsUrlV3(
-  projectId: string,
-  nodeId: string,
-  threadId: string,
-  afterSnapshotVersion?: number | null,
-  lastEventId?: string | null,
-): string {
-  const queryParts = [`node_id=${encodeURIComponent(nodeId)}`]
-  if (afterSnapshotVersion != null) {
-    queryParts.push(`after_snapshot_version=${encodeURIComponent(String(afterSnapshotVersion))}`)
-  }
-  const normalizedLastEventId =
-    typeof lastEventId === 'string' && lastEventId.trim().length > 0 ? lastEventId.trim() : null
-  if (normalizedLastEventId != null) {
-    queryParts.push(`last_event_id=${encodeURIComponent(normalizedLastEventId)}`)
-  }
-  return `${buildThreadByIdBasePathV3(projectId, threadId)}/events?${queryParts.join('&')}`
 }
 
 let _cachedAuthToken: string | null = null
@@ -276,45 +210,108 @@ async function jsonFetchV2<T>(path: string, init?: RequestInit, body?: JsonBody)
 }
 
 export const api = {
-  getBootstrapStatus(): Promise<BootstrapStatus> {
-    return jsonFetch('/v3/bootstrap/status')
+
+  ensureRootThread(
+    projectId: string,
+    nodeId: string,
+    payload?: { model?: string | null; modelProvider?: string | null },
+  ): Promise<{ threadId: string; role: 'root' }> {
+    return jsonFetchV2<{ threadId: string; role: 'root' }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/root-thread/ensure`,
+      { method: 'POST' },
+      {
+        model: payload?.model ?? null,
+        modelProvider: payload?.modelProvider ?? null,
+      },
+    )
   },
-  getCodexSnapshot(): Promise<CodexSnapshot> {
-    return jsonFetch('/v3/codex/account')
+
+  listMcpRegistry(): Promise<McpRegistryResponse> {
+    return jsonFetchV2<McpRegistryResponse>('/v4/extensions/mcp/registry')
+  },
+  upsertMcpRegistryServer(server: Partial<McpRegistryServer> & { serverId: string }): Promise<{ server: McpRegistryServer }> {
+    return jsonFetchV2<{ server: McpRegistryServer }>(
+      `/v4/extensions/mcp/registry/servers/${encodeURIComponent(server.serverId)}`,
+      { method: 'PUT' },
+      server as Record<string, unknown>,
+    )
+  },
+  deleteMcpRegistryServer(serverId: string): Promise<{ deleted: boolean; serverId: string }> {
+    return jsonFetchV2<{ deleted: boolean; serverId: string }>(
+      `/v4/extensions/mcp/registry/servers/${encodeURIComponent(serverId)}`,
+      { method: 'DELETE' },
+    )
+  },
+  readMcpThreadProfile(projectId: string, nodeId: string, role: McpThreadRole): Promise<{ profile: McpThreadProfile }> {
+    return jsonFetchV2<{ profile: McpThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-profile`,
+    )
+  },
+  updateMcpThreadProfile(
+    projectId: string,
+    nodeId: string,
+    role: McpThreadRole,
+    patch: Partial<McpThreadProfile>,
+  ): Promise<{ profile: McpThreadProfile }> {
+    return jsonFetchV2<{ profile: McpThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-profile`,
+      { method: 'PATCH' },
+      patch as Record<string, unknown>,
+    )
+  },
+  resetMcpThreadProfile(projectId: string, nodeId: string, role: McpThreadRole): Promise<{ profile: McpThreadProfile }> {
+    return jsonFetchV2<{ profile: McpThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-profile/reset`,
+      { method: 'POST' },
+    )
+  },
+  previewMcpEffectiveConfig(
+    projectId: string,
+    nodeId: string,
+    role: McpThreadRole,
+    threadId?: string | null,
+  ): Promise<McpEffectiveConfigResponse> {
+    const query = threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''
+    return jsonFetchV2<McpEffectiveConfigResponse>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-effective-config${query}`,
+    )
+  },
+  getBootstrapStatus(): Promise<BootstrapStatus> {
+    return jsonFetch('/v4/bootstrap/status')
   },
   getLocalUsageSnapshot(days?: number): Promise<LocalUsageSnapshot> {
     const query = days == null ? '' : `?days=${encodeURIComponent(String(days))}`
-    return jsonFetch<LocalUsageSnapshot>(`/v3/codex/usage/local${query}`)
+    return jsonFetch<LocalUsageSnapshot>(`/v4/usage/local${query}`)
   },
   listProjects(): Promise<ProjectSummary[]> {
-    return jsonFetch('/v3/projects')
+    return jsonFetch('/v4/projects')
   },
   attachProjectFolder(folderPath: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>('/v3/projects/attach', { method: 'POST' }, {
+    return jsonFetch<Snapshot>('/v4/projects/attach', { method: 'POST' }, {
       folder_path: folderPath,
     })
   },
   deleteProject(projectId: string): Promise<void> {
-    return jsonFetch<void>(`/v3/projects/${projectId}`, { method: 'DELETE' })
+    return jsonFetch<void>(`/v4/projects/${projectId}`, { method: 'DELETE' })
   },
   getSnapshot(projectId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/snapshot`)
+    return jsonFetch<Snapshot>(`/v4/projects/${projectId}/snapshot`)
   },
   resetProjectToRoot(projectId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/reset-to-root`, { method: 'POST' })
+    return jsonFetch<Snapshot>(`/v4/projects/${projectId}/reset-to-root`, { method: 'POST' })
   },
   setActiveNode(projectId: string, activeNodeId: string | null): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/active-node`, { method: 'PATCH' }, {
+    return jsonFetch<Snapshot>(`/v4/projects/${projectId}/active-node`, { method: 'PATCH' }, {
       active_node_id: activeNodeId,
     })
   },
   createChild(projectId: string, parentId: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/nodes`, { method: 'POST' }, {
+    return jsonFetch<Snapshot>(`/v4/projects/${projectId}/nodes`, { method: 'POST' }, {
       parent_id: parentId,
     })
   },
   createTask(projectId: string, parentId: string, description: string): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/nodes/create-task`, { method: 'POST' }, {
+    return jsonFetch<Snapshot>(`/v4/projects/${projectId}/nodes/create-task`, { method: 'POST' }, {
       parent_id: parentId,
       description,
     })
@@ -334,14 +331,14 @@ export const api = {
     nodeId: string,
     payload: { title?: string; description?: string },
   ): Promise<Snapshot> {
-    return jsonFetch<Snapshot>(`/v3/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
+    return jsonFetch<Snapshot>(`/v4/projects/${projectId}/nodes/${nodeId}`, { method: 'PATCH' }, payload)
   },
   getNodeDocument(
     projectId: string,
     nodeId: string,
     kind: NodeDocumentKind,
   ): Promise<NodeDocument> {
-    return jsonFetch<NodeDocument>(`/v3/projects/${projectId}/nodes/${nodeId}/documents/${kind}`)
+    return jsonFetch<NodeDocument>(`/v4/projects/${projectId}/nodes/${nodeId}/documents/${kind}`)
   },
   putNodeDocument(
     projectId: string,
@@ -350,32 +347,49 @@ export const api = {
     content: string,
   ): Promise<NodeDocument> {
     return jsonFetch<NodeDocument>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
+      `/v4/projects/${projectId}/nodes/${nodeId}/documents/${kind}`,
       { method: 'PUT' },
       { content },
     )
   },
-  getWorkspaceTextFile(projectId: string, relativePath: string): Promise<WorkspaceTextFile> {
+  getWorkspaceTextFile(
+    projectId: string,
+    relativePath: string,
+    options?: WorkspaceTextFileOptions,
+  ): Promise<WorkspaceTextFile> {
     const q = new URLSearchParams({ relative_path: relativePath })
-    return jsonFetch<WorkspaceTextFile>(`/v3/projects/${projectId}/workspace-text-file?${q}`)
+    if (options?.scope) {
+      q.set('scope', options.scope)
+    }
+    if (options?.nodeId) {
+      q.set('node_id', options.nodeId)
+    }
+    return jsonFetch<WorkspaceTextFile>(`/v4/projects/${projectId}/workspace-text-file?${q}`)
   },
   putWorkspaceTextFile(
     projectId: string,
     relativePath: string,
     content: string,
+    options?: WorkspaceTextFileOptions,
   ): Promise<WorkspaceTextFile> {
     const q = new URLSearchParams({ relative_path: relativePath })
+    if (options?.scope) {
+      q.set('scope', options.scope)
+    }
+    if (options?.nodeId) {
+      q.set('node_id', options.nodeId)
+    }
     return jsonFetch<WorkspaceTextFile>(
-      `/v3/projects/${projectId}/workspace-text-file?${q}`,
+      `/v4/projects/${projectId}/workspace-text-file?${q}`,
       { method: 'PUT' },
       { content },
     )
   },
   getDetailState(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(`/v3/projects/${projectId}/nodes/${nodeId}/detail-state`)
+    return jsonFetch<DetailState>(`/v4/projects/${projectId}/nodes/${nodeId}/detail-state`)
   },
   getReviewState(projectId: string, nodeId: string): Promise<ReviewState> {
-    return jsonFetch<ReviewState>(`/v3/projects/${projectId}/nodes/${nodeId}/review-state`)
+    return jsonFetch<ReviewState>(`/v4/projects/${projectId}/nodes/${nodeId}/review-state`)
   },
   async confirmFrame(projectId: string, nodeId: string): Promise<DetailState> {
     const response = await jsonFetch<ArtifactConfirmResponse>(
@@ -452,18 +466,8 @@ export const api = {
       `${artifactNodePathV4(projectId, nodeId)}/spec/generation-status`,
     )
   },
-  getAskRolloutMetrics(): Promise<AskRolloutMetricsSnapshot> {
-    return jsonFetch<AskRolloutMetricsSnapshot>(`/v3/ask-rollout/metrics`)
-  },
-  reportAskRolloutMetricEvent(event: 'stream_reconnect' | 'stream_error'): Promise<{ ok: boolean }> {
-    return jsonFetch<{ ok: boolean }>(
-      `/v3/ask-rollout/metrics/events`,
-      { method: 'POST' },
-      { event },
-    )
-  },
   finishTask(projectId: string, nodeId: string): Promise<DetailState> {
-    return jsonFetch<DetailState>(`/v3/projects/${projectId}/nodes/${nodeId}/finish-task`, {
+    return jsonFetch<DetailState>(`/v4/projects/${projectId}/nodes/${nodeId}/finish-task`, {
       method: 'POST',
     })
   },
@@ -473,7 +477,7 @@ export const api = {
     summary: string,
   ): Promise<AcceptLocalReviewResponse> {
     return jsonFetch<AcceptLocalReviewResponse>(
-      `/v3/projects/${projectId}/nodes/${nodeId}/accept-local-review`,
+      `/v4/projects/${projectId}/nodes/${nodeId}/accept-local-review`,
       { method: 'POST' },
       { summary },
     )
@@ -483,146 +487,18 @@ export const api = {
     reviewNodeId: string,
   ): Promise<AcceptRollupReviewResponse> {
     return jsonFetch<AcceptRollupReviewResponse>(
-      `/v3/projects/${projectId}/nodes/${reviewNodeId}/accept-rollup-review`,
+      `/v4/projects/${projectId}/nodes/${reviewNodeId}/accept-rollup-review`,
       { method: 'POST' },
     )
   },
   initGit(projectId: string): Promise<{ status: string; head_sha: string; message: string }> {
-    return jsonFetch(`/v3/projects/${projectId}/git/init`, { method: 'POST' })
+    return jsonFetch(`/v4/projects/${projectId}/git/init`, { method: 'POST' })
   },
   resetWorkspace(
     projectId: string,
     nodeId: string,
     target: 'initial' | 'head',
   ): Promise<{ status: string; target_sha: string; current_head_sha: string; task_present_in_current_workspace: boolean; detail_state: DetailState }> {
-    return jsonFetch(`/v3/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
-  },
-  async getThreadSnapshotByIdV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-    liveLimit?: number | null,
-  ): Promise<ThreadSnapshotV3> {
-    const response = await jsonFetchV2<{ snapshot: ThreadSnapshotV3 }>(
-      buildThreadByIdPathV3(projectId, threadId, nodeId, { liveLimit }),
-    )
-    return response.snapshot
-  },
-  getThreadHistoryPageByIdV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-    options?: { beforeSequence?: number | null; limit?: number | null },
-  ): Promise<ThreadHistoryPageByIdV3Response> {
-    return jsonFetchV2<ThreadHistoryPageByIdV3Response>(
-      buildThreadByIdHistoryPathV3(projectId, threadId, nodeId, options),
-    )
-  },
-  async probeThreadByIdEventsCursorV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-    lastEventId: string,
-  ): Promise<'ok' | 'mismatch'> {
-    const authHeaders = await getElectronAuthHeaders()
-    const response = await withRequestTimeout(
-      fetch(buildThreadByIdEventsUrlV3(projectId, nodeId, threadId, null, lastEventId), {
-        method: 'GET',
-        headers: {
-          ...authHeaders,
-        },
-      }),
-    )
-
-    if (response.status === 409) {
-      let payload: V2FailureEnvelope | ErrorPayload | null = null
-      try {
-        payload = (await response.json()) as V2FailureEnvelope | ErrorPayload
-      } catch {
-        payload = null
-      }
-      const envelopeErrorCode =
-        payload && 'ok' in payload && payload.ok === false ? payload.error?.code ?? null : null
-      const bareErrorCode = payload && 'code' in payload ? (payload.code ?? null) : null
-      const code = envelopeErrorCode ?? bareErrorCode
-      if (code === 'conversation_stream_mismatch') {
-        return 'mismatch'
-      }
-      throw new ApiError(
-        response.status,
-        payload && 'ok' in payload && payload.ok === false ? payload.error ?? null : (payload as ErrorPayload),
-      )
-    }
-
-    if (!response.ok) {
-      let payload: ErrorPayload | null = null
-      try {
-        payload = (await response.json()) as ErrorPayload
-      } catch {
-        payload = null
-      }
-      throw new ApiError(response.status, payload)
-    }
-
-    try {
-      await response.body?.cancel()
-    } catch {
-      // no-op
-    }
-    return 'ok'
-  },
-  resolveThreadUserInputByIdV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-    requestId: string,
-    answers: ResolveUserInputV3Response['answers'],
-  ): Promise<ResolveUserInputV3Response> {
-    return jsonFetchV2<ResolveUserInputV3Response>(
-      `${buildThreadByIdBasePathV3(projectId, threadId)}/requests/${requestId}/resolve?node_id=${encodeURIComponent(nodeId)}`,
-      { method: 'POST' },
-      { answers },
-    )
-  },
-  planActionByIdV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-    payload: {
-      action: PlanActionV3
-      planItemId: string
-      revision: number
-      text?: string
-      idempotencyKey?: string
-    },
-  ): Promise<PlanActionV3Response> {
-    return jsonFetchV2<PlanActionV3Response>(
-      `${buildThreadByIdBasePathV3(projectId, threadId)}/plan-actions?node_id=${encodeURIComponent(nodeId)}`,
-      { method: 'POST' },
-      payload,
-    )
-  },
-  startThreadTurnByIdV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-    text: string,
-    metadata: Record<string, unknown> = {},
-  ): Promise<StartTurnV2Response> {
-    return jsonFetchV2<StartTurnV2Response>(
-      buildThreadByIdTurnPathV3(projectId, threadId, nodeId),
-      { method: 'POST' },
-      { text, metadata },
-    )
-  },
-  resetThreadByIdV3(
-    projectId: string,
-    nodeId: string,
-    threadId: string,
-  ): Promise<ResetThreadV3Response> {
-    return jsonFetchV2<ResetThreadV3Response>(
-      `${buildThreadByIdBasePathV3(projectId, threadId)}/reset?node_id=${encodeURIComponent(nodeId)}`,
-      { method: 'POST' },
-    )
-  },
+    return jsonFetch(`/v4/projects/${projectId}/nodes/${nodeId}/reset-workspace`, { method: 'POST' }, { target })
+  }
 }

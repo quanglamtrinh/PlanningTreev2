@@ -222,6 +222,260 @@ def test_build_turns_from_rollout_items_normal_turn() -> None:
     assert [item["type"] for item in turns[0]["items"]] == ["userMessage", "agentMessage", "task_completed"]
 
 
+
+def test_build_turns_from_rollout_items_uses_event_id_for_legacy_messages() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:1",
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"turnId": "turn-1"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "user/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"text": "Build it"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:3",
+                    "method": "assistant/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"text": "Done"},
+                },
+            },
+        ]
+    )
+
+    assert [item["id"] for item in turns[0]["items"]] == ["thread-1:2", "thread-1:3"]
+
+
+def test_build_turns_from_rollout_items_prefers_explicit_legacy_item_id() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "user/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"itemId": "item-explicit", "text": "Build it"},
+                },
+            }
+        ]
+    )
+
+    assert turns[0]["items"][0]["id"] == "item-explicit"
+
+
+def test_build_turns_from_rollout_items_preserves_workflow_internal_turn_metadata() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:1",
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {
+                        "turn": {
+                            "id": "turn-frame",
+                            "metadata": {
+                                "workflowInternal": True,
+                                "workflowInternalKind": "artifact_generation",
+                                "artifactKind": "frame",
+                            },
+                        }
+                    },
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {"turn": {"id": "turn-frame", "status": "completed"}},
+                },
+            },
+        ]
+    )
+
+    assert turns[0]["metadata"] == {
+        "workflowInternal": True,
+        "workflowInternalKind": "artifact_generation",
+        "artifactKind": "frame",
+    }
+
+
+def test_build_turns_from_rollout_items_preserves_workflow_metadata_from_terminal_turn() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:1",
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {"turnId": "turn-frame"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {
+                        "turn": {
+                            "id": "turn-frame",
+                            "status": "completed",
+                            "metadata": {
+                                "workflowInternal": True,
+                                "workflowInternalKind": "artifact_generation",
+                                "artifactKind": "frame",
+                            },
+                        }
+                    },
+                },
+            },
+        ]
+    )
+
+    assert turns[0]["metadata"] == {
+        "workflowInternal": True,
+        "workflowInternalKind": "artifact_generation",
+        "artifactKind": "frame",
+    }
+
+
+def test_build_turns_from_rollout_items_dedupes_terminal_message_items_by_content() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:1",
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {"turnId": "turn-frame"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "user/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {"text": "Generate frame"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:3",
+                    "method": "assistant/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {"text": "Generated frame JSON"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:4",
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "turnId": "turn-frame",
+                    "params": {
+                        "turn": {
+                            "id": "turn-frame",
+                            "status": "completed",
+                            "items": [
+                                {"id": "terminal-user", "type": "userMessage", "text": "Generate frame"},
+                                {"id": "terminal-agent", "type": "agentMessage", "text": "Generated frame JSON"},
+                            ],
+                        }
+                    },
+                },
+            },
+        ]
+    )
+
+    assert [item["type"] for item in turns[0]["items"]] == ["userMessage", "agentMessage"]
+    assert [item["id"] for item in turns[0]["items"]] == ["terminal-user", "terminal-agent"]
+
+
+def test_build_turns_from_rollout_items_dedupes_response_item_against_semantic_message() -> None:
+    turns = build_turns_from_rollout_items(
+        [
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:1",
+                    "method": "turn/started",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"turnId": "turn-1"},
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:2",
+                    "method": "assistant/message",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"text": "Final summary"},
+                },
+            },
+            {
+                "type": "response_item",
+                "item": {
+                    "id": "response-final",
+                    "type": "agentMessage",
+                    "turnId": "turn-1",
+                    "threadId": "thread-1",
+                    "text": "Final summary",
+                },
+            },
+            {
+                "type": "event_msg",
+                "event": {
+                    "eventId": "thread-1:3",
+                    "method": "turn/completed",
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "params": {"turn": {"id": "turn-1", "status": "completed"}},
+                },
+            },
+        ]
+    )
+
+    assert [item["type"] for item in turns[0]["items"]] == ["agentMessage"]
+    assert turns[0]["items"][0]["id"] == "response-final"
+    assert turns[0]["items"][0]["text"] == "Final summary"
+
+
 def test_build_turns_from_rollout_items_terminal_before_started() -> None:
     turns = build_turns_from_rollout_items(
         [

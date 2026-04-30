@@ -230,7 +230,7 @@ describe('sessionRuntimeController', () => {
 
     expect(harness.api.resumeThread).toHaveBeenCalledWith('thread-1', {})
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
-    expect(harness.api.listThreadTurns).not.toHaveBeenCalled()
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
   })
 
@@ -252,12 +252,35 @@ describe('sessionRuntimeController', () => {
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [turn], { mode: 'replace' })
   })
 
+  it('hydrates from thread/turns when thread/read includeTurns is empty', async () => {
+    const turn = makeTurn({
+      id: 'turn-from-list',
+      threadId: 'thread-1',
+      status: 'completed',
+      completedAtMs: 2,
+    })
+    harness.api.readThread.mockResolvedValue({
+      thread: makeThread({ id: 'thread-1', turns: [] }),
+    })
+    harness.api.listThreadTurns.mockResolvedValue({
+      data: [turn],
+      nextCursor: null,
+    })
+
+    await harness.controller.hydrateThreadState('thread-1', { force: true })
+
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
+    expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [turn], { mode: 'replace' })
+  })
+
   it('hydrates thread state with replace mode during full resync recovery', async () => {
     await harness.controller.hydrateThreadState('thread-1', {
       force: true,
       replaceProjection: true,
     })
 
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
     expect(harness.spies.setThreadTurns).toHaveBeenCalledWith('thread-1', [], { mode: 'replace' })
   })
 
@@ -278,6 +301,7 @@ describe('sessionRuntimeController', () => {
 
     expect(harness.api.getThreadJournalHead).not.toHaveBeenCalled()
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
+    expect(harness.api.listThreadTurns).toHaveBeenCalledWith('thread-1', { cursor: null, limit: 100 })
     expect(harness.spies.setReplayCursor).not.toHaveBeenCalled()
   })
 
@@ -323,6 +347,38 @@ describe('sessionRuntimeController', () => {
     expect(request.model).toBe('gpt-5')
     expect(request.approvalPolicy).toBe('never')
     expect(request.sandboxPolicy).toEqual({ type: 'dangerFullAccess' })
+  })
+
+
+
+  it('includes MCP context in turn/start without mixing it into execution policy', async () => {
+    harness.runtimeSnapshot.activeThreadId = 'thread-1'
+    harness.runtimeSnapshot.activeTurns = []
+    harness.runtimeSnapshot.activeRunningTurn = null
+    harness.runtimeSnapshot.selectedModel = 'gpt-5'
+
+    await harness.controller.submit(
+      {
+        input: [{ type: 'text', text: 'use mcp' }],
+        text: 'use mcp',
+        requestedPolicy: {
+          accessMode: 'full-access',
+          model: null,
+        },
+      },
+      { effort: 'high' },
+      { mcpContext: { projectId: 'project-1', nodeId: 'node-1', role: 'execution' } },
+    )
+
+    const [, request] = harness.api.startTurn.mock.calls[0]
+    expect(request).toEqual(
+      expect.objectContaining({
+        input: [{ type: 'text', text: 'use mcp' }],
+        model: 'gpt-5',
+        effort: 'high',
+        mcpContext: { projectId: 'project-1', nodeId: 'node-1', role: 'execution' },
+      }),
+    )
   })
 
   it('maps default Codex composer model and high effort into turn/start config', async () => {
@@ -637,7 +693,7 @@ describe('sessionRuntimeController', () => {
     expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
   })
 
-  it('selectThread skips re-read from server when transcript is still present in store', async () => {
+  it('selectThread always re-reads from server so selected thread transcript stays current', async () => {
     const turn = makeTurn({
       id: 'turn-from-read',
       threadId: 'thread-1',
@@ -655,7 +711,7 @@ describe('sessionRuntimeController', () => {
     harness.api.readThread.mockClear()
 
     await harness.controller.selectThread('thread-1')
-    expect(harness.api.readThread).not.toHaveBeenCalled()
+    expect(harness.api.readThread).toHaveBeenCalledWith('thread-1', true)
   })
 
   it('selectThread(null) clears active selection without clearing metadata', async () => {

@@ -7,6 +7,7 @@ import type {
   SessionInputAction,
   SessionThread,
   SessionTurn,
+  VisibleTranscriptRow,
   ThreadCreationPolicy,
   ThreadStatus,
   TurnExecutionPolicy,
@@ -27,6 +28,7 @@ import {
   selectActiveRunningTurn,
   selectActiveThread,
   selectActiveTurns,
+  selectVisibleTranscriptRows,
   selectThreadsSorted,
   useThreadSessionStore,
 } from '../store/threadSessionStore'
@@ -47,6 +49,7 @@ export type SessionFacadeState = {
   activeThread: SessionThread | null
   activeTurns: SessionTurn[]
   activeItemsByTurn: Record<string, SessionItem[]>
+  activeVisibleTranscriptRows: VisibleTranscriptRow[]
   activeRunningTurn: SessionTurn | null
   activeRequest: PendingServerRequest | null
   modelOptions: ComposerModelOption[]
@@ -73,7 +76,11 @@ export type SessionFacadeCommands = {
   refreshThreads: () => Promise<void>
   submitSessionAction: (action: SessionInputAction) => Promise<void>
   setModel: (model: string) => void
-  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
+  submit: (
+    payload: ComposerSubmitPayload,
+    policy?: TurnExecutionPolicy,
+    context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
+  ) => Promise<void>
   interrupt: () => Promise<void>
   resolveRequest: (requestId: string, result: Record<string, unknown>) => Promise<void>
   rejectRequest: (requestId: string, reason?: string | null) => Promise<void>
@@ -147,6 +154,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
   const activeThread = useMemo(() => selectActiveThread(threadStoreState), [threadStoreState])
   const activeTurns = useMemo(() => selectActiveTurns(threadStoreState), [threadStoreState])
   const activeItemsByTurn = useMemo(() => selectActiveItemsByTurn(threadStoreState), [threadStoreState])
+  const activeVisibleTranscriptRows = useMemo(() => selectVisibleTranscriptRows(threadStoreState), [threadStoreState])
   const activeRunningTurn = useMemo(() => selectActiveRunningTurn(threadStoreState), [threadStoreState])
 
   const {
@@ -336,9 +344,16 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     }
   }, [])
 
-  const submit = useCallback(async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => {
-    await runtimeControllerRef.current?.submit(payload, policy)
-  }, [])
+  const submit = useCallback(
+    async (
+      payload: ComposerSubmitPayload,
+      policy?: TurnExecutionPolicy,
+      context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
+    ) => {
+      await runtimeControllerRef.current?.submit(payload, policy, context)
+    },
+    [],
+  )
 
   const interrupt = useCallback(async () => {
     await runtimeControllerRef.current?.interrupt()
@@ -381,6 +396,7 @@ export function useSessionFacadeV2(options?: SessionFacadeOptions): SessionFacad
     activeThread,
     activeTurns,
     activeItemsByTurn,
+    activeVisibleTranscriptRows,
     activeRunningTurn,
     activeRequest,
     modelOptions,

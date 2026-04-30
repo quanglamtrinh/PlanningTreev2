@@ -7,10 +7,8 @@ from uuid import uuid4
 from backend.config.app_config import (
     get_codex_cmd,
     is_ask_followup_queue_enabled,
-    is_ask_v3_backend_enabled,
-    is_ask_v3_frontend_enabled,
 )
-from backend.errors.app_errors import ChatNotAllowed, InvalidProjectFolder, InvalidRequest, ProjectNotFound
+from backend.errors.app_errors import InvalidProjectFolder, InvalidRequest, ProjectNotFound
 from backend.services import planningtree_workspace
 from backend.services.snapshot_view_service import SnapshotViewService
 from backend.storage.file_utils import iso_now
@@ -23,12 +21,10 @@ class ProjectService:
         self,
         storage: Storage,
         snapshot_view_service: SnapshotViewService | None = None,
-        chat_service: Any = None,
         git_checkpoint_service: Any = None,
     ) -> None:
         self.storage = storage
         self._snapshot_view_service = snapshot_view_service
-        self._chat_service = chat_service
         self._git_checkpoint_service = git_checkpoint_service
 
     def bootstrap_status(self) -> dict[str, Any]:
@@ -38,8 +34,6 @@ class ProjectService:
             "workspace_configured": True,
             "codex_available": codex_path is not None,
             "codex_path": codex_path,
-            "ask_v3_backend_enabled": is_ask_v3_backend_enabled(),
-            "ask_v3_frontend_enabled": is_ask_v3_frontend_enabled(),
             "ask_followup_queue_enabled": is_ask_followup_queue_enabled(),
         }
 
@@ -88,8 +82,6 @@ class ProjectService:
         return self._public_snapshot(project_id, snapshot)
 
     def reset_to_root(self, project_id: str) -> dict[str, Any]:
-        if self._chat_service is not None and self._chat_service.has_live_turns_for_project(project_id):
-            raise ChatNotAllowed("Cannot reset project while a chat turn is active.")
         with self.storage.project_lock(project_id):
             snapshot = self.storage.project_store.load_snapshot(project_id)
             tree_state = snapshot.get("tree_state", {})
@@ -106,13 +98,10 @@ class ProjectService:
                 "node_index": {root_id: reset_root},
             }
             snapshot = self._persist_snapshot(project_id, snapshot)
-            self.storage.chat_state_store.clear_all_sessions(project_id)
             self._sync_snapshot_tree(snapshot)
         return self._public_snapshot(project_id, snapshot)
 
     def delete_project(self, project_id: str) -> None:
-        if self._chat_service is not None and self._chat_service.has_live_turns_for_project(project_id):
-            raise ChatNotAllowed("Cannot remove project while a chat turn is active.")
         try:
             self.storage.workspace_store.get_folder_path(project_id)
         except ProjectNotFound:

@@ -1,12 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { DocumentRichViewContent } from '../../markdown/DocumentRichView'
 import { SharedMarkdownRenderer } from '../../markdown/SharedMarkdownRenderer'
 import { isItemKind } from '../contracts'
-import type { ItemKind, SessionItem, SessionTurn } from '../contracts'
+import type { ItemKind, SessionItem, SessionTurn, VisibleTranscriptRow } from '../contracts'
+import { formatNodeTitleWithIndex } from '../../../utils/nodeDisplayIndex'
 
 type TranscriptPanelProps = {
   threadId: string | null
   turns: SessionTurn[]
   itemsByTurn: Record<string, SessionItem[]>
+  visibleRows?: VisibleTranscriptRow[]
   workflowContextItem?: SessionItem | null
   showWorkflowContext?: boolean
 }
@@ -589,21 +592,6 @@ function isContextCompactionItem(item: SessionItem): boolean {
   return payloadTypeOf(item) === 'contextCompaction'
 }
 
-function isInternalWorkflowTurn(turn: SessionTurn): boolean {
-  return isRecord(turn.metadata) && turn.metadata.workflowInternal === true
-}
-
-function isInternalWorkflowItem(item: SessionItem): boolean {
-  const payload = isRecord(item.payload) ? item.payload : {}
-  const metadata = isRecord(payload.metadata) ? payload.metadata : {}
-  if (metadata.workflowInternal === true) {
-    return true
-  }
-  const rawItem = isRecord(item.rawItem) ? (item.rawItem as Record<string, unknown>) : {}
-  const rawMetadata = isRecord(rawItem.metadata) ? rawItem.metadata : {}
-  return rawMetadata.workflowInternal === true
-}
-
 function isWorkflowContextItem(item: SessionItem): boolean {
   const payload = isRecord(item.payload) ? item.payload : {}
   const metadata = isRecord(payload.metadata) ? payload.metadata : {}
@@ -683,12 +671,13 @@ function nodeTitle(node: unknown): string {
   if (!isRecord(node)) {
     return 'Untitled node'
   }
-  const number = normalizeText(node.hierarchical_number)
-  const title = normalizeText(node.title)
-  if (number && title) {
-    return `${number} ${title}`
-  }
-  return title || number || normalizeText(node.node_id) || 'Untitled node'
+  return formatNodeTitleWithIndex({
+    hierarchical_number: normalizeText(node.hierarchical_number),
+    is_init_node: node.is_init_node === true,
+    node_kind: normalizeText(node.node_kind),
+    title: normalizeText(node.title),
+    node_id: normalizeText(node.node_id),
+  })
 }
 
 function documentContent(document: unknown): string {
@@ -704,6 +693,35 @@ function clarifyQuestions(clarify: unknown): Record<string, unknown>[] {
   }
   return clarify.questions.filter((question): question is Record<string, unknown> => isRecord(question))
 }
+
+function clarifyAnswerText(question: Record<string, unknown>): string {
+  const selectedOptionId =
+    normalizeText(question.selected_option_id) ||
+    normalizeText(question.selectedOptionId) ||
+    normalizeText(question.selectedOption)
+  if (selectedOptionId && Array.isArray(question.options)) {
+    const selectedOption = question.options.find(
+      (option): option is Record<string, unknown> =>
+        isRecord(option) && normalizeText(option.id) === selectedOptionId,
+    )
+    const selectedLabel =
+      normalizeText(selectedOption?.label) ||
+      normalizeText(selectedOption?.value) ||
+      normalizeText(selectedOption?.id)
+    if (selectedLabel) {
+      return selectedLabel
+    }
+  }
+
+  return (
+    normalizeText(question.answer) ||
+    normalizeText(question.custom_answer) ||
+    normalizeText(question.customAnswer) ||
+    normalizeText(question.value) ||
+    'Not answered'
+  )
+}
+
 
 function splitChildren(split: unknown): Record<string, unknown>[] {
   if (!isRecord(split) || !Array.isArray(split.children)) {
@@ -758,20 +776,22 @@ function ArtifactDocumentSection({ title, content }: { title: string; content: s
     return null
   }
   return (
-    <section className="sessionV2WorkflowContextSection">
-      <h5>{title}</h5>
-      <SharedMarkdownRenderer content={content} variant="document" />
+    <section className="sessionV2WorkflowContextDocument">
+      <h5 className="sessionV2WorkflowContextDocumentTitle">{title}</h5>
+      <DocumentRichViewContent
+        content={content}
+        testId={`workflow-context-document-${title}`}
+        className="sessionV2WorkflowContextRichView"
+      />
     </section>
   )
 }
 
 function WorkflowContextNodeSection({
   entry,
-  label,
   isCurrent,
 }: {
   entry: Record<string, unknown>
-  label?: string
   isCurrent?: boolean
 }) {
   const frameText = documentContent(entry.frame)
@@ -786,7 +806,6 @@ function WorkflowContextNodeSection({
     <section className="sessionV2WorkflowContextNode">
       <h4>
         {nodeTitle(entry.node)}
-        {label ? <span>{label}</span> : null}
         {isCurrent ? <span>current task</span> : null}
       </h4>
       <ArtifactDocumentSection title="frame.md" content={frameText} />
@@ -798,7 +817,7 @@ function WorkflowContextNodeSection({
             {questions.map((question, questionIndex) => (
               <li key={`clarify-${questionIndex}`}>
                 <strong>{normalizeText(question.question) || normalizeText(question.field_name) || 'Question'}</strong>
-                <span>{normalizeText(question.answer) || normalizeText(question.custom_answer) || 'Not answered'}</span>
+                <span>{clarifyAnswerText(question)}</span>
               </li>
             ))}
           </ol>
@@ -821,17 +840,6 @@ function WorkflowContextNodeSection({
   )
 }
 
-function workflowContextCardSummary(ancestorCount: number, currentContext: Record<string, unknown> | null): string {
-  const parts: string[] = []
-  if (ancestorCount > 0) {
-    parts.push(`${ancestorCount} parent${ancestorCount === 1 ? '' : 's'}`)
-  }
-  if (currentContext) {
-    parts.push(nodeTitle(currentContext.node))
-  }
-  return parts.join(' · ') || 'workflow'
-}
-
 export function WorkflowContextCard({ item, sticky = false }: { item: SessionItem; sticky?: boolean }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const contextPayload = workflowContextPayload(item)
@@ -842,9 +850,6 @@ export function WorkflowContextCard({ item, sticky = false }: { item: SessionIte
   const currentContext = isRecord(artifactContext.currentContext)
     ? artifactContext.currentContext
     : null
-  const metadata = workflowContextMetadata(item)
-  const packetKind = normalizeText(metadata.packetKind)
-
   if (!contextPayload) {
     return null
   }
@@ -867,19 +872,11 @@ export function WorkflowContextCard({ item, sticky = false }: { item: SessionIte
         onClick={() => setIsExpanded((value) => !value)}
       >
         <span className="sessionV2WorkflowContextTitle">Context</span>
-        <span className="sessionV2WorkflowContextSummary">{workflowContextCardSummary(ancestorContext.length, currentContext)}</span>
-        <small>{packetKind || 'workflow'}</small>
-        <span
-          className={`sessionV2WorkflowContextChevron ${isExpanded ? 'sessionV2WorkflowContextChevronOpen' : ''}`}
-          aria-hidden
-        >
-          &gt;
-        </span>
       </button>
       {isExpanded ? (
         <div className="sessionV2WorkflowContextBody">
           {ancestorContext.map((entry, index) => (
-            <WorkflowContextNodeSection key={`ancestor-${index}`} entry={entry} label="parent" />
+            <WorkflowContextNodeSection key={`ancestor-${index}`} entry={entry} />
           ))}
           {currentContext ? (
             <WorkflowContextNodeSection entry={currentContext} isCurrent />
@@ -1128,24 +1125,6 @@ function renderToolTitle(item: SessionItem): string {
   return item.kind
 }
 
-function formatUnknownItemDetails(item: SessionItem): string {
-  const payload = isRecord(item.payload) ? item.payload : {}
-  const payloadText = formatPayloadFallback(payload) || '{}'
-  return `kind: ${item.kind || 'unknown'}\npayload:\n${payloadText}`
-}
-
-function UnknownItemCard({ item }: { item: SessionItem }) {
-  return (
-    <article className="sessionV2ToolCard sessionV2UnknownItemCard">
-      <header className="sessionV2ToolCardHeader">
-        <span>Unknown Codex item</span>
-        <small>{item.status}</small>
-      </header>
-      <pre className="sessionV2ToolCardText">{formatUnknownItemDetails(item)}</pre>
-    </article>
-  )
-}
-
 function shouldCollapseUserMessage(text: string): boolean {
   if (!text) {
     return false
@@ -1170,43 +1149,6 @@ function getCollapsedUserMessageText(text: string): string {
   return `${trimmed}\n...`
 }
 
-function dedupeTurnItems(items: SessionItem[]): SessionItem[] {
-  if (items.length <= 1) {
-    return items
-  }
-  const deduped: SessionItem[] = []
-  const indexById = new Map<string, number>()
-  for (const item of items) {
-    const existingIndex = indexById.get(item.id)
-    if (existingIndex === undefined) {
-      indexById.set(item.id, deduped.length)
-      deduped.push(item)
-      continue
-    }
-    const existing = deduped[existingIndex]
-    if (item.updatedAtMs >= existing.updatedAtMs) {
-      deduped[existingIndex] = {
-        ...existing,
-        ...item,
-        createdAtMs: existing.createdAtMs,
-      }
-    }
-  }
-  return deduped
-}
-
-function mergedTurnItems(turn: SessionTurn, storeItems: SessionItem[] | undefined): SessionItem[] {
-  const hydratedItems = Array.isArray(turn.items) ? turn.items : []
-  const liveItems = Array.isArray(storeItems) ? storeItems : []
-  if (hydratedItems.length === 0) {
-    return liveItems
-  }
-  if (liveItems.length === 0) {
-    return hydratedItems
-  }
-  return dedupeTurnItems([...hydratedItems, ...liveItems])
-}
-
 function getActiveAgentStreamToken(
   threadId: string,
   turns: SessionTurn[],
@@ -1214,7 +1156,7 @@ function getActiveAgentStreamToken(
 ): string | null {
   for (let turnIndex = turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = turns[turnIndex]
-    const items = dedupeTurnItems(itemsByTurn[`${threadId}:${turn.id}`] ?? [])
+    const items = itemsByTurn[`${threadId}:${turn.id}`] ?? []
     for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
       const item = items[itemIndex]
       if (!isAgentMessageItem(item) || item.status !== 'inProgress') {
@@ -1259,18 +1201,18 @@ async function copyTextToClipboard(value: string): Promise<void> {
   }
 }
 
-function buildTranscriptRows(
-  threadId: string,
-  turns: SessionTurn[],
-  itemsByTurn: Record<string, SessionItem[]>,
-): TranscriptRow[] {
+function buildTranscriptRows(visibleRows: VisibleTranscriptRow[]): TranscriptRow[] {
   const rows: TranscriptRow[] = []
-  for (const turn of turns) {
-    if (isInternalWorkflowTurn(turn)) {
-      continue
+  const rowsByTurn = new Map<string, { turn: SessionTurn; items: SessionItem[] }>()
+  for (const row of visibleRows) {
+    const existing = rowsByTurn.get(row.turn.id)
+    if (existing) {
+      existing.items.push(row.item)
+    } else {
+      rowsByTurn.set(row.turn.id, { turn: row.turn, items: [row.item] })
     }
-    const key = `${threadId}:${turn.id}`
-    const items = mergedTurnItems(turn, itemsByTurn[key]).filter((item) => !isInternalWorkflowItem(item) && !isWorkflowContextItem(item))
+  }
+  for (const { turn, items } of rowsByTurn.values()) {
     if (items.length === 0) {
       continue
     }
@@ -1432,7 +1374,7 @@ function latestWorkflowContextItem(
   let latest: SessionItem | null = null
   for (const turn of turns) {
     const key = `${threadId}:${turn.id}`
-    for (const item of mergedTurnItems(turn, itemsByTurn[key])) {
+    for (const item of itemsByTurn[key] ?? []) {
       if (!isWorkflowContextItem(item)) {
         continue
       }
@@ -1451,6 +1393,7 @@ export function TranscriptPanel({
   threadId,
   turns,
   itemsByTurn,
+  visibleRows,
   workflowContextItem = null,
   showWorkflowContext = true,
 }: TranscriptPanelProps) {
@@ -1495,7 +1438,7 @@ export function TranscriptPanel({
     }, SCROLL_SNAPSHOT_DEBOUNCE_MS)
   }
 
-  const rows = threadId ? buildTranscriptRows(threadId, turns, itemsByTurn) : []
+  const rows = threadId ? buildTranscriptRows(visibleRows ?? []) : []
   const contextItem = showWorkflowContext
     ? workflowContextItem ?? (threadId ? latestWorkflowContextItem(threadId, turns, itemsByTurn) : null)
     : null
@@ -1599,16 +1542,11 @@ export function TranscriptPanel({
     return (
       <section className="sessionV2Transcript" ref={transcriptRef}>
         {contextItem ? <WorkflowContextCard item={contextItem} sticky /> : null}
-        <div className="sessionV2Empty">No active thread</div>
       </section>
     )
   }
   if (rows.length === 0 && !contextItem) {
-    return (
-      <section className="sessionV2Transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
-        <div className="sessionV2Empty">No messages yet.</div>
-      </section>
-    )
+    return <section className="sessionV2Transcript" ref={transcriptRef} onScroll={handleTranscriptScroll} />
   }
 
   return (
@@ -1663,14 +1601,14 @@ export function TranscriptPanel({
                       )
                     }
 
-                    if (isWorkflowContextItem(entry.item)) {
+                    if (showWorkflowContext && isWorkflowContextItem(entry.item)) {
                       return <WorkflowContextCard key={`${row.key}:${entry.key}`} item={entry.item} />
                     }
 
                     const variant = resolveRowVariant(entry.item)
                     const text = renderItemText(entry.item)
                     if (variant === 'unknown') {
-                      return <UnknownItemCard key={`${row.key}:${entry.key}`} item={entry.item} />
+                      return null
                     }
                     const rowClassName =
                       variant === 'assistant'
@@ -1753,7 +1691,9 @@ export function TranscriptPanel({
                             className={`sessionV2TurnFileSummaryChevron ${isExpanded ? 'sessionV2TurnFileSummaryChevronOpen' : ''}`}
                             aria-hidden
                           >
-                            v
+                            <svg viewBox="0 0 20 20" focusable="false" aria-hidden>
+                              <path d="M5.5 7.5L10 12l4.5-4.5" />
+                            </svg>
                           </span>
                         </div>
                       </button>
@@ -1802,14 +1742,14 @@ export function TranscriptPanel({
           )
         }
 
-        if (isWorkflowContextItem(row.item)) {
+        if (showWorkflowContext && isWorkflowContextItem(row.item)) {
           return <WorkflowContextCard key={row.key} item={row.item} />
         }
 
         const variant = resolveRowVariant(row.item)
         const text = renderItemText(row.item)
         if (variant === 'unknown') {
-          return <UnknownItemCard key={row.key} item={row.item} />
+          return null
         }
         if (variant === 'tool') {
           return (

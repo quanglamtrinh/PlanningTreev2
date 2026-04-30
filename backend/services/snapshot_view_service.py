@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 from pathlib import Path
@@ -93,6 +93,7 @@ class SnapshotViewService:
                 "frame_confirmed": False,
                 "active_step": "frame",
                 "spec_confirmed": False,
+                "split_confirmed": False,
                 "execution_started": False,
                 "execution_completed": False,
                 "shaping_frozen": False,
@@ -105,6 +106,7 @@ class SnapshotViewService:
                 "frame_confirmed": False,
                 "active_step": "frame",
                 "spec_confirmed": False,
+                "split_confirmed": False,
                 "execution_started": False,
                 "execution_completed": False,
                 "shaping_frozen": False,
@@ -112,14 +114,15 @@ class SnapshotViewService:
                 "execution_status": None,
             }
         workflow = derive_workflow_summary_from_node_dir(node_dir)
+        workflow["split_confirmed"] = bool(str(node.get("review_node_id") or "").strip())
         if self._storage is None:
             return workflow
 
         review_state = None
         review_node_id = str(node.get("review_node_id") or "").strip()
         if review_node_id:
-            review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
-        exec_state = self._storage.execution_state_store.read_state(project_id, node_id)
+            review_state = self._storage.workflow_domain_store.read_review(project_id, review_node_id)
+        exec_state = self._storage.workflow_domain_store.read_execution(project_id, node_id)
         git_ready: bool | None = None
         if self._git_checkpoint_service is not None and project_path is not None:
             try:
@@ -152,7 +155,7 @@ class SnapshotViewService:
         if self._storage is None:
             return None
         review_node_id = str(review_node.get("node_id") or "").strip()
-        review_state = self._storage.review_state_store.read_state(project_id, review_node_id)
+        review_state = self._storage.workflow_domain_store.read_review(project_id, review_node_id)
         if not isinstance(review_state, dict):
             return None
         checkpoints = review_state.get("checkpoints", [])

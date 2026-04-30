@@ -1,6 +1,5 @@
 import { matchPath, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { useCodexStore } from '../stores/codex-store'
 import { THEME_OPTIONS, useUIStore } from '../stores/ui-store'
 import styles from './Layout.module.css'
 
@@ -16,9 +15,6 @@ export function Layout() {
   const theme = useUIStore((state) => state.theme)
   const setTheme = useUIStore((state) => state.setTheme)
   const setActiveSurface = useUIStore((state) => state.setActiveSurface)
-  const initializeCodex = useCodexStore((state) => state.initialize)
-  const disconnectCodex = useCodexStore((state) => state.disconnect)
-
   useEffect(() => {
     const root = document.documentElement
     if (theme === 'default') {
@@ -29,13 +25,6 @@ export function Layout() {
   }, [theme])
 
   const [appVersion, setAppVersion] = useState('v1')
-
-  useEffect(() => {
-    void initializeCodex()
-    return () => {
-      disconnectCodex()
-    }
-  }, [disconnectCodex, initializeCodex])
 
   useEffect(() => {
     if (window.electronAPI?.getAppVersion) {

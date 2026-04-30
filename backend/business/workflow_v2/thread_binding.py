@@ -26,13 +26,6 @@ from backend.business.workflow_v2.repository import WorkflowStateRepositoryV2
 from backend.business.workflow_v2.state_machine import derive_allowed_actions
 from backend.business.workflow_v2.events import WorkflowEventPublisherV2
 
-_ROLE_THREAD_ATTR: dict[str, str] = {
-    "ask_planning": "ask_thread_id",
-    "execution": "execution_thread_id",
-    "audit": "audit_thread_id",
-    "package_review": "package_review_thread_id",
-}
-
 _IDEMPOTENCY_ACTION = "ensure_thread"
 logger = logging.getLogger(__name__)
 _UUID_RE = re.compile(
@@ -101,43 +94,21 @@ class ThreadBindingServiceV2:
         state: NodeWorkflowStateV2,
         role: ThreadRole,
     ) -> NodeWorkflowStateV2:
-        thread_attr = _ROLE_THREAD_ATTR[str(role)]
         binding = state.thread_bindings.get(role)
-        legacy = _optional_str(getattr(state, thread_attr, None))
         stale_binding = binding is not None and not self._native_rollout_metadata_exists(binding.thread_id)
-        # Only auto-clear *legacy* column ids that look like native session UUIDs (v2 rollout store).
-        # v3 string ids like "review-thread-1" are kept so GET workflow-state can still return them.
-        stale_legacy = (
-            legacy is not None
-            and not self._native_rollout_metadata_exists(legacy)
-            and _thread_id_looks_like_native_session_uuid(legacy)
-        )
-        if not stale_binding and not stale_legacy:
+        if not stale_binding:
             return state
 
-        if stale_binding and binding is not None:
-            logger.warning(
-                "workflow_v2: clearing %s role binding; native session rollout is missing for thread %s",
-                str(role),
-                binding.thread_id,
-            )
-        if stale_legacy and legacy is not None:
-            logger.warning(
-                "workflow_v2: clearing %s; native session rollout is missing for thread %s",
-                thread_attr,
-                legacy,
-            )
-        if stale_binding:
-            new_bindings: dict[str, ThreadBinding] = {k: v for k, v in state.thread_bindings.items() if k != role}
-        else:
-            new_bindings = dict(state.thread_bindings)
+        logger.warning(
+            "workflow_v2: clearing %s role binding; native session rollout is missing for thread %s",
+            str(role),
+            binding.thread_id,
+        )
+        new_bindings: dict[str, ThreadBinding] = {k: v for k, v in state.thread_bindings.items() if k != role}
         return self._repository.write_state(
             project_id,
             node_id,
-            state.model_copy(
-                deep=True,
-                update={"thread_bindings": new_bindings, thread_attr: None},
-            ),
+            state.model_copy(deep=True, update={"thread_bindings": new_bindings}),
         )
 
     def ensure_thread(
@@ -203,8 +174,6 @@ class ThreadBindingServiceV2:
                 return _response(replay_state, replay_binding)
 
         binding = state.thread_bindings.get(role)
-        thread_attr = _ROLE_THREAD_ATTR[str(role)]
-        legacy_thread_id = _optional_str(getattr(state, thread_attr, None))
         source_versions = SourceVersions.model_validate(packet.source_versions)
 
         if binding is not None and _binding_matches(binding, packet_hash, source_versions):
@@ -212,7 +181,6 @@ class ThreadBindingServiceV2:
                 state,
                 role=role,
                 binding=binding,
-                thread_attr=thread_attr,
                 payload_hash=payload_hash,
                 record_key=record_key,
             )
@@ -251,7 +219,6 @@ class ThreadBindingServiceV2:
                 state,
                 role=role,
                 binding=next_binding,
-                thread_attr=thread_attr,
                 payload_hash=payload_hash,
                 record_key=record_key,
             )
@@ -267,47 +234,6 @@ class ThreadBindingServiceV2:
                     "nodeId": node_id,
                     "role": role,
                     "threadId": binding.thread_id,
-                    "contextPacketHash": packet_hash,
-                },
-            )
-            return _response(next_state, next_binding)
-
-        if legacy_thread_id:
-            self._inject_context(
-                thread_id=legacy_thread_id,
-                role=role,
-                packet=packet,
-                idempotency_key=key,
-            )
-            next_binding = _new_binding(
-                project_id=project_id,
-                node_id=node_id,
-                role=role,
-                thread_id=legacy_thread_id,
-                created_from="legacy_adopted",
-                source_versions=source_versions,
-                context_packet_hash=packet_hash,
-            )
-            next_state = self._persist_binding(
-                state,
-                role=role,
-                binding=next_binding,
-                thread_attr=thread_attr,
-                payload_hash=payload_hash,
-                record_key=record_key,
-            )
-            self._publish_state_changed(
-                next_state,
-                details={"reason": "legacy_adopted", "role": role},
-            )
-            logger.info(
-                "workflow_v2 thread binding adopted legacy thread",
-                extra={
-                    "idempotencyKey": key,
-                    "projectId": project_id,
-                    "nodeId": node_id,
-                    "role": role,
-                    "threadId": legacy_thread_id,
                     "contextPacketHash": packet_hash,
                 },
             )
@@ -337,7 +263,6 @@ class ThreadBindingServiceV2:
             state,
             role=role,
             binding=next_binding,
-            thread_attr=thread_attr,
             payload_hash=payload_hash,
             record_key=record_key,
         )
@@ -437,7 +362,6 @@ class ThreadBindingServiceV2:
         *,
         role: ThreadRole,
         binding: ThreadBinding,
-        thread_attr: str,
         payload_hash: str,
         record_key: str,
     ) -> NodeWorkflowStateV2:
@@ -446,7 +370,6 @@ class ThreadBindingServiceV2:
         base_state = state.model_copy(
             deep=True,
             update={
-                thread_attr: binding.thread_id,
                 "thread_bindings": bindings,
                 "frame_version": binding.source_versions.frame_version,
                 "spec_version": binding.source_versions.spec_version,

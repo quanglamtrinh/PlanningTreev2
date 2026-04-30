@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import copy
 import json
@@ -73,7 +73,7 @@ def build_rollup_prompt_from_storage(
         review_node = node_index.get(review_node_id, {})
         parent_id = str(review_node.get("parent_id") or "").strip()
         parent = node_index.get(parent_id, {}) if parent_id else {}
-        review_state = storage.review_state_store.read_state(project_id, review_node_id) or {}
+        review_state = storage.workflow_domain_store.read_review(project_id, review_node_id) or {}
         manifest = (
             derive_review_sibling_manifest(snapshot, parent, review_node, review_state)
             if isinstance(parent, dict) and isinstance(review_node, dict)

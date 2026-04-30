@@ -1,10 +1,9 @@
 import type { ThreadTab } from '../surfaceRouting'
 import type {
-  AskFollowupQueueStatus,
-  ExecutionFollowupQueueStatus,
-  ThreadAskFollowupQueueState,
-  ThreadExecutionFollowupQueueState,
-} from '../state/threadByIdStoreV3'
+  FollowupQueueStatus,
+  AskFollowupQueueState,
+  ExecutionFollowupQueueState,
+} from './followupQueueTypes'
 
 export type BreadcrumbThreadTabDesignItem = {
   value: ThreadTab
@@ -16,11 +15,10 @@ export const BREADCRUMB_THREAD_TAB_DESIGN: ReadonlyArray<BreadcrumbThreadTabDesi
   { value: 'ask', label: 'Ask', testId: 'breadcrumb-thread-tab-ask' },
   { value: 'execution', label: 'Execution', testId: 'breadcrumb-thread-tab-execution' },
   { value: 'audit', label: 'Review', testId: 'breadcrumb-thread-tab-audit' },
-  { value: 'package', label: 'Package', testId: 'breadcrumb-thread-tab-package' },
 ]
 
 export function renderQueueStatusLabel(
-  status: ExecutionFollowupQueueStatus | AskFollowupQueueStatus,
+  status: FollowupQueueStatus,
 ): string {
   if (status === 'queued') {
     return 'Queued'
@@ -35,7 +33,7 @@ export function renderQueueStatusLabel(
 }
 
 export function renderExecutionQueuePauseReasonLabel(
-  reason: ThreadExecutionFollowupQueueState['executionQueuePauseReason'],
+  reason: ExecutionFollowupQueueState['executionQueuePauseReason'],
 ): string {
   if (reason === 'none') {
     return 'Auto-send ready'
@@ -53,7 +51,7 @@ export function renderExecutionQueuePauseReasonLabel(
 }
 
 export function renderAskQueuePauseReasonLabel(
-  reason: ThreadAskFollowupQueueState['askQueuePauseReason'],
+  reason: AskFollowupQueueState['askQueuePauseReason'],
 ): string {
   if (reason === 'none') {
     return 'Auto-send ready'

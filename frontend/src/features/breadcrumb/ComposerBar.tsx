@@ -167,12 +167,15 @@ export function ComposerBar({ onSend, disabled, earlyResponsePhase = 'idle' }: C
           <textarea
             ref={textareaRef}
             className={styles.input}
-            placeholder="Send a message..."
+            placeholder="Send a message"
             value={text}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             disabled={disabled}
             rows={1}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
           />
           <div className={styles.responseStatus} aria-live="polite">
             <span className={styles.responseStatusText}>{earlyResponseLabel ?? ' '}</span>

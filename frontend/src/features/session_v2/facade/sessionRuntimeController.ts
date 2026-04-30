@@ -30,22 +30,6 @@ import type {
 } from '../contracts'
 import type { SetThreadTurnsOptions, ThreadSessionStoreState } from '../store/threadSessionStore'
 
-function threadStoreHasTranscriptData(state: ThreadSessionStoreState, threadId: string): boolean {
-  if ((state.turnsByThread[threadId] ?? []).length > 0) {
-    return true
-  }
-  const prefix = `${threadId}:`
-  for (const key of Object.keys(state.itemsByTurn)) {
-    if (key.startsWith(prefix)) {
-      const items = state.itemsByTurn[key]
-      if (Array.isArray(items) && items.length > 0) {
-        return true
-      }
-    }
-  }
-  return false
-}
-
 type AsyncScope = 'bootstrap' | 'selectThread' | 'hydrateThread' | 'loadModels' | 'pollPending'
 
 type AsyncScopeTokens = Record<AsyncScope, number>
@@ -151,7 +135,7 @@ export type SessionRuntimeController = {
   forkThread: (threadId: string) => Promise<void>
   refreshThreads: () => Promise<void>
   submitSessionAction: (action: SessionInputAction) => Promise<void>
-  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy) => Promise<void>
+  submit: (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy, context?: Extract<SessionInputAction, { type: 'turn.start' }>['context']) => Promise<void>
   interrupt: () => Promise<void>
   resetHydratedState: () => void
   dispose: () => void
@@ -358,6 +342,30 @@ export function createSessionRuntimeController(
     return true
   }
 
+  const listTurnsForHydrate = async (
+    threadId: string,
+    isCurrent: () => boolean,
+  ): Promise<SessionTurn[]> => {
+    const turns: SessionTurn[] = []
+    let cursor: string | null = null
+    for (let page = 0; page < 20; page += 1) {
+      const listed = await api.listThreadTurns(threadId, {
+        cursor,
+        limit: 100,
+      })
+      if (!isCurrent()) {
+        return turns
+      }
+      const pageTurns = Array.isArray(listed.data) ? listed.data : []
+      turns.push(...pageTurns)
+      if (!listed.nextCursor || pageTurns.length === 0) {
+        break
+      }
+      cursor = listed.nextCursor
+    }
+    return turns
+  }
+
   const hydrateThreadState = async (threadId: string, options?: HydrateOptions): Promise<void> => {
     if (!options?.force && hydratedThreadIds.has(threadId)) {
       traceSessionRuntime('hydrate skipped: already hydrated', {
@@ -383,12 +391,19 @@ export function createSessionRuntimeController(
     }
     dependencies.upsertThread(read.thread, { preserveUpdatedAt: true })
     const readTurns = Array.isArray(read.thread.turns) ? read.thread.turns : []
-    dependencies.setThreadTurns(threadId, readTurns, { mode: 'replace' })
+    const hydratedTurns = readTurns.length > 0 ? readTurns : await listTurnsForHydrate(threadId, isCurrent)
+    if (!isCurrent()) {
+      traceSessionRuntime('hydrate aborted after turns list: stale scope', {
+        threadId,
+      })
+      return
+    }
+    dependencies.setThreadTurns(threadId, hydratedTurns, { mode: 'replace' })
 
     hydratedThreadIds.add(threadId)
     traceSessionRuntime('hydrate applied', {
       threadId,
-      turns: readTurns.length,
+      turns: hydratedTurns.length,
       mode: 'replace',
     })
   }
@@ -533,27 +548,12 @@ export function createSessionRuntimeController(
       })
     }
 
-    const afterActive = dependencies.getThreadState()
-    const cachedThread = afterActive.threadsById[threadId]
-    const canSkipHydrateFromCache =
-      hydratedThreadIds.has(threadId) &&
-      Boolean(cachedThread) &&
-      cachedThread?.status?.type !== 'notLoaded' &&
-      threadStoreHasTranscriptData(afterActive, threadId)
-
-    if (canSkipHydrateFromCache) {
-      dependencies.setRuntimeError(null)
-      traceSessionRuntime('select thread ready from cache', {
-        threadId,
-        status: cachedThread?.status?.type ?? null,
-      })
-      return
-    }
-
     try {
       await ensureThreadReady(threadId, {
         isCurrent,
-        forceHydrate: !threadStoreHasTranscriptData(afterActive, threadId),
+        // Always rehydrate on explicit selection so the transcript shown on screen
+        // is guaranteed to come from the selected thread's latest server snapshot.
+        forceHydrate: true,
       })
       if (!isCurrent()) {
         traceSessionRuntime('select thread aborted after ensure: stale scope', {
@@ -664,6 +664,7 @@ export function createSessionRuntimeController(
     runtime: RuntimeSnapshot,
     payload: ComposerSubmitPayload,
     policy?: TurnExecutionPolicy,
+    context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
   ): SessionInputAction | null => {
     const activeThreadId = runtime.activeThreadId
     if (!activeThreadId) {
@@ -684,6 +685,7 @@ export function createSessionRuntimeController(
       threadId: activeThreadId,
       input: payload.input,
       policy: resolveTurnStartPolicy(policy, payload, runtime.selectedModel),
+      context,
     }
   }
 
@@ -720,6 +722,9 @@ export function createSessionRuntimeController(
     }
     if (model) {
       request.model = model
+    }
+    if (action.context?.mcpContext) {
+      request.mcpContext = action.context.mcpContext
     }
 
     const result = await api.startTurn(action.threadId, request)
@@ -808,9 +813,13 @@ export function createSessionRuntimeController(
     }
   }
 
-  const submit = async (payload: ComposerSubmitPayload, policy?: TurnExecutionPolicy): Promise<void> => {
+  const submit = async (
+    payload: ComposerSubmitPayload,
+    policy?: TurnExecutionPolicy,
+    context?: Extract<SessionInputAction, { type: 'turn.start' }>['context'],
+  ): Promise<void> => {
     const runtime = dependencies.getRuntimeSnapshot()
-    const action = actionFromSubmit(runtime, payload, policy)
+    const action = actionFromSubmit(runtime, payload, policy, context)
     if (!action) {
       return
     }

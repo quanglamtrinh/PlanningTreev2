@@ -23,6 +23,12 @@ SUPPORTED_CLIENT_METHODS: tuple[str, ...] = (
     "turn/start",
     "turn/steer",
     "turn/interrupt",
+    "config/batchWrite",
+    "config/mcpServer/reload",
+    "mcpServerStatus/list",
+    "mcpServer/resource/read",
+    "mcpServer/tool/call",
+    "mcpServer/oauth/login",
 )
 
 EXPLICITLY_UNSUPPORTED_CLIENT_METHODS: tuple[str, ...] = (
@@ -64,8 +70,6 @@ EXPLICITLY_UNSUPPORTED_CLIENT_METHODS: tuple[str, ...] = (
     "account/rateLimits/read",
     "config/read",
     "config/value/write",
-    "config/batchWrite",
-    "config/mcpServer/reload",
     "command/exec",
     "command/exec/write",
     "command/exec/terminate",

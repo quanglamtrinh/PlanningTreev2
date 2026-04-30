@@ -5,10 +5,9 @@ import type { NodeRecord, ProjectSummary, Snapshot } from '../../api/types'
 import {
   buildChatV2Url,
 } from '../conversation/surfaceRouting'
-import { useCodexStore } from '../../stores/codex-store'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { useProjectStore } from '../../stores/project-store'
-import { getCodexUsageLabels } from './usageLabels'
+import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import styles from './Sidebar.module.css'
 
 function formatRelTime(isoString: string | null | undefined): string {
@@ -66,6 +65,47 @@ function SidebarCollapsibleTab({
   )
 }
 
+function SidebarNavItem({
+  label,
+  active,
+  onClick,
+  title,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+  title: string
+}) {
+  return (
+    <div className={`${styles.extensionsNavGroup} ${active ? styles.extensionsNavGroupActive : ''}`}>
+      <button
+        type="button"
+        className={styles.extensionsNavButton}
+        onClick={onClick}
+        aria-current={active ? 'page' : undefined}
+        aria-label={title}
+        title={title}
+      >
+        <span className={styles.extensionsNavLabel}>{label}</span>
+        <svg
+          className={styles.extensionsNavChevron}
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 function StatusDot({ status }: { status: string }) {
   const cls = status.replace(/[^a-z]/g, '')
   return <span className={`${styles.dot} ${styles[`dot_${cls}` as keyof typeof styles]}`} />
@@ -76,10 +116,12 @@ export function Sidebar() {
   const location = useLocation()
   const usageSnapshotRoute = '/usage-snapshot'
   const extensionsRoute = '/extensions'
+  const skillsRoute = '/skills'
   const usageSnapshotLabel = 'Usage Snapshot'
   const usageSnapshotTitle = 'Open Usage Snapshot'
   const isUsageSnapshotRoute = location.pathname === usageSnapshotRoute
   const isExtensionsRoute = location.pathname === extensionsRoute
+  const isSkillsRoute = location.pathname === skillsRoute
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isProjectsPanelExpanded, setIsProjectsPanelExpanded] = useState(true)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -112,7 +154,6 @@ export function Sidebar() {
       deleteProject: s.deleteProject,
     })),
   )
-  const codexRateLimits = useCodexStore((s) => s.snapshot?.rate_limits ?? null)
   const initGit = useDetailStateStore((s) => s.initGit)
 
   const handleProjectClick = useCallback(
@@ -144,7 +185,9 @@ export function Sidebar() {
 
       const targetNode = latestSnapshot?.tree_state.node_registry.find((node) => node.node_id === nodeId)
       navigate(
-        targetNode?.node_kind === 'review'
+        targetNode?.node_kind === 'root' || targetNode?.is_init_node === true
+          ? buildChatV2Url(projectId, nodeId, 'root')
+          : targetNode?.node_kind === 'review'
           ? buildChatV2Url(projectId, nodeId, 'audit')
           : buildChatV2Url(projectId, nodeId, 'ask'),
       )
@@ -204,15 +247,6 @@ export function Sidebar() {
   const toggleSidebar = useCallback(() => {
     setIsCollapsed((prev) => !prev)
   }, [])
-
-  const {
-    sessionPercent,
-    weeklyPercent,
-    sessionResetLabel,
-    weeklyResetLabel,
-    creditsLabel,
-    showWeekly,
-  } = useMemo(() => getCodexUsageLabels(codexRateLimits), [codexRateLimits])
 
   void expandedProjects
   void toggleExpand
@@ -350,70 +384,23 @@ export function Sidebar() {
         </div>
 
         <div className={styles.extensionsSection}>
-          <div className={`${styles.extensionsNavGroup} ${isExtensionsRoute ? styles.extensionsNavGroupActive : ''}`}>
-            <button
-              type="button"
-              className={styles.extensionsNavButton}
-              onClick={() => navigate(extensionsRoute)}
-              aria-current={isExtensionsRoute ? 'page' : undefined}
-              title="Open extensions page"
-            >
-              <span className={styles.extensionsNavLabel}>Extensions</span>
-              <svg
-                className={styles.extensionsNavChevron}
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden
-              >
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            </button>
-          </div>
+          <SidebarNavItem
+            label="Extensions"
+            active={isExtensionsRoute}
+            onClick={() => navigate(extensionsRoute)}
+            title="Open extensions page"
+          />
+          <SidebarNavItem
+            label="Skills"
+            active={isSkillsRoute}
+            onClick={() => navigate(skillsRoute)}
+            title="Open skills page"
+          />
         </div>
       </div>
 
       <div className={styles.footer}>
         <div className={styles.footerUsageStack}>
-          <div className={styles.usageBlock}>
-            <div className={styles.usageRow}>
-              <span className={styles.usageLabel}>Session</span>
-              <span className={styles.usageHint}>
-                {sessionResetLabel ? `· ${sessionResetLabel}` : ''}
-              </span>
-              <span className={styles.usagePct}>
-                {sessionPercent === null ? '--' : `${sessionPercent}%`}
-              </span>
-            </div>
-            <div className={styles.usageBar}>
-              <div className={styles.usageBarFill} style={{ width: `${sessionPercent ?? 0}%` }} />
-            </div>
-            {showWeekly ? (
-              <>
-                <div className={styles.usageRow} style={{ marginTop: 8 }}>
-                  <span className={styles.usageLabel}>Weekly</span>
-                  <span className={styles.usageHint}>
-                    {weeklyResetLabel ? `· ${weeklyResetLabel}` : ''}
-                  </span>
-                  <span className={styles.usagePct}>
-                    {weeklyPercent === null ? '--' : `${weeklyPercent}%`}
-                  </span>
-                </div>
-                <div className={styles.usageBar}>
-                  <div
-                    className={styles.usageBarFillWeekly}
-                    style={{ width: `${weeklyPercent ?? 0}%` }}
-                  />
-                </div>
-              </>
-            ) : null}
-            {creditsLabel ? <div className={styles.usageMeta}>{creditsLabel}</div> : null}
-          </div>
           <button
             type="button"
             className={`${styles.usageSnapshotBtn} ${isUsageSnapshotRoute ? styles.usageSnapshotBtnActive : ''}`}
@@ -589,6 +576,7 @@ function NodeTreeItem({
   if (!node) return null
 
   const indentLeft = 10 + depth * 18
+  const displayIndex = formatNodeDisplayIndex(node)
 
   return (
     <div className={styles.treeItem}>
@@ -622,12 +610,17 @@ function NodeTreeItem({
           type="button"
           className={styles.nodeRowInner}
           onClick={() => onClickNode(node.node_id)}
-          title={`${node.hierarchical_number} - ${node.title}\nDouble-click to open breadcrumb`}
+          title={`${displayIndex ? `${displayIndex} - ` : ''}${node.title}\nDouble-click to open breadcrumb`}
         >
           <StatusDot status={node.status} />
           <span className={styles.nodeTitle}>
-            <span className={styles.nodeHNum}>{node.hierarchical_number}</span>
-            {' '}{node.title}
+            {displayIndex ? (
+              <>
+                <span className={styles.nodeHNum}>{displayIndex}</span>
+                {' '}
+              </>
+            ) : null}
+            {node.title}
           </span>
           {node.created_at && (
             <span className={styles.nodeTime}>{formatRelTime(node.created_at)}</span>

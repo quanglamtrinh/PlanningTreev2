@@ -91,15 +91,16 @@ def main() -> int:
     ):
         _require(errors, frontend_api, token, "frontend V4 artifact API path")
 
+    removed_projects_pattern = r"/v" + r"3/projects/"
     forbidden_frontend_patterns = (
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/generate-frame",
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/confirm-frame",
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/generate-clarify",
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/confirm-clarify",
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/generate-spec",
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/confirm-spec",
-        r"/v3/projects/[^`'\"]+/nodes/[^`'\"]+/split",
-        r"/v3/projects/[^`'\"]+/split-status",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/generate-frame",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/confirm-frame",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/generate-clarify",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/confirm-clarify",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/generate-spec",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/confirm-spec",
+        removed_projects_pattern + r"[^`'\"]+/nodes/[^`'\"]+/split",
+        removed_projects_pattern + r"[^`'\"]+/split-status",
     )
     for pattern in forbidden_frontend_patterns:
         if re.search(pattern, frontend_api):

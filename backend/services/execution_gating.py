@@ -1,15 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
 from backend.errors.app_errors import ShapingFrozen
-from backend.storage.file_utils import iso_now
 from backend.storage.storage import Storage
 
 AUDIT_FRAME_RECORD_MESSAGE_ID = "audit-record:frame"
 AUDIT_SPEC_RECORD_MESSAGE_ID = "audit-record:spec"
 AUDIT_ROLLUP_PACKAGE_MESSAGE_ID = "audit-package:rollup"
-SYSTEM_MESSAGE_ROLE = "system"
 
 _LOCAL_REVIEW_EXECUTION_STATUSES = {"completed", "review_pending", "review_accepted"}
 
@@ -35,7 +33,7 @@ _FROZEN_STATUSES = {"executing", "completed", "review_pending", "review_accepted
 
 
 def is_shaping_frozen(storage: Storage, project_id: str, node_id: str) -> bool:
-    exec_state = storage.execution_state_store.read_state(project_id, node_id)
+    exec_state = storage.workflow_domain_store.read_execution(project_id, node_id)
     if exec_state is None:
         return False
     status = exec_state.get("status")
@@ -59,29 +57,18 @@ def audit_message_exists(
     *,
     message_id: str,
 ) -> bool:
-    snapshot = storage.thread_snapshot_store_v2.read_snapshot(project_id, node_id, "audit")
-    if _snapshot_contains_audit_item(snapshot, message_id):
-        return True
-    session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
-    return _legacy_session_contains_audit_message(session, message_id)
-
-
-def _snapshot_contains_audit_item(snapshot: dict[str, Any], message_id: str) -> bool:
-    items = snapshot.get("items", []) if isinstance(snapshot, dict) else []
-    if not isinstance(items, list):
+    if message_id != AUDIT_ROLLUP_PACKAGE_MESSAGE_ID:
         return False
-    return any(str(item.get("id") or "") == message_id for item in items if isinstance(item, dict))
-
-
-def _legacy_session_contains_audit_message(session: dict[str, Any], message_id: str) -> bool:
-    messages = session.get("messages", []) if isinstance(session, dict) else []
-    if not isinstance(messages, list):
+    snapshot = storage.project_store.load_snapshot(project_id)
+    node = snapshot.get("tree_state", {}).get("node_index", {}).get(node_id)
+    if not isinstance(node, dict):
         return False
-    return any(
-        str(message.get("message_id") or "") == message_id
-        for message in messages
-        if isinstance(message, dict)
-    )
+    review_node_id = str(node.get("review_node_id") or "").strip()
+    if not review_node_id:
+        return False
+    review_state = storage.workflow_domain_store.read_review(project_id, review_node_id)
+    rollup = review_state.get("rollup", {}) if isinstance(review_state, dict) else {}
+    return _rollup_package_opened(rollup)
 
 
 def package_audit_ready(
@@ -98,12 +85,7 @@ def package_audit_ready(
     rollup = review_state.get("rollup", {})
     if not isinstance(rollup, dict) or rollup.get("status") != "accepted":
         return False
-    return audit_message_exists(
-        storage,
-        project_id,
-        str(node.get("node_id") or ""),
-        message_id=AUDIT_ROLLUP_PACKAGE_MESSAGE_ID,
-    )
+    return _rollup_package_opened(rollup)
 
 
 def audit_writable(
@@ -179,57 +161,8 @@ def derive_execution_workflow_fields(
     }
 
 
-def append_immutable_audit_record(
-    storage: Storage,
-    project_id: str,
-    node_id: str,
-    *,
-    message_id: str,
-    content: str,
-) -> dict[str, Any]:
-    with storage.project_lock(project_id):
-        session = storage.chat_state_store.read_session(project_id, node_id, thread_role="audit")
-        for message in session.get("messages", []):
-            if message.get("message_id") == message_id:
-                changed = False
-                if message.get("role") != SYSTEM_MESSAGE_ROLE:
-                    message["role"] = SYSTEM_MESSAGE_ROLE
-                    changed = True
-                if message.get("status") != "completed":
-                    message["status"] = "completed"
-                    changed = True
-                if message.get("error") is not None:
-                    message["error"] = None
-                    changed = True
-                if message.get("turn_id") is not None:
-                    message["turn_id"] = None
-                    changed = True
-                if changed:
-                    message["updated_at"] = iso_now()
-                    return storage.chat_state_store.write_session(
-                        project_id,
-                        node_id,
-                        session,
-                        thread_role="audit",
-                    )
-                return session
-
-        now = iso_now()
-        session["messages"].append(
-            {
-                "message_id": message_id,
-                "role": SYSTEM_MESSAGE_ROLE,
-                "content": content,
-                "status": "completed",
-                "error": None,
-                "turn_id": None,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
-        return storage.chat_state_store.write_session(
-            project_id,
-            node_id,
-            session,
-            thread_role="audit",
-        )
+def _rollup_package_opened(rollup: dict[str, Any]) -> bool:
+    return (
+        isinstance(rollup.get("package_review_started_at"), str)
+        and bool(str(rollup.get("package_review_started_at") or "").strip())
+    )
