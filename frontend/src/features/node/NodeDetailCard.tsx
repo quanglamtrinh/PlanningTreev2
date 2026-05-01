@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import type { NodeRecord } from '../../api/types'
 import { useDetailStateStore } from '../../stores/detail-state-store'
 import { ClarifyPanel } from './ClarifyPanel'
-import { NodeDescribePanel, ROOT_INFO_TAB_MCP_ROLE_BLOCKS } from './NodeDescribePanel'
+import { NodeDescribePanel, ROOT_INFO_TAB_MCP_ROLE_BLOCKS, ROOT_INFO_TAB_SKILL_ROLE_BLOCKS } from './NodeDescribePanel'
 import { NodeDocumentEditor, type FramePostUpdateBranch } from './NodeDocumentEditor'
 import { SplitPanel } from './SplitPanel'
 import { NodeStatusBadge } from './NodeStatusBadge'
@@ -269,6 +269,7 @@ export function NodeDetailCard({
                 detailState={effectiveDetailState}
                 workflowContextMarkdown={workflowContextMarkdown}
                 isResetting={isResettingWorkspace}
+                skillRoleBlocks={isRootNode ? ROOT_INFO_TAB_SKILL_ROLE_BLOCKS : undefined}
                 onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
                 onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
               />
@@ -282,6 +283,7 @@ export function NodeDetailCard({
               detailState={effectiveDetailState}
               workflowContextMarkdown={workflowContextMarkdown}
               isResetting={isResettingWorkspace}
+              skillRoleBlocks={isRootNode ? ROOT_INFO_TAB_SKILL_ROLE_BLOCKS : undefined}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
             />
@@ -452,6 +454,7 @@ export function NodeDetailCard({
               workflowContextMarkdown={workflowContextMarkdown}
               isResetting={isResettingWorkspace}
               mcpRoleBlocks={isRootNode ? ROOT_INFO_TAB_MCP_ROLE_BLOCKS : undefined}
+              skillRoleBlocks={isRootNode ? ROOT_INFO_TAB_SKILL_ROLE_BLOCKS : undefined}
               onResetToBefore={() => void resetWorkspaceAction(projectId, node.node_id, 'initial')}
               onResetToResult={() => void resetWorkspaceAction(projectId, node.node_id, 'head')}
             />

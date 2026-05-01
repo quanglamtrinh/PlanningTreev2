@@ -550,7 +550,7 @@ class SessionManagerV2:
         }
 
     def skills_registry_list(self, *, project_id: str, force_reload: bool = False) -> dict[str, Any]:
-        self._ensure_initialized()
+        self._ensure_initialized_for_skills()
         if self._skills_service is None:
             raise SessionCoreError(
                 code="ERR_SKILLS_UNAVAILABLE",
@@ -561,7 +561,7 @@ class SessionManagerV2:
         return self._skills_service.list_registry(project_id, force_reload=force_reload, protocol_client=self._protocol_client)
 
     def skills_profile_effective(self, *, project_id: str, node_id: str, role: str, thread_id: str | None = None) -> dict[str, Any]:
-        self._ensure_initialized()
+        self._ensure_initialized_for_skills()
         if self._skills_service is None:
             raise SessionCoreError(
                 code="ERR_SKILLS_UNAVAILABLE",
@@ -1262,6 +1262,16 @@ class SessionManagerV2:
                 status_code=409,
                 details={},
             )
+
+    def _ensure_initialized_for_skills(self) -> None:
+        if self._connection_state_machine.phase == "initialized":
+            return
+        self.initialize(
+            {
+                "clientInfo": {"name": "PlanningTree Session V2", "version": "1.0.0"},
+                "capabilities": {"experimentalApi": True, "optOutNotificationMethods": []},
+            }
+        )
 
     def _on_notification(self, method: str, params: dict[str, Any]) -> None:
         try:

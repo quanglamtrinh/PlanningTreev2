@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from backend.config.app_config import build_app_paths
 from backend.session_core_v2.connection import ConnectionStateMachine, SessionManagerV2
 from backend.session_core_v2.protocol import SessionProtocolClientV2
 from backend.session_core_v2.storage import RuntimeStoreV2
 from backend.session_core_v2.thread_store import ThreadMetadataStore, ThreadRolloutRecorder
+from backend.skills import SkillIntegrationService
 
 
 class _FakeTransport:
@@ -26,6 +28,8 @@ class _FakeTransport:
         del timeout_sec
         payload = params or {}
         self.requests.append((method, payload))
+        if method == "initialize":
+            return {"serverInfo": {"version": "1.0.0"}}
         if method == "skills/list":
             cwd = payload.get("cwds", [""])[0]
             return {
@@ -108,3 +112,25 @@ def test_session_manager_turn_start_preserves_structured_skill_activation_contra
     ]
     assert "skillsContext" not in transport.requests[1][1]
     assert "metadata" not in transport.requests[1][1]
+
+
+def test_session_manager_skills_registry_auto_initializes_session(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    skill_path = str(project_root / ".codex" / "skills" / "planning" / "SKILL.md")
+    transport = _FakeTransport(skill_path)
+    protocol = SessionProtocolClientV2(transport)  # type: ignore[arg-type]
+    manager = SessionManagerV2(
+        protocol_client=protocol,
+        runtime_store=RuntimeStoreV2(),
+        connection_state_machine=ConnectionStateMachine(),
+        skills_service=SkillIntegrationService(
+            build_app_paths(tmp_path / "appdata"),
+            project_cwd_resolver=lambda _project_id: str(project_root),
+        ),
+    )
+
+    response = manager.skills_registry_list(project_id="project-1")
+
+    assert response["catalogCwd"] == str(project_root.resolve())
+    assert [method for method, _payload in transport.requests[:2]] == ["initialize", "skills/list"]

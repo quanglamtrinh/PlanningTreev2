@@ -180,12 +180,15 @@ type SkillRolePanelState = {
   error: string | null
 }
 
-const INFO_TAB_SKILL_BLOCKS: readonly InfoTabSkillBlock[] = [
+export const ROOT_INFO_TAB_SKILL_ROLE_BLOCKS: readonly InfoTabSkillBlock[] = [
   {
     role: 'root',
     title: 'Project prep',
     description: 'Root thread for codebase scans, docs, and handoff preparation.',
   },
+]
+
+const INFO_TAB_SKILL_BLOCKS: readonly InfoTabSkillBlock[] = [
   {
     role: 'ask_planning',
     title: 'Ask',
@@ -643,6 +646,7 @@ type Props = {
   onResetToResult?: () => void | Promise<void>
   isResetting?: boolean
   mcpRoleBlocks?: readonly InfoTabMcpRoleBlock[]
+  skillRoleBlocks?: readonly InfoTabSkillBlock[]
 }
 
 function displaySha(value: string | null | undefined): string {
@@ -690,6 +694,7 @@ export function NodeDescribePanel({
   onResetToResult,
   isResetting = false,
   mcpRoleBlocks = INFO_TAB_MCP_ROLE_BLOCKS,
+  skillRoleBlocks = INFO_TAB_SKILL_BLOCKS,
 }: Props) {
   const [openInfoPath, setOpenInfoPath] = useState<{
     variant: 'docs' | 'skills'
@@ -807,7 +812,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <ThreadSkillsPanel projectId={projectId} nodeId={node.node_id} />
+              <ThreadSkillsPanel projectId={projectId} nodeId={node.node_id} roleBlocks={skillRoleBlocks} />
             </div>
           </div>
 
