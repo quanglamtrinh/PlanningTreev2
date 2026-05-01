@@ -773,7 +773,10 @@ describe('BreadcrumbViewV2', () => {
           effort: 'xhigh',
           summary: null,
         }),
-        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'ask_planning' } },
+        {
+          mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'ask_planning' },
+          skillsContext: { projectId: 'project-1', nodeId: 'root', role: 'ask_planning' },
+        },
       )
     })
     await waitFor(() => {
@@ -828,7 +831,10 @@ describe('BreadcrumbViewV2', () => {
           text: 'queued from composer mock',
         }),
         undefined,
-        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' } },
+        {
+          mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' },
+          skillsContext: { projectId: 'project-1', nodeId: 'root', role: 'root' },
+        },
       )
     })
     expect(loadWorkflowState).not.toHaveBeenCalled()
@@ -906,7 +912,10 @@ describe('BreadcrumbViewV2', () => {
           text: 'queued from composer mock',
         }),
         undefined,
-        { mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' } },
+        {
+          mcpContext: { projectId: 'project-1', nodeId: 'root', role: 'root' },
+          skillsContext: { projectId: 'project-1', nodeId: 'root', role: 'root' },
+        },
       )
     })
   })

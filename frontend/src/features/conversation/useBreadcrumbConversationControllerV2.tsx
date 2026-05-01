@@ -1098,7 +1098,7 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         await sessionCommands.submit(
           payload,
           undefined,
-          { mcpContext: { projectId, nodeId, role: 'root' } },
+          { mcpContext: { projectId, nodeId, role: 'root' }, skillsContext: { projectId, nodeId, role: 'root' } },
         )
         return
       }
@@ -1129,7 +1129,10 @@ export function useBreadcrumbConversationControllerV2(): BreadcrumbConversationC
         payload,
         turnPolicy,
         projectId && nodeId
-          ? { mcpContext: { projectId, nodeId, role: workflowRoleForThreadTab(threadTab) } }
+          ? {
+              mcpContext: { projectId, nodeId, role: workflowRoleForThreadTab(threadTab) },
+              skillsContext: { projectId, nodeId, role: workflowRoleForThreadTab(threadTab) },
+            }
           : undefined,
       )
       if (!projectId || !nodeId) {

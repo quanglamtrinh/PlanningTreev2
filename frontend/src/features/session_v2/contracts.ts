@@ -266,6 +266,12 @@ export interface McpTurnContextV4 {
   role: string
 }
 
+export interface SkillsTurnContextV4 {
+  projectId: string
+  nodeId: string
+  role: string
+}
+
 export interface TurnStartRequestV4 {
   input: Array<Record<string, unknown>>
   model?: string | null
@@ -279,6 +285,7 @@ export interface TurnStartRequestV4 {
   serviceTier?: string | null
   outputSchema?: Record<string, unknown> | null
   mcpContext?: McpTurnContextV4 | null
+  skillsContext?: SkillsTurnContextV4 | null
 }
 
 export type ThreadCreationPolicy = Partial<{
@@ -304,7 +311,7 @@ export type SessionInputAction =
       threadId: string
       input: Array<Record<string, unknown>>
       policy?: TurnExecutionPolicy
-      context?: { mcpContext?: McpTurnContextV4 | null }
+      context?: { mcpContext?: McpTurnContextV4 | null; skillsContext?: SkillsTurnContextV4 | null }
     }
   | {
       type: 'turn.steer'

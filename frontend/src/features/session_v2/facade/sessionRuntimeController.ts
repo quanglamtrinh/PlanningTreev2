@@ -726,6 +726,9 @@ export function createSessionRuntimeController(
     if (action.context?.mcpContext) {
       request.mcpContext = action.context.mcpContext
     }
+    if (action.context?.skillsContext) {
+      request.skillsContext = action.context.skillsContext
+    }
 
     const result = await api.startTurn(action.threadId, request)
     if (!isControllerAlive()) {

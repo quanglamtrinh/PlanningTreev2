@@ -100,6 +100,33 @@ const { apiMock, workflowV2ApiMock, MockApiError, navigateMock } = vi.hoisted(()
       sha: 'sha256:accepted',
     }),
     listMcpRegistry: vi.fn(),
+    listSkillsRegistry: vi.fn().mockResolvedValue({
+      projectId: 'project-1',
+      catalogCwd: 'C:/workspace/project-1',
+      data: [
+        {
+          cwd: 'C:/workspace/project-1',
+          skills: [
+            {
+              name: 'planning-brief',
+              description: 'Frames goals, constraints, and open questions before implementation work begins.',
+              path: 'C:/workspace/project-1/.codex/skills/planning-brief/SKILL.md',
+              scope: 'repo',
+              enabled: true,
+              dependencies: { tools: [] },
+              interface: { displayName: 'Planning brief' },
+            },
+          ],
+          errors: [],
+        },
+      ],
+    }),
+    readSkillThreadProfile: vi.fn().mockImplementation((_projectId: string, nodeId: string, role: string) => Promise.resolve({
+      profile: { projectId: 'project-1', nodeId, role, skillsEnabled: false, skills: {}, updatedAt: null },
+    })),
+    updateSkillThreadProfile: vi.fn().mockImplementation((_projectId: string, nodeId: string, role: string, patch: Record<string, unknown>) => Promise.resolve({
+      profile: { projectId: 'project-1', nodeId, role, skillsEnabled: Boolean(patch.skillsEnabled), skills: (patch.skills as Record<string, unknown>) ?? {}, updatedAt: 'now' },
+    })),
     readMcpThreadProfile: vi.fn(),
     previewMcpEffectiveConfig: vi.fn(),
     updateMcpThreadProfile: vi.fn(),
@@ -456,22 +483,26 @@ describe('NodeDetailCard', () => {
     })
 
     const skillsPanel = screen.getByTestId('info-tab-skills-panel')
-    expect(within(skillsPanel).getByTestId('info-tab-skills-role-ask_planning')).toBeInTheDocument()
-    expect(within(skillsPanel).getByTestId('info-tab-skills-role-execution')).toBeInTheDocument()
-    expect(within(skillsPanel).getByTestId('info-tab-skills-role-audit')).toBeInTheDocument()
-    expect(within(skillsPanel).getByText('Planning brief')).toBeInTheDocument()
-    expect(within(skillsPanel).getByText('Implementation guardrails')).toBeInTheDocument()
-    expect(within(skillsPanel).getByText('Review checklist')).toBeInTheDocument()
-    expect(within(skillsPanel).queryByText('MCP off')).not.toBeInTheDocument()
-    expect(within(skillsPanel).getAllByRole('button', { name: 'Add skill' })).toHaveLength(3)
-
+    const askRole = within(skillsPanel).getByTestId('info-tab-skills-role-ask_planning')
+    const executionRole = within(skillsPanel).getByTestId('info-tab-skills-role-execution')
     const auditRole = within(skillsPanel).getByTestId('info-tab-skills-role-audit')
-    const auditSwitch = within(auditRole).getByRole('switch')
+    expect(askRole).toBeInTheDocument()
+    expect(executionRole).toBeInTheDocument()
+    expect(auditRole).toBeInTheDocument()
+    expect(within(skillsPanel).queryByTestId('info-tab-skills-role-root')).not.toBeInTheDocument()
+    expect(within(executionRole).getByText('Planning brief')).toBeInTheDocument()
+    expect(within(executionRole).getByText('C:/workspace/project-1/.codex/skills/planning-brief/SKILL.md')).toBeInTheDocument()
+    expect(within(skillsPanel).queryByText('MCP off')).not.toBeInTheDocument()
+
+    const auditSwitch = within(auditRole).getByRole('switch', { name: 'Skills off' })
     expect(auditSwitch).toHaveAttribute('aria-checked', 'false')
 
     fireEvent.click(auditSwitch)
 
-    expect(auditSwitch).toHaveAttribute('aria-checked', 'true')
+    await waitFor(() => {
+      expect(auditSwitch).toHaveAttribute('aria-checked', 'true')
+    })
+    expect(apiMock.updateSkillThreadProfile).toHaveBeenCalledWith('project-1', 'root', 'audit', { skillsEnabled: true })
     expect(apiMock.updateMcpThreadProfile).not.toHaveBeenCalled()
   })
 
@@ -607,11 +638,16 @@ describe('NodeDetailCard', () => {
     expect(screen.getByText('Root node')).toBeInTheDocument()
     expect(screen.getByTestId('info-tab-mcp-role-root')).toBeInTheDocument()
     expect(screen.queryByTestId('info-tab-mcp-role-ask_planning')).not.toBeInTheDocument()
+    expect(screen.getByTestId('info-tab-skills-role-root')).toBeInTheDocument()
+    expect(screen.queryByTestId('info-tab-skills-role-ask_planning')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('info-tab-skills-role-execution')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('info-tab-skills-role-audit')).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Frame' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Clarify' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Spec' })).not.toBeInTheDocument()
     expect(apiMock.getNodeDocument).not.toHaveBeenCalled()
     expect(apiMock.readMcpThreadProfile.mock.calls.map((call) => call[2])).toEqual(['root'])
+    expect(apiMock.readSkillThreadProfile.mock.calls.map((call) => call[2])).toEqual(['root'])
   })
 
   it('normalizes nodeMetaRow index by stripping init prefix for task nodes', () => {
