@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
-import type { ChangedFileRecord, DetailState, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord } from '../../api/types'
+import type { ChangedFileRecord, DetailState, McpRegistryServer, McpThreadProfile, McpThreadRole, McpTransportType, NodeRecord, SkillMetadata, SkillThreadProfile } from '../../api/types'
 import { InfoWorkspaceMarkdownEditor } from './InfoWorkspaceMarkdownEditor'
 import { formatNodeDisplayIndex } from '../../utils/nodeDisplayIndex'
 import { DocumentRichViewContent } from '../markdown/DocumentRichView'
@@ -167,77 +167,181 @@ const INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
   },
 ]
 
-type InfoTabSkillRole = Extract<InfoTabMcpRole, 'ask_planning' | 'execution' | 'audit'>
+type InfoTabSkillRole = Extract<McpThreadRole, 'ask_planning' | 'execution' | 'audit' | 'package_review' | 'root'>
 
 type InfoTabSkillBlock = {
   role: InfoTabSkillRole
   title: string
   description: string
-  skillName: string
-  skillDescription: string
-  badge: string
+}
+
+type SkillRolePanelState = {
+  profile: SkillThreadProfile | null
+  error: string | null
 }
 
 const INFO_TAB_SKILL_BLOCKS: readonly InfoTabSkillBlock[] = [
   {
+    role: 'root',
+    title: 'Project prep',
+    description: 'Root thread for codebase scans, docs, and handoff preparation.',
+  },
+  {
     role: 'ask_planning',
     title: 'Ask',
     description: 'Planning and clarification thread for this node.',
-    skillName: 'Planning brief',
-    skillDescription: 'Frames goals, constraints, and open questions before implementation work begins.',
-    badge: 'Planning',
   },
   {
     role: 'execution',
     title: 'Execution',
     description: 'Implementation thread that applies changes.',
-    skillName: 'Implementation guardrails',
-    skillDescription: 'Keeps code edits scoped, validates risky changes, and follows local project patterns.',
-    badge: 'Build',
   },
   {
     role: 'audit',
     title: 'Audit',
     description: 'Review thread for checking the execution result.',
-    skillName: 'Review checklist',
-    skillDescription: 'Prioritizes regressions, missing tests, and release-blocking risks in review output.',
-    badge: 'Review',
   },
 ]
 
-function createDefaultSkillStates(): Record<InfoTabSkillRole, boolean> {
-  return INFO_TAB_SKILL_BLOCKS.reduce(
+function createEmptySkillRoleStates(roleBlocks: readonly InfoTabSkillBlock[]): Record<InfoTabSkillRole, SkillRolePanelState> {
+  return roleBlocks.reduce(
     (states, { role }) => {
-      states[role] = role !== 'audit'
+      states[role] = { profile: null, error: null }
       return states
     },
-    {} as Record<InfoTabSkillRole, boolean>,
+    {} as Record<InfoTabSkillRole, SkillRolePanelState>,
   )
 }
 
-function ThreadSkillsPanel() {
-  const [skillStates, setSkillStates] = useState<Record<InfoTabSkillRole, boolean>>(() =>
-    createDefaultSkillStates(),
+function skillDisplayName(skill: SkillMetadata): string {
+  return skill.interface?.displayName?.trim() || skill.name
+}
+
+function skillDescription(skill: SkillMetadata): string {
+  return skill.interface?.shortDescription?.trim() || skill.description || skill.path
+}
+
+function skillDependencyLabel(skill: SkillMetadata): string | null {
+  const count = skill.dependencies?.tools?.length ?? 0
+  if (count <= 0) {
+    return null
+  }
+  return `${count} dep${count === 1 ? '' : 's'}`
+}
+
+function ThreadSkillsPanel({
+  projectId,
+  nodeId,
+  roleBlocks = INFO_TAB_SKILL_BLOCKS,
+}: {
+  projectId: string
+  nodeId: string
+  roleBlocks?: readonly InfoTabSkillBlock[]
+}) {
+  const [registry, setRegistry] = useState<SkillMetadata[]>([])
+  const [registryError, setRegistryError] = useState<string | null>(null)
+  const [roleStates, setRoleStates] = useState<Record<InfoTabSkillRole, SkillRolePanelState>>(() =>
+    createEmptySkillRoleStates(roleBlocks),
   )
 
-  function toggleSkill(role: InfoTabSkillRole) {
-    setSkillStates((current) => ({
-      ...current,
-      [role]: !current[role],
-    }))
+  useEffect(() => {
+    let cancelled = false
+
+    async function load() {
+      setRegistryError(null)
+      setRegistry([])
+      setRoleStates(createEmptySkillRoleStates(roleBlocks))
+      try {
+        const [registryResponse, roleResponses] = await Promise.all([
+          api.listSkillsRegistry(projectId),
+          Promise.all(
+            roleBlocks.map(async ({ role }) => {
+              try {
+                const profileResponse = await api.readSkillThreadProfile(projectId, nodeId, role)
+                return { role, state: { profile: profileResponse.profile, error: null } }
+              } catch (loadError) {
+                return {
+                  role,
+                  state: {
+                    profile: null,
+                    error: mcpErrorMessage(loadError, 'Failed to load skills profile'),
+                  },
+                }
+              }
+            }),
+          ),
+        ])
+        if (cancelled) {
+          return
+        }
+        const nextRoleStates = createEmptySkillRoleStates(roleBlocks)
+        roleResponses.forEach(({ role, state }) => {
+          nextRoleStates[role] = state
+        })
+        setRegistry(registryResponse.data.flatMap((entry) => entry.skills))
+        const errors = registryResponse.data.flatMap((entry) => entry.errors ?? [])
+        setRegistryError(errors.length > 0 ? `${errors.length} skill catalog issue${errors.length === 1 ? '' : 's'} found.` : null)
+        setRoleStates(nextRoleStates)
+      } catch (loadError) {
+        if (cancelled) {
+          return
+        }
+        setRegistry([])
+        setRegistryError(mcpErrorMessage(loadError, 'Failed to load skills registry'))
+      }
+    }
+
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, nodeId, roleBlocks])
+
+  async function patchProfile(role: InfoTabSkillRole, patch: Partial<SkillThreadProfile>) {
+    try {
+      const response = await api.updateSkillThreadProfile(projectId, nodeId, role, patch)
+      setRoleStates((current) => ({ ...current, [role]: { profile: response.profile, error: null } }))
+    } catch (updateError) {
+      setRoleStates((current) => ({
+        ...current,
+        [role]: {
+          ...current[role],
+          error: mcpErrorMessage(updateError, 'Failed to update skills profile'),
+        },
+      }))
+    }
+  }
+
+  function toggleSkill(role: InfoTabSkillRole, state: SkillRolePanelState, skill: SkillMetadata) {
+    const current = state.profile?.skills?.[skill.path]
+    void patchProfile(role, {
+      skills: {
+        ...(state.profile?.skills ?? {}),
+        [skill.path]: {
+          enabled: !current?.enabled,
+          activationMode: current?.activationMode ?? 'alwaysOnForRole',
+          name: skill.name,
+          scope: skill.scope,
+          updatedAt: current?.updatedAt ?? null,
+        },
+      },
+    })
   }
 
   return (
     <div className={styles.infoMcpPanel} data-testid="info-tab-skills-panel">
       <div className={styles.infoMcpHeaderRow}>
         <p className={styles.infoExtensionDescription}>
-          Toggle dummy skills per workflow thread. Global skills are managed in <strong>Graph - Skills</strong>.
+          Global skills are discovered from Codex for this project. Enable skills separately for each workflow thread.
         </p>
       </div>
 
+      {registryError ? <p className={styles.infoMcpError}>{registryError}</p> : null}
+
       <div className={styles.infoMcpRoleGrid}>
-        {INFO_TAB_SKILL_BLOCKS.map(({ role, title, description, skillName, skillDescription, badge }) => {
-          const enabled = skillStates[role]
+        {roleBlocks.map(({ role, title, description }) => {
+          const state = roleStates[role]
+          const profile = state.profile
           return (
             <section key={role} className={styles.infoMcpRoleBlock} data-testid={`info-tab-skills-role-${role}`}>
               <div className={styles.infoMcpRoleHeader}>
@@ -247,36 +351,61 @@ function ThreadSkillsPanel() {
                 </div>
                 <button
                   type="button"
-                  className={styles.infoSkillAddButton}
-                  onClick={() => undefined}
+                  role="switch"
+                  aria-checked={Boolean(profile?.skillsEnabled)}
+                  disabled={!profile}
+                  className={profile?.skillsEnabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                  onClick={() => void patchProfile(role, { skillsEnabled: !profile?.skillsEnabled })}
                 >
-                  Add skill
+                  <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                    <span className={styles.infoExtensionToggleThumb} />
+                  </span>
+                  <span className={styles.infoExtensionToggleLabel}>{profile?.skillsEnabled ? 'Skills on' : 'Skills off'}</span>
                 </button>
               </div>
 
-              <p className={styles.infoMcpListHeading}>Included skill</p>
+              {state.error ? <p className={styles.infoMcpError}>{state.error}</p> : null}
+
+              <p className={styles.infoMcpListHeading}>Always on for role</p>
               <ul className={styles.infoExtensionList} data-testid={`info-tab-skills-${role}`}>
-                <li className={styles.infoExtensionItem}>
-                  <div className={styles.infoExtensionCopy}>
-                    <div className={styles.infoExtensionTitleRow}>
-                      <span className={styles.infoExtensionName}>{skillName}</span>
-                      <span className={styles.infoExtensionBadge}>{badge}</span>
-                    </div>
-                    <p className={styles.infoExtensionDescription}>{skillDescription}</p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={enabled}
-                    className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
-                    onClick={() => toggleSkill(role)}
-                  >
-                    <span className={styles.infoExtensionToggleTrack} aria-hidden>
-                      <span className={styles.infoExtensionToggleThumb} />
-                    </span>
-                    <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
-                  </button>
-                </li>
+                {registry.length === 0 ? (
+                  <li className={styles.infoExtensionItem}>
+                    <p className={styles.changedFilesEmpty}>No Codex skills found for this project.</p>
+                  </li>
+                ) : (
+                  registry.map((skill) => {
+                    const entry = profile?.skills?.[skill.path]
+                    const enabled = Boolean(entry?.enabled)
+                    const dependencyLabel = skillDependencyLabel(skill)
+                    return (
+                      <li key={skill.path} className={styles.infoExtensionItem}>
+                        <div className={styles.infoExtensionCopy}>
+                          <div className={styles.infoExtensionTitleRow}>
+                            <span className={styles.infoExtensionName}>{skillDisplayName(skill)}</span>
+                            <span className={styles.infoExtensionBadge}>{skill.scope}</span>
+                            {!skill.enabled ? <span className={styles.infoExtensionBadge}>disabled</span> : null}
+                            {dependencyLabel ? <span className={styles.infoExtensionBadge}>{dependencyLabel}</span> : null}
+                          </div>
+                          <p className={styles.infoExtensionDescription}>{skillDescription(skill)}</p>
+                          <p className={styles.infoExtensionDescription}>{skill.path}</p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled}
+                          disabled={!profile || !skill.enabled}
+                          className={enabled ? styles.infoExtensionToggleOn : styles.infoExtensionToggle}
+                          onClick={() => toggleSkill(role, state, skill)}
+                        >
+                          <span className={styles.infoExtensionToggleTrack} aria-hidden>
+                            <span className={styles.infoExtensionToggleThumb} />
+                          </span>
+                          <span className={styles.infoExtensionToggleLabel}>{enabled ? 'On' : 'Off'}</span>
+                        </button>
+                      </li>
+                    )
+                  })
+                )}
               </ul>
             </section>
           )
@@ -285,6 +414,7 @@ function ThreadSkillsPanel() {
     </div>
   )
 }
+
 
 export const ROOT_INFO_TAB_MCP_ROLE_BLOCKS: readonly InfoTabMcpRoleBlock[] = [
   {
@@ -677,7 +807,7 @@ export function NodeDescribePanel({
           <div className={styles.describeDocSection}>
             <div className={styles.describeSkillsSection}>
               <h2 className={styles.describeSectionTitle}>Skills</h2>
-              <ThreadSkillsPanel />
+              <ThreadSkillsPanel projectId={projectId} nodeId={node.node_id} />
             </div>
           </div>
 

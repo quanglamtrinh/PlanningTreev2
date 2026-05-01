@@ -57,6 +57,7 @@ class SessionManagerV2:
         thread_rollout_recorder: ThreadRolloutRecorder | None = None,
         thread_read_mode: str = "native",
         mcp_service: Any | None = None,
+        skills_service: Any | None = None,
     ) -> None:
         self._protocol_client = protocol_client
         self._runtime_store = runtime_store
@@ -66,6 +67,7 @@ class SessionManagerV2:
         self._turn_service = TurnServiceV2(protocol_client, logger=logger)
         self._thread_read_mode = self._normalize_thread_read_mode(thread_read_mode)
         self._mcp_service = mcp_service
+        self._skills_service = skills_service
         self._turn_metadata_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         # Serialize initialize to avoid concurrent connecting->connecting races.
         self._initialize_lock = threading.Lock()
@@ -547,6 +549,34 @@ class SessionManagerV2:
             "nextCursor": next_cursor,
         }
 
+    def skills_registry_list(self, *, project_id: str, force_reload: bool = False) -> dict[str, Any]:
+        self._ensure_initialized()
+        if self._skills_service is None:
+            raise SessionCoreError(
+                code="ERR_SKILLS_UNAVAILABLE",
+                message="Skills integration service is not configured.",
+                status_code=503,
+                details={},
+            )
+        return self._skills_service.list_registry(project_id, force_reload=force_reload, protocol_client=self._protocol_client)
+
+    def skills_profile_effective(self, *, project_id: str, node_id: str, role: str, thread_id: str | None = None) -> dict[str, Any]:
+        self._ensure_initialized()
+        if self._skills_service is None:
+            raise SessionCoreError(
+                code="ERR_SKILLS_UNAVAILABLE",
+                message="Skills integration service is not configured.",
+                status_code=503,
+                details={},
+            )
+        return self._skills_service.preview_effective_skills(
+            project_id,
+            node_id,
+            role,
+            thread_id=thread_id,
+            protocol_client=self._protocol_client,
+        )
+
     # ------------------------------------------------------------------
     # Turns
     # ------------------------------------------------------------------
@@ -570,7 +600,7 @@ class SessionManagerV2:
                 details={"threadId": thread_id, "activeTurnId": active_turn.get("id")},
             )
 
-        prepared_payload = self._prepare_mcp_turn_payload(thread_id=thread_id, payload=payload)
+        prepared_payload = self._prepare_turn_payload(thread_id=thread_id, payload=payload)
         pending_mcp_hash = self._optional_non_empty_str(prepared_payload.pop("_mcpPendingRuntimeHash", None))
         rpc_payload = self._with_default_turn_permissions(prepared_payload)
         rpc_payload.pop("clientActionId", None)
@@ -1162,10 +1192,23 @@ class SessionManagerV2:
     # ------------------------------------------------------------------
 
 
+    def _prepare_turn_payload(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        prepared = self._prepare_mcp_turn_payload(thread_id=thread_id, payload=payload)
+        return self._prepare_skills_turn_payload(thread_id=thread_id, payload=prepared)
+
     def _prepare_mcp_turn_payload(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self._mcp_service is None:
             return dict(payload)
         return self._mcp_service.prepare_turn_start(
+            thread_id=thread_id,
+            payload=payload,
+            protocol_client=self._protocol_client,
+        )
+
+    def _prepare_skills_turn_payload(self, *, thread_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._skills_service is None:
+            return dict(payload)
+        return self._skills_service.prepare_turn_start(
             thread_id=thread_id,
             payload=payload,
             protocol_client=self._protocol_client,

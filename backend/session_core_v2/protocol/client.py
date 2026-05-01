@@ -73,6 +73,9 @@ class SessionProtocolClientV2:
     def model_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._transport.request("model/list", params or {})
 
+    def skills_list(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._transport.request("skills/list", params or {})
+
     def turn_start(self, thread_id: str, params: dict[str, Any]) -> dict[str, Any]:
         payload = {"threadId": thread_id}
         payload.update(params)

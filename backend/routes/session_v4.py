@@ -103,6 +103,10 @@ def _mcp(request: Request) -> Any:
     return request.app.state.mcp_integration_service
 
 
+def _skills(request: Request) -> Any:
+    return request.app.state.skill_integration_service
+
+
 def _phase_not_enabled(endpoint: str, *, phase: str) -> JSONResponse:
     return _error_response(
         SessionCoreError(
@@ -194,6 +198,13 @@ class McpTurnContext(BaseModel):
     role: str
 
 
+class SkillsTurnContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    projectId: str
+    nodeId: str
+    role: str
+
+
 class TurnStartRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     input: list[dict[str, Any]]
@@ -208,6 +219,7 @@ class TurnStartRequest(BaseModel):
     serviceTier: str | None = None
     outputSchema: dict[str, Any] | None = None
     mcpContext: McpTurnContext | None = None
+    skillsContext: SkillsTurnContext | None = None
 
 
 class TurnSteerRequest(BaseModel):
@@ -243,6 +255,10 @@ class McpRegistryServerRequest(BaseModel):
 
 
 class McpProfilePatchRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class SkillsProfilePatchRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
@@ -489,6 +505,75 @@ def mcp_effective_config_v4(
         return _error_response(exc)
     except Exception:
         logger.exception("mcp_effective_config_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/extensions/skills/registry")
+def skills_registry_list_v4(
+    request: Request,
+    projectId: str = Query(min_length=1),
+    forceReload: bool = Query(default=False),
+) -> JSONResponse:
+    try:
+        data = _manager(request).skills_registry_list(project_id=projectId, force_reload=forceReload)
+        return JSONResponse(status_code=200, content=_ok(data))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("skills_registry_list_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/skills-profile")
+def skills_profile_read_v4(projectId: str, nodeId: str, role: str, request: Request) -> JSONResponse:
+    try:
+        profile = _skills(request).read_profile(projectId, nodeId, role)
+        return JSONResponse(status_code=200, content=_ok({"profile": profile}))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("skills_profile_read_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.patch("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/skills-profile")
+def skills_profile_patch_v4(projectId: str, nodeId: str, role: str, payload: SkillsProfilePatchRequest, request: Request) -> JSONResponse:
+    try:
+        patch = payload.model_dump(by_alias=True, exclude_none=True)
+        return JSONResponse(status_code=200, content=_ok(_skills(request).write_profile(projectId, nodeId, role, patch)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("skills_profile_patch_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.post("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/skills-profile/reset")
+def skills_profile_reset_v4(projectId: str, nodeId: str, role: str, request: Request) -> JSONResponse:
+    try:
+        return JSONResponse(status_code=200, content=_ok(_skills(request).reset_profile(projectId, nodeId, role)))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("skills_profile_reset_v4 failed")
+        return _unexpected_error_response()
+
+
+@router.get("/v4/projects/{projectId}/nodes/{nodeId}/threads/{role}/skills-effective-config")
+def skills_effective_config_v4(
+    projectId: str,
+    nodeId: str,
+    role: str,
+    request: Request,
+    threadId: str | None = Query(default=None),
+) -> JSONResponse:
+    try:
+        data = _manager(request).skills_profile_effective(project_id=projectId, node_id=nodeId, role=role, thread_id=threadId)
+        return JSONResponse(status_code=200, content=_ok(data))
+    except SessionCoreError as exc:
+        return _error_response(exc)
+    except Exception:
+        logger.exception("skills_effective_config_v4 failed")
         return _unexpected_error_response()
 
 

@@ -39,6 +39,7 @@ from backend.config.app_config import (
 )
 from backend.errors.app_errors import AppError
 from backend.mcp import McpIntegrationService
+from backend.skills import SkillIntegrationService
 from backend.middleware.auth_token import AuthTokenMiddleware, get_auth_token
 from backend.routes import (
     artifacts_v4,
@@ -113,6 +114,10 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         paths,
         project_cwd_resolver=storage.workspace_store.get_folder_path,
     )
+    skill_integration_service = SkillIntegrationService(
+        paths,
+        project_cwd_resolver=storage.workspace_store.get_folder_path,
+    )
     session_transport_v2 = StdioJsonRpcTransportV2(
         codex_cmd=codex_cmd,
         server_request_queue_capacity=session_core_v2_server_request_queue_capacity,
@@ -140,6 +145,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
         thread_rollout_recorder=session_thread_rollout_recorder_v2,
         thread_read_mode=session_core_v2_thread_read_mode,
         mcp_service=mcp_integration_service,
+        skills_service=skill_integration_service,
     )
     workflow_state_repository_v2 = WorkflowStateRepositoryV2(storage)
     workflow_context_builder_v2 = WorkflowContextBuilderV2(storage)
@@ -266,6 +272,7 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     app.state.workflow_event_broker = workflow_event_broker
     app.state.session_manager_v2 = session_manager_v2
     app.state.mcp_integration_service = mcp_integration_service
+    app.state.skill_integration_service = skill_integration_service
     app.state.workflow_state_repository_v2 = workflow_state_repository_v2
     app.state.workflow_context_builder_v2 = workflow_context_builder_v2
     app.state.workflow_event_publisher_v2 = workflow_event_publisher_v2

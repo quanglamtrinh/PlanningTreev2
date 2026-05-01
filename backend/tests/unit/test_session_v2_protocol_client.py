@@ -67,6 +67,7 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     client.thread_loaded_list({"cursor": "c0", "limit": 10})
     client.thread_unsubscribe("thread-1")
     client.model_list({"limit": 50, "includeHidden": False})
+    client.skills_list({"cwds": ["C:/work/project"], "forceReload": True})
     client.turn_start(
         "thread-1",
         {
@@ -108,15 +109,41 @@ def test_protocol_client_mapping_and_camel_case_passthrough() -> None:
     assert transport.requests[7][0] == "thread/loaded/list"
     assert transport.requests[8] == ("thread/unsubscribe", {"threadId": "thread-1"})
     assert transport.requests[9] == ("model/list", {"limit": 50, "includeHidden": False})
-    assert transport.requests[10][0] == "turn/start"
-    assert transport.requests[10][1]["threadId"] == "thread-1"
-    assert "clientActionId" not in transport.requests[10][1]
-    assert transport.requests[11][0] == "turn/steer"
-    assert transport.requests[11][1]["expectedTurnId"] == "turn-1"
+    assert transport.requests[10] == ("skills/list", {"cwds": ["C:/work/project"], "forceReload": True})
+    assert transport.requests[11][0] == "turn/start"
+    assert transport.requests[11][1]["threadId"] == "thread-1"
     assert "clientActionId" not in transport.requests[11][1]
-    assert transport.requests[12] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
+    assert transport.requests[12][0] == "turn/steer"
+    assert transport.requests[12][1]["expectedTurnId"] == "turn-1"
+    assert "clientActionId" not in transport.requests[12][1]
+    assert transport.requests[13] == ("turn/interrupt", {"threadId": "thread-1", "turnId": "turn-1"})
     assert transport.server_responses == [(123, {"decision": "accept"})]
     assert transport.server_failures == [(124, {"code": -32000, "message": "rejected"})]
+
+
+def test_protocol_client_preserves_structured_skill_input_item() -> None:
+    transport = _FakeTransport()
+    client = SessionProtocolClientV2(transport)  # type: ignore[arg-type]
+    skill_item = {
+        "type": "skill",
+        "name": "planning-brief",
+        "path": "C:/work/project/.codex/skills/planning-brief/SKILL.md",
+    }
+
+    client.turn_start("thread-1", {"input": [{"type": "text", "text": "Implement this"}, skill_item]})
+
+    assert transport.requests == [
+        (
+            "turn/start",
+            {
+                "threadId": "thread-1",
+                "input": [
+                    {"type": "text", "text": "Implement this"},
+                    skill_item,
+                ],
+            },
+        )
+    ]
 
 
 def test_protocol_client_maps_thread_inject_items() -> None:
@@ -158,6 +185,7 @@ def test_protocol_parity_inventory_is_disjoint_and_matches_adapter_methods() -> 
     client.thread_unsubscribe("thread-1")
     client.thread_inject_items("thread-1", {"items": [{"type": "other"}]})
     client.model_list({})
+    client.skills_list({})
     client.turn_start("thread-1", {"input": [{"type": "text", "text": "hi"}]})
     client.turn_steer("thread-1", {"expectedTurnId": "turn-1", "input": [{"type": "text", "text": "continue"}]})
     client.turn_interrupt("thread-1", "turn-1")

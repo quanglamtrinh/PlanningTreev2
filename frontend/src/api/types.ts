@@ -794,57 +794,6 @@ export type ThreadEventV2 =
   | ThreadResetEventV2
   | ThreadErrorEventV2
 
-export interface ExecutionDecisionView {
-  status: string
-  sourceExecutionRunId: string
-  executionTurnId: string
-  candidateWorkspaceHash: string
-  summaryText: string | null
-  createdAt: string
-}
-
-export interface AuditDecisionView {
-  status: string
-  sourceReviewCycleId: string
-  reviewCommitSha: string
-  finalReviewText: string | null
-  reviewDisposition: string | null
-  createdAt: string
-}
-
-export interface NodeWorkflowView {
-  nodeId: string
-  workflowPhase: WorkflowPhase
-  askThreadId?: string | null
-  executionThreadId: string | null
-  auditLineageThreadId: string | null
-  reviewThreadId: string | null
-  activeExecutionRunId: string | null
-  latestExecutionRunId: string | null
-  activeReviewCycleId: string | null
-  latestReviewCycleId: string | null
-  currentExecutionDecision: ExecutionDecisionView | null
-  currentAuditDecision: AuditDecisionView | null
-  acceptedSha: string | null
-  runtimeBlock: Record<string, unknown> | null
-  canSendExecutionMessage: boolean
-  canReviewInAudit: boolean
-  canImproveInExecution: boolean
-  canMarkDoneFromExecution: boolean
-  canMarkDoneFromAudit: boolean
-}
-
-export interface WorkflowActionAcceptedResponse {
-  accepted: boolean
-  threadId?: string | null
-  turnId?: string | null
-  executionRunId?: string | null
-  reviewCycleId?: string | null
-  reviewThreadId?: string | null
-  workflowPhase?: WorkflowPhase | null
-}
-
-
 // MCP registry/profile types
 export type McpThreadRole = 'ask_planning' | 'execution' | 'audit' | 'package_review' | 'root'
 export type McpTransportType = 'stdio' | 'streamable_http'
@@ -889,6 +838,88 @@ export interface McpThreadProfile {
   servers: Record<string, McpThreadServerProfile>
   policyOverrides: Record<string, unknown>
   updatedAt: string | null
+}
+
+
+// Skills registry/profile types
+export type SkillScope = 'user' | 'repo' | 'system' | 'admin'
+export type SkillActivationMode = 'alwaysOnForRole' | 'manual'
+
+export interface SkillInterfaceMetadata {
+  displayName?: string | null
+  shortDescription?: string | null
+  iconSmall?: string | null
+  iconLarge?: string | null
+  brandColor?: string | null
+  defaultPrompt?: string | null
+}
+
+export interface SkillDependencies {
+  tools: Array<Record<string, unknown>>
+}
+
+export interface SkillMetadata {
+  name: string
+  description: string
+  shortDescription?: string | null
+  interface?: SkillInterfaceMetadata | null
+  dependencies?: SkillDependencies | null
+  path: string
+  scope: SkillScope
+  enabled: boolean
+}
+
+export interface SkillsRegistryEntry {
+  cwd: string
+  skills: SkillMetadata[]
+  errors: Array<{ path: string; message: string }>
+}
+
+export interface SkillsRegistryResponse {
+  projectId: string
+  catalogCwd: string
+  data: SkillsRegistryEntry[]
+}
+
+export interface SkillThreadProfileEntry {
+  enabled: boolean
+  activationMode: SkillActivationMode
+  name: string
+  scope?: SkillScope | null
+  updatedAt?: string | null
+}
+
+export interface SkillThreadProfile {
+  projectId: string
+  nodeId: string
+  role: McpThreadRole
+  skillsEnabled: boolean
+  skills: Record<string, SkillThreadProfileEntry>
+  updatedAt: string | null
+}
+
+export interface SkillEffectiveIssue {
+  skillPath: string
+  name?: string
+  reason: string
+}
+
+export interface SkillEffectiveSkills {
+  catalogCwd: string
+  active: SkillMetadata[]
+  blocked: SkillEffectiveIssue[]
+  missing: SkillEffectiveIssue[]
+  skipped: SkillEffectiveIssue[]
+}
+
+export interface SkillEffectiveSkillsResponse {
+  projectId: string
+  nodeId: string
+  role: McpThreadRole
+  threadId: string | null
+  profile: SkillThreadProfile
+  skillsConfigHash: string
+  effectiveSkills: SkillEffectiveSkills
 }
 
 export interface McpRuntimeState {

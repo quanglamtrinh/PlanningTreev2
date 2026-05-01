@@ -21,6 +21,9 @@ import type {
   Snapshot,
   SpecGenAcceptedResponse,
   SpecGenStatusResponse,
+  SkillEffectiveSkillsResponse,
+  SkillThreadProfile,
+  SkillsRegistryResponse,
   SplitAcceptedResponse,
   SplitMode,
   SplitStatusResponse,
@@ -274,6 +277,47 @@ export const api = {
     const query = threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''
     return jsonFetchV2<McpEffectiveConfigResponse>(
       `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/mcp-effective-config${query}`,
+    )
+  },
+  listSkillsRegistry(projectId: string, forceReload = false): Promise<SkillsRegistryResponse> {
+    const query = new URLSearchParams({ projectId })
+    if (forceReload) {
+      query.set('forceReload', 'true')
+    }
+    return jsonFetchV2<SkillsRegistryResponse>(`/v4/extensions/skills/registry?${query}`)
+  },
+  readSkillThreadProfile(projectId: string, nodeId: string, role: McpThreadRole): Promise<{ profile: SkillThreadProfile }> {
+    return jsonFetchV2<{ profile: SkillThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/skills-profile`,
+    )
+  },
+  updateSkillThreadProfile(
+    projectId: string,
+    nodeId: string,
+    role: McpThreadRole,
+    patch: Partial<SkillThreadProfile>,
+  ): Promise<{ profile: SkillThreadProfile }> {
+    return jsonFetchV2<{ profile: SkillThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/skills-profile`,
+      { method: 'PATCH' },
+      patch as Record<string, unknown>,
+    )
+  },
+  resetSkillThreadProfile(projectId: string, nodeId: string, role: McpThreadRole): Promise<{ profile: SkillThreadProfile }> {
+    return jsonFetchV2<{ profile: SkillThreadProfile }>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/skills-profile/reset`,
+      { method: 'POST' },
+    )
+  },
+  previewSkillEffectiveConfig(
+    projectId: string,
+    nodeId: string,
+    role: McpThreadRole,
+    threadId?: string | null,
+  ): Promise<SkillEffectiveSkillsResponse> {
+    const query = threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''
+    return jsonFetchV2<SkillEffectiveSkillsResponse>(
+      `/v4/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/threads/${encodeURIComponent(role)}/skills-effective-config${query}`,
     )
   },
   getBootstrapStatus(): Promise<BootstrapStatus> {
